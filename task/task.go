@@ -22,7 +22,6 @@ func GetTask(agentID string) string {
 	if len(taskQueue[agentID]) == 0 {
 		return ""
 	}
-
 	cmd := taskQueue[agentID][0]
 	taskQueue[agentID] = taskQueue[agentID][1:]
 	return cmd

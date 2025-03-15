@@ -34,12 +34,10 @@ func encryptAES(plainText string, key string) (string, error) {
 	cipherText := make([]byte, aes.BlockSize+len(plainText))
 	iv := cipherText[:aes.BlockSize]
 
-	// Bikin IV secara aman
 	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
 		return "", fmt.Errorf("failed to generate IV: %v", err)
 	}
 
-	// Enkripsi
 	stream := cipher.NewCFBEncrypter(block, iv)
 	stream.XORKeyStream(cipherText[aes.BlockSize:], []byte(plainText))
 
@@ -62,16 +60,13 @@ func decryptAES(cipherText string, key string) (string, error) {
 		return "", fmt.Errorf("failed to create cipher: %v", err)
 	}
 
-	// Cek panjang ciphertext cukup atau enggak
 	if len(data) < aes.BlockSize {
 		return "", errors.New("ciphertext too short")
 	}
 
-	// Ambil IV dari bagian depan ciphertext
 	iv := data[:aes.BlockSize]
 	data = data[aes.BlockSize:]
 
-	// Decrypt
 	stream := cipher.NewCFBDecrypter(block, iv)
 	stream.XORKeyStream(data, data)
 
