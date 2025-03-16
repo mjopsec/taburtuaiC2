@@ -254,3 +254,8 @@ func ScheduleHandler(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Fprint(w, "Scheduled command added")
 }
+
+func StageHandler(w http.ResponseWriter, r *http.Request) {
+	// Kirim file stage.bin
+	http.ServeFile(w, r, "stage.bin")
+}
