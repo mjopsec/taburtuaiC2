@@ -429,7 +429,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 👥 **Authors & Acknowledgments**
 
-- **Primary Developer**: [Your Name](https://github.com/mjopsec)
+- **Primary Developer**: [MJ](https://github.com/mjopsec)
 - **Contributors**: See [CONTRIBUTORS.md](CONTRIBUTORS.md)
 
 ### **Special Thanks**
