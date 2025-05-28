@@ -857,6 +857,167 @@ var versionCmd = &cobra.Command{
 	},
 }
 
+var processCmd = &cobra.Command{
+	Use:     "process",
+	Short:   "Manage processes on an agent",
+	Aliases: []string{"proc"},
+}
+
+var processListCmd = &cobra.Command{
+	Use:   "list <agent-id>",
+	Short: "List processes on an agent",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		agentID := args[0]
+		printInfo(fmt.Sprintf("Requesting process list from agent %s...", agentID))
+		// Buat JSON payload (kosong untuk list)
+		serverRespBytes, err := makeAPIRequestWithMethod("POST", "/api/v1/agent/"+agentID+"/process/list", nil, "application/json")
+		// ... (handle response, queue command, waitForCommand, tampilkan hasil) ...
+		// Hasil dari agent (result.Output) akan berisi string (mungkin JSON string dari PowerShell, atau teks dari ps)
+		// CLI perlu menampilkannya, atau jika JSON, bisa di-parse dan ditampilkan lebih rapi.
+		// (Implementasi lengkap Run function akan serupa dengan cmdCmd)
+		if err != nil {
+			printError(fmt.Sprintf("Failed to send process list request: %v", err))
+			os.Exit(1)
+		}
+		var apiResp APIResponse
+		if err := json.Unmarshal(serverRespBytes, &apiResp); err != nil { /* ... error handling ... */
+			return
+		}
+		if !apiResp.Success {
+			printError("Server error: " + apiResp.Error)
+			os.Exit(1)
+		}
+
+		dataMap, _ := apiResp.Data.(map[string]interface{})
+		commandID, _ := dataMap["command_id"].(string)
+		printSuccess("Process list command queued. ID: " + commandID)
+
+		wait, _ := cmd.Flags().GetBool("wait")
+		if wait {
+			finalStatusData := waitForCommand(commandID, 60) // Tunggu 60 detik
+			if finalStatusData != nil {
+				if statusMap, ok := finalStatusData.(map[string]interface{}); ok {
+					output, _ := statusMap["output"].(string)
+					if output != "" {
+						printInfo("Process List Output from Agent:")
+						// Coba parse sebagai JSON jika dari powershell
+						var processesInfo []map[string]interface{}
+						if errJson := json.Unmarshal([]byte(output), &processesInfo); errJson == nil {
+							// Tampilkan dalam format tabel yang lebih bagus jika berhasil diparse
+							for _, p := range processesInfo {
+								id := getFloatFromMap(p, "Id")
+								name := getStringFromMap(p, "ProcessName")
+								path := getStringFromMap(p, "Path")        // Mungkin kosong
+								desc := getStringFromMap(p, "Description") // Mungkin kosong
+								fmt.Printf("  PID: %-6.0f Name: %-25s Path: %-40s Desc: %s\n", id, name, path, desc)
+							}
+						} else {
+							// Jika bukan JSON atau gagal parse, tampilkan apa adanya
+							fmt.Println(output)
+						}
+					}
+				}
+			}
+		} else {
+			printInfo("Use 'status " + commandID + "' to check.")
+		}
+	},
+}
+
+var processKillCmd = &cobra.Command{
+	Use:   "kill <agent-id>",
+	Short: "Kill a process on an agent by PID or name",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		agentID := args[0]
+		pid, _ := cmd.Flags().GetInt("pid")
+		name, _ := cmd.Flags().GetString("name")
+
+		if pid == 0 && name == "" {
+			printError("Either --pid or --name must be specified for kill.")
+			return
+		}
+
+		payload := make(map[string]interface{})
+		targetLog := ""
+		if pid != 0 {
+			payload["process_id"] = pid
+			targetLog = fmt.Sprintf("PID %d", pid)
+		} else {
+			payload["process_name"] = name
+			targetLog = fmt.Sprintf("name '%s'", name)
+		}
+		printInfo(fmt.Sprintf("Requesting to kill process %s on agent %s...", targetLog, agentID))
+
+		jsonPayload, _ := json.Marshal(payload)
+		serverRespBytes, err := makeAPIRequestWithMethod("POST", "/api/v1/agent/"+agentID+"/process/kill", bytes.NewBuffer(jsonPayload), "application/json")
+		// ... (handle response, queue command, waitForCommand) ...
+		if err != nil {
+			printError(fmt.Sprintf("Request failed: %v", err))
+			os.Exit(1)
+		}
+		var apiResp APIResponse
+		if err := json.Unmarshal(serverRespBytes, &apiResp); err != nil { /*...*/
+			return
+		}
+		if !apiResp.Success {
+			printError("Server error: " + apiResp.Error)
+			os.Exit(1)
+		}
+
+		dataMap, _ := apiResp.Data.(map[string]interface{})
+		commandID, _ := dataMap["command_id"].(string)
+		printSuccess("Process kill command queued. ID: " + commandID)
+		if wait, _ := cmd.Flags().GetBool("wait"); wait {
+			waitForCommand(commandID, 30)
+		} else {
+			printInfo("Use 'status " + commandID + "' to check.")
+		}
+	},
+}
+
+var processStartCmd = &cobra.Command{
+	Use:   "start <agent-id> <process-path>",
+	Short: "Start a new process on an agent",
+	Args:  cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		agentID := args[0]
+		procPath := args[1]
+		procArgs, _ := cmd.Flags().GetString("args")
+
+		printInfo(fmt.Sprintf("Requesting to start process '%s' with args '%s' on agent %s...", procPath, procArgs, agentID))
+		payload := map[string]string{
+			"process_path": procPath,
+			"process_args": procArgs,
+		}
+		jsonPayload, _ := json.Marshal(payload)
+		serverRespBytes, err := makeAPIRequestWithMethod("POST", "/api/v1/agent/"+agentID+"/process/start", bytes.NewBuffer(jsonPayload), "application/json")
+		// ... (handle response, queue command, waitForCommand) ...
+		if err != nil {
+			printError(fmt.Sprintf("Request failed: %v", err))
+			os.Exit(1)
+		}
+		var apiResp APIResponse
+		if err := json.Unmarshal(serverRespBytes, &apiResp); err != nil { /*...*/
+			return
+		}
+		if !apiResp.Success {
+			printError("Server error: " + apiResp.Error)
+			os.Exit(1)
+		}
+
+		dataMap, _ := apiResp.Data.(map[string]interface{})
+		commandID, _ := dataMap["command_id"].(string)
+		printSuccess("Process start command queued. ID: " + commandID)
+		if wait, _ := cmd.Flags().GetBool("wait"); wait {
+			waitForCommand(commandID, 30)
+		} else {
+			printInfo("Use 'status " + commandID + "' to check.")
+		}
+	},
+}
+
 // --- HELPER FUNCTIONS ---
 func getStringFromMap(m map[string]interface{}, key string) string {
 	if val, ok := m[key].(string); ok {
@@ -1111,6 +1272,7 @@ func init() {
 	rootCmd.AddCommand(logsCmd)
 	rootCmd.AddCommand(statsCmd)
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(processCmd)
 
 	// Add subcommands to agents
 	agentsCmd.AddCommand(agentsListCmd)
@@ -1124,8 +1286,13 @@ func init() {
 	filesCmd.AddCommand(filesUploadCmd)
 	filesCmd.AddCommand(filesDownloadCmd)
 
+	// Add subcommands to process
+	processCmd.AddCommand(processListCmd)
+	processCmd.AddCommand(processKillCmd)
+	processCmd.AddCommand(processStartCmd)
+
 	// Command flags
-	cmdCmd.Flags().Int("timeout", 300, "Command timeout in seconds (server default if 0)") // Ganti nama flag agar tidak konflik
+	cmdCmd.Flags().Int("timeout", 300, "Command timeout in seconds (server default if 0)")
 	cmdCmd.Flags().StringP("workdir", "w", "", "Working directory for command")
 	cmdCmd.Flags().BoolP("background", "b", false, "Run command in background")
 
@@ -1134,8 +1301,20 @@ func init() {
 
 	logsCmd.Flags().IntP("limit", "l", 100, "Number of log entries to show (server uses 'count')")
 
-	filesUploadCmd.Flags().Bool("wait", false, "Wait for the upload to complete on the agent")  // Ganti nama flag
-	filesDownloadCmd.Flags().Bool("wait", false, "Wait for the download to complete on server") // Ganti nama flag
+	filesUploadCmd.Flags().Bool("wait", false, "Wait for the upload to complete on the agent")
+	filesDownloadCmd.Flags().Bool("wait", false, "Wait for the download to complete on server")
+
+	// Flags untuk sub-command process:
+	processListCmd.Flags().Bool("wait", true, "Wait for the process list to be returned")
+
+	// >>> BAGIAN KRUSIAL UNTUK ERROR ANDA ADA DI SINI <<<
+	processKillCmd.Flags().IntP("pid", "p", 0, "Process ID (PID) to kill")
+	processKillCmd.Flags().StringP("name", "n", "", "Process name to kill (e.g., notepad.exe)") // Pastikan "--name" dan "-n" benar
+	processKillCmd.Flags().Bool("wait", true, "Wait for the kill confirmation")
+	// >>> AKHIR BAGIAN KRUSIAL <<<
+
+	processStartCmd.Flags().StringP("args", "a", "", "Arguments for the process to start")
+	processStartCmd.Flags().Bool("wait", false, "Wait for the start confirmation")
 }
 
 func main() {

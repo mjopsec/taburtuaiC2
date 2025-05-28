@@ -192,6 +192,13 @@ func (s *TaburtuaiServer) setupRoutes() {
 
 		// Queue statistics
 		api.GET("/queue/stats", s.getQueueStats)
+
+		processMgmt := api.Group("/agent/:id/process")
+		{
+			processMgmt.POST("/list", s.listProcesses) // Anda perlu membuat handler s.listProcesses
+			processMgmt.POST("/kill", s.killProcess)   // Anda perlu membuat handler s.killProcess
+			processMgmt.POST("/start", s.startProcess) // Anda perlu membuat handler s.startProcess
+		}
 	}
 
 	// Legacy endpoints for backward compatibility

