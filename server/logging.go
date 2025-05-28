@@ -120,7 +120,7 @@ func InitLogger(logLevel LogLevel, logDir string) error {
 func (l *Logger) Close() {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
-	
+
 	if l.logFile != nil {
 		l.logFile.Close()
 	}
@@ -150,7 +150,7 @@ func (l *Logger) Log(level LogLevel, category LogCategory, message, agentID, com
 
 	// Add to memory buffer
 	l.entries = append(l.entries, entry)
-	
+
 	// Trim if too many entries
 	if len(l.entries) > l.maxSize {
 		l.entries = l.entries[len(l.entries)-l.maxSize:]
@@ -160,14 +160,14 @@ func (l *Logger) Log(level LogLevel, category LogCategory, message, agentID, com
 	if l.logFile != nil {
 		logLine := fmt.Sprintf("[%s] [%s] [%s] %s",
 			entry.Timestamp, entry.Level, entry.Category, entry.Message)
-		
+
 		if entry.AgentID != "" {
 			logLine += fmt.Sprintf(" | Agent: %s", entry.AgentID)
 		}
 		if entry.Command != "" {
 			logLine += fmt.Sprintf(" | Command: %s", entry.Command)
 		}
-		
+
 		logLine += "\n"
 		l.logFile.WriteString(logLine)
 		l.logFile.Sync()
@@ -367,8 +367,8 @@ func (l *Logger) GetStats() map[string]interface{} {
 	stats := map[string]interface{}{
 		"total_entries": len(l.entries),
 		"categories":    make(map[string]int),
-		"levels":       make(map[string]int),
-		"agents":       make(map[string]int),
+		"levels":        make(map[string]int),
+		"agents":        make(map[string]int),
 	}
 
 	for _, entry := range l.entries {
@@ -435,5 +435,11 @@ func LogCommand(agentID, command, result string, success bool) {
 func LogFileOp(agentID, operation, filename, size string, success bool) {
 	if GlobalLogger != nil {
 		GlobalLogger.LogFileTransfer(agentID, operation, filename, size, success)
+	}
+}
+
+func LogWarn(category LogCategory, message, agentID string) {
+	if GlobalLogger != nil {
+		GlobalLogger.Warn(category, message, agentID, "", nil)
 	}
 }
