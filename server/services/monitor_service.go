@@ -1,8 +1,11 @@
-package main
+package services
 
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -56,16 +59,16 @@ type NetworkInfo struct {
 
 // SystemInfo contains system information
 type SystemInfo struct {
-	CPUCount       int     `json:"cpu_count"`
-	CPUUsage       float64 `json:"cpu_usage"`
-	MemoryTotal    uint64  `json:"memory_total"`
-	MemoryUsed     uint64  `json:"memory_used"`
-	DiskSpace      uint64  `json:"disk_space"`
-	DiskUsed       uint64  `json:"disk_used"`
-	Uptime         int64   `json:"uptime"`
-	InstalledSoft  []string `json:"installed_software"`
-	RunningProcs   []string `json:"running_processes"`
-	Services       []string `json:"services"`
+	CPUCount        int               `json:"cpu_count"`
+	CPUUsage        float64           `json:"cpu_usage"`
+	MemoryTotal     uint64            `json:"memory_total"`
+	MemoryUsed      uint64            `json:"memory_used"`
+	DiskSpace       uint64            `json:"disk_space"`
+	DiskUsed        uint64            `json:"disk_used"`
+	Uptime          int64             `json:"uptime"`
+	InstalledSoft   []string          `json:"installed_software"`
+	RunningProcs    []string          `json:"running_processes"`
+	Services        []string          `json:"services"`
 	EnvironmentVars map[string]string `json:"environment_vars"`
 }
 
@@ -144,25 +147,54 @@ func (am *AgentMonitor) Start() {
 func (am *AgentMonitor) Stop() {
 	am.mutex.Lock()
 	defer am.mutex.Unlock()
-	
+
 	if !am.running {
 		return
 	}
-	
+
 	am.running = false
 	close(am.stopChan)
 	LogInfo(SYSTEM, "Agent monitor stopped", "")
 }
 
 // RegisterAgent registers a new agent or updates existing one
-func (am *AgentMonitor) RegisterAgent(agentData map[string]interface{}) {
+func (am *AgentMonitor) RegisterAgent(agentData map[string]interface{}) error {
 	am.mutex.Lock()
 	defer am.mutex.Unlock()
 
-	agentID := agentData["id"].(string)
-	now := time.Now()
+	// Enhanced validation
+	if agentData == nil {
+		LogError(SYSTEM, "Agent registration failed: agentData is nil", "")
+		return fmt.Errorf("agent data cannot be nil")
+	}
 
+	idInterface, idExists := agentData["id"]
+	if !idExists {
+		LogError(SYSTEM, "Agent registration failed: 'id' field is missing", "")
+		return fmt.Errorf("agent ID is required")
+	}
+
+	agentID, ok := idInterface.(string)
+	if !ok || agentID == "" {
+		LogError(SYSTEM, fmt.Sprintf("Agent registration failed: invalid ID type %T or empty", idInterface), "")
+		return fmt.Errorf("agent ID must be a non-empty string")
+	}
+
+	// Validate agent ID format (UUID)
+	if !isValidUUID(agentID) {
+		LogError(SYSTEM, fmt.Sprintf("Agent registration failed: invalid UUID format for %s", agentID), "")
+		return fmt.Errorf("agent ID must be a valid UUID")
+	}
+
+	// Validate required fields
+	if err := validateAgentData(agentData); err != nil {
+		LogError(SYSTEM, fmt.Sprintf("Agent registration failed: %v", err), agentID)
+		return err
+	}
+
+	now := time.Now()
 	agent, exists := am.agents[agentID]
+
 	if !exists {
 		agent = &AgentHealth{
 			ID:           agentID,
@@ -173,28 +205,31 @@ func (am *AgentMonitor) RegisterAgent(agentData map[string]interface{}) {
 		}
 		am.agents[agentID] = agent
 		LogAgentActivity(agentID, "first_contact", "")
+		LogInfo(AGENT_CONNECTION, fmt.Sprintf("New agent registered: %s", agentID), agentID)
+	} else {
+		LogInfo(AGENT_CONNECTION, fmt.Sprintf("Agent re-registered: %s", agentID), agentID)
 	}
 
-	// Update basic info
-	if hostname, ok := agentData["hostname"].(string); ok {
+	// Safe type assertions with validation
+	if hostname, ok := getString(agentData, "hostname"); ok {
 		agent.Hostname = hostname
 	}
-	if username, ok := agentData["username"].(string); ok {
+	if username, ok := getString(agentData, "username"); ok {
 		agent.Username = username
 	}
-	if os, ok := agentData["os"].(string); ok {
+	if os, ok := getString(agentData, "os"); ok {
 		agent.OS = os
 	}
-	if arch, ok := agentData["architecture"].(string); ok {
+	if arch, ok := getString(agentData, "architecture"); ok {
 		agent.Architecture = arch
 	}
-	if pid, ok := agentData["process_id"].(int); ok {
+	if pid, ok := getInt(agentData, "process_id"); ok {
 		agent.ProcessID = pid
 	}
-	if ppid, ok := agentData["parent_process_id"].(int); ok {
+	if ppid, ok := getInt(agentData, "parent_process_id"); ok {
 		agent.ParentProcessID = ppid
 	}
-	if privileges, ok := agentData["privileges"].(string); ok {
+	if privileges, ok := getString(agentData, "privileges"); ok {
 		agent.Privileges = privileges
 	}
 
@@ -202,13 +237,92 @@ func (am *AgentMonitor) RegisterAgent(agentData map[string]interface{}) {
 	agent.LastHeartbeat = now
 	agent.TotalConnections++
 
-	// Update status to online if it was offline
-	if agent.Status == StatusOffline {
+	// Update status logic
+	oldStatus := agent.Status
+	if agent.Status == StatusOffline || agent.Status == StatusError || agent.Status == StatusDormant {
 		agent.Status = StatusOnline
+		LogInfo(AGENT_CONNECTION, fmt.Sprintf("Agent %s status changed from %s to %s", agentID, oldStatus, agent.Status), agentID)
 		am.triggerCallback("agent_reconnected", agent)
+	} else {
+		agent.Status = StatusOnline
 	}
 
-	LogAgentActivity(agentID, "heartbeat", "")
+	LogAgentActivity(agentID, "heartbeat_via_checkin", "")
+	return nil
+}
+
+// Helper functions for safe type conversion
+func getString(data map[string]interface{}, key string) (string, bool) {
+	if val, exists := data[key]; exists {
+		if str, ok := val.(string); ok && str != "" {
+			return strings.TrimSpace(str), true
+		}
+	}
+	return "", false
+}
+
+func getInt(data map[string]interface{}, key string) (int, bool) {
+	if val, exists := data[key]; exists {
+		switch v := val.(type) {
+		case int:
+			return v, true
+		case float64:
+			return int(v), true
+		case string:
+			if i, err := strconv.Atoi(v); err == nil {
+				return i, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func isValidUUID(uuid string) bool {
+	r := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	return r.MatchString(strings.ToLower(uuid))
+}
+
+func validateAgentData(data map[string]interface{}) error {
+	required := []string{"id", "hostname", "username", "os"}
+
+	for _, field := range required {
+		if val, exists := data[field]; !exists || val == "" {
+			return fmt.Errorf("required field '%s' is missing or empty", field)
+		}
+	}
+
+	// Validate hostname
+	if hostname, ok := data["hostname"].(string); ok {
+		if len(hostname) > 255 {
+			return fmt.Errorf("hostname too long (max 255 characters)")
+		}
+		if !isValidHostname(hostname) {
+			return fmt.Errorf("invalid hostname format")
+		}
+	}
+
+	// Validate OS
+	if osName, ok := data["os"].(string); ok {
+		validOS := map[string]bool{
+			"windows": true, "linux": true, "darwin": true,
+			"freebsd": true, "openbsd": true, "netbsd": true,
+		}
+		if !validOS[strings.ToLower(osName)] {
+			return fmt.Errorf("unsupported OS: %s", osName)
+		}
+	}
+
+	return nil
+}
+
+func isValidHostname(hostname string) bool {
+	if len(hostname) == 0 || len(hostname) > 255 {
+		return false
+	}
+
+	// Basic hostname validation regex
+	r := regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$`)
+	return r.MatchString(hostname)
 }
 
 // UpdateAgentSystemInfo updates system information for an agent
@@ -241,7 +355,7 @@ func (am *AgentMonitor) UpdateAgentSecurityInfo(agentID string, secInfo Security
 	if agent, exists := am.agents[agentID]; exists {
 		agent.SecurityInfo = secInfo
 		agent.LastSeen = time.Now()
-		
+
 		// Check for security concerns
 		am.checkSecurityConcerns(agent)
 	}
@@ -266,14 +380,14 @@ func (am *AgentMonitor) RecordCommand(agentID, command string, success bool, dur
 	if agent, exists := am.agents[agentID]; exists {
 		agent.CommandsExecuted++
 		agent.Performance.LastCommandTime = duration
-		
+
 		// Update average latency (simple moving average)
 		if agent.Performance.AverageLatency == 0 {
 			agent.Performance.AverageLatency = duration
 		} else {
 			agent.Performance.AverageLatency = (agent.Performance.AverageLatency + duration) / 2
 		}
-		
+
 		// Update success rate
 		totalCommands := float64(agent.CommandsExecuted)
 		if success {
@@ -281,7 +395,7 @@ func (am *AgentMonitor) RecordCommand(agentID, command string, success bool, dur
 		} else {
 			agent.Performance.SuccessRate = (agent.Performance.SuccessRate * (totalCommands - 1)) / totalCommands
 		}
-		
+
 		agent.Performance.ErrorRate = 1 - agent.Performance.SuccessRate
 		agent.LastSeen = time.Now()
 	}
@@ -301,20 +415,20 @@ func (am *AgentMonitor) RecordError(agentID, errorType, message, command, severi
 			Severity:    severity,
 			Recoverable: recoverable,
 		}
-		
+
 		agent.Errors = append(agent.Errors, errorInfo)
-		
+
 		// Keep only last 50 errors
 		if len(agent.Errors) > 50 {
 			agent.Errors = agent.Errors[len(agent.Errors)-50:]
 		}
-		
+
 		// Check if agent should be marked as suspected
 		if severity == "critical" || !recoverable {
 			agent.Status = StatusError
 			am.triggerCallback("agent_error", agent)
 		}
-		
+
 		agent.LastSeen = time.Now()
 	}
 }
@@ -328,7 +442,7 @@ func (am *AgentMonitor) RecordFileTransfer(agentID string, success bool, size in
 		if success {
 			agent.FilesTransferred++
 		}
-		
+
 		// Update data transfer rate (bytes per second)
 		if size > 0 && agent.Performance.LastCommandTime > 0 {
 			rate := float64(size) / agent.Performance.LastCommandTime.Seconds()
@@ -338,7 +452,7 @@ func (am *AgentMonitor) RecordFileTransfer(agentID string, success bool, size in
 				agent.Performance.DataTransferRate = (agent.Performance.DataTransferRate + rate) / 2
 			}
 		}
-		
+
 		agent.LastSeen = time.Now()
 	}
 }
@@ -347,12 +461,12 @@ func (am *AgentMonitor) RecordFileTransfer(agentID string, success bool, size in
 func (am *AgentMonitor) GetAgent(agentID string) (*AgentHealth, bool) {
 	am.mutex.RLock()
 	defer am.mutex.RUnlock()
-	
+
 	agent, exists := am.agents[agentID]
 	if !exists {
 		return nil, false
 	}
-	
+
 	// Return a copy to avoid race conditions
 	agentCopy := *agent
 	return &agentCopy, true
@@ -362,13 +476,13 @@ func (am *AgentMonitor) GetAgent(agentID string) (*AgentHealth, bool) {
 func (am *AgentMonitor) GetAllAgents() map[string]*AgentHealth {
 	am.mutex.RLock()
 	defer am.mutex.RUnlock()
-	
+
 	result := make(map[string]*AgentHealth)
 	for id, agent := range am.agents {
 		agentCopy := *agent
 		result[id] = &agentCopy
 	}
-	
+
 	return result
 }
 
@@ -376,7 +490,7 @@ func (am *AgentMonitor) GetAllAgents() map[string]*AgentHealth {
 func (am *AgentMonitor) GetAgentsByStatus(status AgentStatus) []*AgentHealth {
 	am.mutex.RLock()
 	defer am.mutex.RUnlock()
-	
+
 	var result []*AgentHealth
 	for _, agent := range am.agents {
 		if agent.Status == status {
@@ -384,7 +498,7 @@ func (am *AgentMonitor) GetAgentsByStatus(status AgentStatus) []*AgentHealth {
 			result = append(result, &agentCopy)
 		}
 	}
-	
+
 	return result
 }
 
@@ -392,18 +506,18 @@ func (am *AgentMonitor) GetAgentsByStatus(status AgentStatus) []*AgentHealth {
 func (am *AgentMonitor) GetStats() map[string]interface{} {
 	am.mutex.RLock()
 	defer am.mutex.RUnlock()
-	
+
 	stats := map[string]interface{}{
-		"total_agents":    len(am.agents),
-		"online_agents":   0,
-		"offline_agents":  0,
-		"error_agents":    0,
+		"total_agents":     len(am.agents),
+		"online_agents":    0,
+		"offline_agents":   0,
+		"error_agents":     0,
 		"suspected_agents": 0,
-		"total_commands":  0,
-		"total_transfers": 0,
-		"average_uptime":  0.0,
+		"total_commands":   0,
+		"total_transfers":  0,
+		"average_uptime":   0.0,
 	}
-	
+
 	var totalUptime float64
 	for _, agent := range am.agents {
 		switch agent.Status {
@@ -416,18 +530,18 @@ func (am *AgentMonitor) GetStats() map[string]interface{} {
 		case StatusSuspected:
 			stats["suspected_agents"] = stats["suspected_agents"].(int) + 1
 		}
-		
+
 		stats["total_commands"] = stats["total_commands"].(int) + agent.CommandsExecuted
 		stats["total_transfers"] = stats["total_transfers"].(int) + agent.FilesTransferred
-		
+
 		uptime := time.Since(agent.FirstContact).Hours()
 		totalUptime += uptime
 	}
-	
+
 	if len(am.agents) > 0 {
 		stats["average_uptime"] = totalUptime / float64(len(am.agents))
 	}
-	
+
 	return stats
 }
 
@@ -435,7 +549,7 @@ func (am *AgentMonitor) GetStats() map[string]interface{} {
 func (am *AgentMonitor) RegisterCallback(event string, callback func(*AgentHealth)) {
 	am.mutex.Lock()
 	defer am.mutex.Unlock()
-	
+
 	am.callbacks[event] = callback
 }
 
@@ -450,7 +564,7 @@ func (am *AgentMonitor) triggerCallback(event string, agent *AgentHealth) {
 func (am *AgentMonitor) monitorLoop() {
 	ticker := time.NewTicker(am.checkInterval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ticker.C:
@@ -465,14 +579,14 @@ func (am *AgentMonitor) monitorLoop() {
 func (am *AgentMonitor) checkAgentStatuses() {
 	am.mutex.Lock()
 	defer am.mutex.Unlock()
-	
+
 	now := time.Now()
-	
+
 	for _, agent := range am.agents {
 		timeSinceLastSeen := now.Sub(agent.LastSeen)
-		
+
 		oldStatus := agent.Status
-		
+
 		switch {
 		case timeSinceLastSeen > am.offlineWindow:
 			agent.Status = StatusOffline
@@ -485,7 +599,7 @@ func (am *AgentMonitor) checkAgentStatuses() {
 				agent.Status = StatusOnline
 			}
 		}
-		
+
 		// Trigger callbacks for status changes
 		if oldStatus != agent.Status {
 			switch agent.Status {
@@ -508,29 +622,29 @@ func (am *AgentMonitor) checkAgentStatuses() {
 // checkSecurityConcerns checks for security-related concerns
 func (am *AgentMonitor) checkSecurityConcerns(agent *AgentHealth) {
 	concerns := []string{}
-	
+
 	// Check for EDR/AV
 	if len(agent.SecurityInfo.RunningEDR) > 0 {
 		concerns = append(concerns, "EDR detected")
 	}
-	
+
 	if agent.SecurityInfo.AntivirusStatus == "active" {
 		concerns = append(concerns, "Active antivirus")
 	}
-	
+
 	if agent.SecurityInfo.PowerShellLogging {
 		concerns = append(concerns, "PowerShell logging enabled")
 	}
-	
+
 	if agent.SecurityInfo.ScriptBlockLogging {
 		concerns = append(concerns, "Script block logging enabled")
 	}
-	
+
 	if len(concerns) > 0 {
 		agent.Status = StatusSuspected
 		agent.Metadata["security_concerns"] = concerns
 		am.triggerCallback("security_concern", agent)
-		
+
 		LogError(AUDIT, fmt.Sprintf("Security concerns detected: %v", concerns), agent.ID)
 	}
 }
@@ -539,7 +653,7 @@ func (am *AgentMonitor) checkSecurityConcerns(agent *AgentHealth) {
 func (am *AgentMonitor) RemoveAgent(agentID string) {
 	am.mutex.Lock()
 	defer am.mutex.Unlock()
-	
+
 	if agent, exists := am.agents[agentID]; exists {
 		delete(am.agents, agentID)
 		am.triggerCallback("agent_removed", agent)
@@ -551,7 +665,7 @@ func (am *AgentMonitor) RemoveAgent(agentID string) {
 func (am *AgentMonitor) ExportAgentData() ([]byte, error) {
 	am.mutex.RLock()
 	defer am.mutex.RUnlock()
-	
+
 	return json.MarshalIndent(am.agents, "", "  ")
 }
 
@@ -561,14 +675,14 @@ func (am *AgentMonitor) ImportAgentData(data []byte) error {
 	if err := json.Unmarshal(data, &agents); err != nil {
 		return err
 	}
-	
+
 	am.mutex.Lock()
 	defer am.mutex.Unlock()
-	
+
 	for id, agent := range agents {
 		am.agents[id] = agent
 	}
-	
+
 	return nil
 }
 
@@ -576,7 +690,7 @@ func (am *AgentMonitor) ImportAgentData(data []byte) error {
 func (am *AgentMonitor) GetAgentHistory(agentID string, limit int) []ErrorInfo {
 	am.mutex.RLock()
 	defer am.mutex.RUnlock()
-	
+
 	if agent, exists := am.agents[agentID]; exists {
 		errors := agent.Errors
 		if len(errors) > limit {
@@ -584,7 +698,7 @@ func (am *AgentMonitor) GetAgentHistory(agentID string, limit int) []ErrorInfo {
 		}
 		return errors
 	}
-	
+
 	return nil
 }
 
@@ -592,17 +706,17 @@ func (am *AgentMonitor) GetAgentHistory(agentID string, limit int) []ErrorInfo {
 func (am *AgentMonitor) GetHighRiskAgents() []*AgentHealth {
 	am.mutex.RLock()
 	defer am.mutex.RUnlock()
-	
+
 	var riskAgents []*AgentHealth
-	
+
 	for _, agent := range am.agents {
 		isHighRisk := false
-		
+
 		// Check error rate
 		if agent.Performance.ErrorRate > 0.3 {
 			isHighRisk = true
 		}
-		
+
 		// Check recent errors
 		recentErrors := 0
 		oneHourAgo := time.Now().Add(-time.Hour)
@@ -614,18 +728,18 @@ func (am *AgentMonitor) GetHighRiskAgents() []*AgentHealth {
 		if recentErrors > 3 {
 			isHighRisk = true
 		}
-		
+
 		// Check security status
 		if agent.Status == StatusSuspected || agent.Status == StatusError {
 			isHighRisk = true
 		}
-		
+
 		if isHighRisk {
 			agentCopy := *agent
 			riskAgents = append(riskAgents, &agentCopy)
 		}
 	}
-	
+
 	return riskAgents
 }
 
@@ -633,12 +747,12 @@ func (am *AgentMonitor) GetHighRiskAgents() []*AgentHealth {
 func (am *AgentMonitor) GetPerformanceReport() map[string]interface{} {
 	am.mutex.RLock()
 	defer am.mutex.RUnlock()
-	
+
 	report := map[string]interface{}{
 		"timestamp": time.Now(),
 		"agents":    make([]map[string]interface{}, 0),
 	}
-	
+
 	for _, agent := range am.agents {
 		agentReport := map[string]interface{}{
 			"id":                agent.ID,
@@ -653,10 +767,10 @@ func (am *AgentMonitor) GetPerformanceReport() map[string]interface{} {
 			"transfer_rate_bps": agent.Performance.DataTransferRate,
 			"recent_errors":     len(agent.Errors),
 		}
-		
+
 		report["agents"] = append(report["agents"].([]map[string]interface{}), agentReport)
 	}
-	
+
 	return report
 }
 
@@ -670,19 +784,19 @@ func InitAgentMonitor() {
 		5*time.Minute,  // offline window
 		10*time.Second, // check interval
 	)
-	
+
 	// Register default callbacks
 	GlobalMonitor.RegisterCallback("agent_offline", func(agent *AgentHealth) {
 		LogAgentActivity(agent.ID, "offline_detected", "")
 	})
-	
+
 	GlobalMonitor.RegisterCallback("agent_reconnected", func(agent *AgentHealth) {
 		LogAgentActivity(agent.ID, "reconnected_detected", "")
 	})
-	
+
 	GlobalMonitor.RegisterCallback("security_concern", func(agent *AgentHealth) {
 		LogError(AUDIT, "Security concern detected", agent.ID)
 	})
-	
+
 	GlobalMonitor.Start()
 }

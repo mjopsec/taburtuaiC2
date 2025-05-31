@@ -1,0 +1,244 @@
+# Enhanced configuration file: config/taburtuai.yaml
+
+server:
+  # Basic server configuration
+  host: "0.0.0.0"
+  port: 8080
+  tls:
+    enabled: false
+    cert_file: "certs/server.crt"
+    key_file: "certs/server.key"
+    min_version: "1.2"
+  
+  # Performance settings
+  max_connections: 1000
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 120s
+
+# Security configuration
+security:
+  # Authentication
+  auth:
+    enabled: true
+    api_key: "${TABURTUAI_API_KEY}"
+    session_timeout: 24h
+    max_failed_attempts: 5
+    lockout_duration: 15m
+    
+  # Rate limiting
+  rate_limit:
+    enabled: true
+    requests_per_minute: 100
+    burst_size: 20
+    block_duration: 5m
+    
+  # Input validation
+  validation:
+    max_command_length: 10000
+    max_file_size: 100MB
+    allowed_file_types: [".txt", ".log", ".json", ".xml"]
+    blocked_patterns: ["rm -rf", "del /s", "format c:"]
+    
+  # Encryption
+  crypto:
+    algorithm: "AES-256-GCM"
+    key_rotation_interval: 24h
+    compression_enabled: true
+    obfuscation_enabled: true
+
+# Agent management
+agents:
+  # Monitoring
+  monitoring:
+    heartbeat_interval: 30s
+    offline_timeout: 5m
+    cleanup_interval: 1h
+    max_agents: 1000
+    
+  # Auto-grouping
+  auto_grouping:
+    enabled: true
+    by_os: true
+    by_network: true
+    by_privileges: true
+    
+  # Health checks
+  health_checks:
+    enabled: true
+    system_resources: true
+    security_products: true
+    network_connectivity: true
+
+# Command processing
+commands:
+  # Queue management
+  queue:
+    max_size_per_agent: 100
+    default_timeout: 300s
+    max_timeout: 3600s
+    cleanup_interval: 1h
+    
+  # Execution
+  execution:
+    max_concurrent: 50
+    sandbox_checks: true
+    validation_enabled: true
+    
+  # Modules
+  modules:
+    enabled: true
+    modules_dir: "./modules"
+    hot_reload: true
+    max_concurrent: 10
+
+# Logging configuration
+logging:
+  # General settings
+  level: "INFO"
+  format: "json"
+  output: ["file", "console"]
+  
+  # File settings
+  file:
+    path: "./logs/taburtuai.log"
+    max_size: 100MB
+    max_backups: 10
+    max_age: 30
+    compress: true
+    
+  # Categories
+  categories:
+    audit: true
+    security: true
+    performance: true
+    debug: false
+    
+  # Structured logging
+  structured:
+    enabled: true
+    include_caller: true
+    include_stack_trace: false
+
+# Database configuration (for future use)
+database:
+  type: "sqlite"
+  connection_string: "./data/taburtuai.db"
+  max_connections: 25
+  migration_auto: true
+  backup:
+    enabled: true
+    interval: 6h
+    retention: 30d
+
+# Networking
+networking:
+  # HTTP/HTTPS settings
+  cors:
+    enabled: true
+    origins: ["*"]
+    methods: ["GET", "POST", "PUT", "DELETE"]
+    headers: ["*"]
+    
+  # Proxy settings
+  proxy:
+    enabled: false
+    trust_x_forwarded: false
+    trusted_proxies: []
+    
+  # Domain fronting
+  domain_fronting:
+    enabled: false
+    front_domains: []
+
+# Features
+features:
+  # Dashboard
+  dashboard:
+    enabled: true
+    real_time_updates: true
+    websocket_enabled: true
+    max_connections: 100
+    
+  # File operations
+  file_operations:
+    enabled: true
+    max_upload_size: 100MB
+    allowed_paths: ["/tmp", "/var/tmp"]
+    encryption_required: true
+    
+  # Process management
+  process_management:
+    enabled: true
+    kill_protection: ["critical_system_processes"]
+    privilege_escalation: false
+    
+  # Persistence
+  persistence:
+    enabled: true
+    methods: ["registry", "cron", "service"]
+    auto_cleanup: true
+
+# Development settings
+development:
+  debug_mode: false
+  profiling_enabled: false
+  test_mode: false
+  mock_agents: false
+
+# Alerting and notifications
+alerts:
+  # Email notifications
+  email:
+    enabled: false
+    smtp_server: ""
+    smtp_port: 587
+    username: ""
+    password: ""
+    recipients: []
+    
+  # Webhook notifications
+  webhooks:
+    enabled: false
+    urls: []
+    timeout: 30s
+    retry_attempts: 3
+    
+  # Alert conditions
+  conditions:
+    agent_offline: true
+    security_events: true
+    high_error_rate: true
+    resource_exhaustion: true
+
+# Performance monitoring
+monitoring:
+  # Metrics
+  metrics:
+    enabled: true
+    interval: 30s
+    retention: 24h
+    
+  # Profiling
+  profiling:
+    enabled: false
+    cpu_profile: false
+    memory_profile: false
+    block_profile: false
+    
+  # Health checks
+  health:
+    enabled: true
+    endpoint: "/health"
+    detailed: false
+
+# Backup and recovery
+backup:
+  enabled: true
+  interval: 6h
+  retention: 30d
+  compression: true
+  encryption: true
+  storage:
+    type: "local"
+    path: "./backups"
