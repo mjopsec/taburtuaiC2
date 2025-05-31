@@ -23,12 +23,12 @@ func main() {
 	if interval < 1 {
 		interval = 30
 	}
-	
+
 	jitter, _ := strconv.ParseFloat(defaultJitter, 64)
 	if jitter < 0 || jitter > 1 {
 		jitter = 0.3
 	}
-	
+
 	config := &Config{
 		ServerURL:    defaultServerURL,
 		PrimaryKey:   defaultKey,
@@ -36,14 +36,14 @@ func main() {
 		Interval:     interval,
 		Jitter:       jitter,
 	}
-	
+
 	// Create and start agent
 	agent, err := NewAgent(config)
 	if err != nil {
 		fmt.Printf("[!] Failed to create agent: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	if err := agent.Start(); err != nil {
 		fmt.Printf("[!] Agent failed: %v\n", err)
 		os.Exit(1)
@@ -61,11 +61,11 @@ func generateUUID() string {
 			b[i] = byte((now >> (i * 8)) & 0xFF)
 		}
 	}
-	
+
 	// Set version and variant bits
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
-	
+
 	return fmt.Sprintf("%x-%x-%x-%x-%x",
 		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }

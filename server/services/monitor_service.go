@@ -3,6 +3,9 @@ package services
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -155,103 +158,171 @@ func (am *AgentMonitor) Stop() {
 }
 
 // RegisterAgent registers a new agent or updates existing one
-func (am *AgentMonitor) RegisterAgent(agentData map[string]interface{}) {
+func (am *AgentMonitor) RegisterAgent(agentData map[string]interface{}) error {
 	am.mutex.Lock()
 	defer am.mutex.Unlock()
 
-	// --- MODIFIKASI UNTUK VALIDASI ID ---
+	// Enhanced validation
+	if agentData == nil {
+		LogError(SYSTEM, "Agent registration failed: agentData is nil", "")
+		return fmt.Errorf("agent data cannot be nil")
+	}
+
 	idInterface, idExists := agentData["id"]
 	if !idExists {
-		LogError(SYSTEM, "Agent registration failed: 'id' field is missing in agentData.", "") //
-		// Anda bisa mengembalikan error atau hanya keluar dari fungsi
-		// tergantung bagaimana Anda ingin menangani agent tanpa ID.
-		// Untuk saat ini, kita akan keluar.
-		return
+		LogError(SYSTEM, "Agent registration failed: 'id' field is missing", "")
+		return fmt.Errorf("agent ID is required")
 	}
 
 	agentID, ok := idInterface.(string)
 	if !ok || agentID == "" {
-		LogError(SYSTEM, fmt.Sprintf("Agent registration failed: 'id' field is not a valid non-empty string. Received type: %T, value: %v", idInterface, idInterface), "") //
-		return
+		LogError(SYSTEM, fmt.Sprintf("Agent registration failed: invalid ID type %T or empty", idInterface), "")
+		return fmt.Errorf("agent ID must be a non-empty string")
 	}
-	// --- AKHIR MODIFIKASI VALIDASI ID ---
+
+	// Validate agent ID format (UUID)
+	if !isValidUUID(agentID) {
+		LogError(SYSTEM, fmt.Sprintf("Agent registration failed: invalid UUID format for %s", agentID), "")
+		return fmt.Errorf("agent ID must be a valid UUID")
+	}
+
+	// Validate required fields
+	if err := validateAgentData(agentData); err != nil {
+		LogError(SYSTEM, fmt.Sprintf("Agent registration failed: %v", err), agentID)
+		return err
+	}
 
 	now := time.Now()
-
 	agent, exists := am.agents[agentID]
+
 	if !exists {
-		agent = &AgentHealth{ //
+		agent = &AgentHealth{
 			ID:           agentID,
-			Status:       StatusOnline, //
+			Status:       StatusOnline,
 			FirstContact: now,
 			Metadata:     make(map[string]interface{}),
-			Errors:       make([]ErrorInfo, 0), //
+			Errors:       make([]ErrorInfo, 0),
 		}
 		am.agents[agentID] = agent
-		LogAgentActivity(agentID, "first_contact", "")                                       //
-		LogInfo(AGENT_CONNECTION, fmt.Sprintf("New agent registered: %s", agentID), agentID) //
+		LogAgentActivity(agentID, "first_contact", "")
+		LogInfo(AGENT_CONNECTION, fmt.Sprintf("New agent registered: %s", agentID), agentID)
 	} else {
-		LogInfo(AGENT_CONNECTION, fmt.Sprintf("Agent re-registered or updated: %s", agentID), agentID) //
+		LogInfo(AGENT_CONNECTION, fmt.Sprintf("Agent re-registered: %s", agentID), agentID)
 	}
 
-	// Update basic info
-	// Tambahkan pengecekan tipe data yang lebih aman di sini juga
-	if hostnameVal, okHostname := agentData["hostname"]; okHostname {
-		if hostname, typeOk := hostnameVal.(string); typeOk {
-			agent.Hostname = hostname
-		}
+	// Safe type assertions with validation
+	if hostname, ok := getString(agentData, "hostname"); ok {
+		agent.Hostname = hostname
 	}
-	if usernameVal, okUsername := agentData["username"]; okUsername {
-		if username, typeOk := usernameVal.(string); typeOk {
-			agent.Username = username
-		}
+	if username, ok := getString(agentData, "username"); ok {
+		agent.Username = username
 	}
-	// Lakukan hal yang sama untuk field lain seperti os, architecture, process_id, dll.
-	// Contoh untuk OS:
-	if osVal, okOS := agentData["os"]; okOS {
-		if osStr, typeOk := osVal.(string); typeOk {
-			agent.OS = osStr
-		}
+	if os, ok := getString(agentData, "os"); ok {
+		agent.OS = os
 	}
-	// Contoh untuk ProcessID (int):
-	if pidVal, okPID := agentData["process_id"]; okPID {
-		// JSON number unmarshal menjadi float64 secara default ke interface{}
-		if pidFloat, typeOk := pidVal.(float64); typeOk {
-			agent.ProcessID = int(pidFloat)
-		} else if pidInt, typeOk := pidVal.(int); typeOk { // Jika sudah int
-			agent.ProcessID = pidInt
-		}
+	if arch, ok := getString(agentData, "architecture"); ok {
+		agent.Architecture = arch
 	}
-	// ... dan seterusnya untuk field lain ...
-	if arch, ok := agentData["architecture"].(string); ok { //
-		agent.Architecture = arch //
+	if pid, ok := getInt(agentData, "process_id"); ok {
+		agent.ProcessID = pid
 	}
-	if ppidVal, okPPID := agentData["parent_process_id"]; okPPID { //
-		if ppidFloat, typeOk := ppidVal.(float64); typeOk {
-			agent.ParentProcessID = int(ppidFloat) //
-		} else if ppidInt, typeOk := ppidVal.(int); typeOk {
-			agent.ParentProcessID = ppidInt //
-		}
+	if ppid, ok := getInt(agentData, "parent_process_id"); ok {
+		agent.ParentProcessID = ppid
 	}
-	if privileges, ok := agentData["privileges"].(string); ok { //
-		agent.Privileges = privileges //
+	if privileges, ok := getString(agentData, "privileges"); ok {
+		agent.Privileges = privileges
 	}
 
 	agent.LastSeen = now
-	agent.LastHeartbeat = now // Anggap checkin juga sebagai heartbeat
+	agent.LastHeartbeat = now
 	agent.TotalConnections++
 
-	// Update status to online if it was offline or error
-	if agent.Status == StatusOffline || agent.Status == StatusError || agent.Status == StatusDormant { //
-		oldStatus := agent.Status
-		agent.Status = StatusOnline                                                                                                //
-		LogInfo(AGENT_CONNECTION, fmt.Sprintf("Agent %s status changed from %s to %s", agentID, oldStatus, agent.Status), agentID) //
+	// Update status logic
+	oldStatus := agent.Status
+	if agent.Status == StatusOffline || agent.Status == StatusError || agent.Status == StatusDormant {
+		agent.Status = StatusOnline
+		LogInfo(AGENT_CONNECTION, fmt.Sprintf("Agent %s status changed from %s to %s", agentID, oldStatus, agent.Status), agentID)
 		am.triggerCallback("agent_reconnected", agent)
-	} else if agent.Status != StatusOnline { // Jika statusnya belum online (misal baru pertama kali)
-		agent.Status = StatusOnline //
+	} else {
+		agent.Status = StatusOnline
 	}
 
-	LogAgentActivity(agentID, "heartbeat_via_checkin", "") //
+	LogAgentActivity(agentID, "heartbeat_via_checkin", "")
+	return nil
+}
+
+// Helper functions for safe type conversion
+func getString(data map[string]interface{}, key string) (string, bool) {
+	if val, exists := data[key]; exists {
+		if str, ok := val.(string); ok && str != "" {
+			return strings.TrimSpace(str), true
+		}
+	}
+	return "", false
+}
+
+func getInt(data map[string]interface{}, key string) (int, bool) {
+	if val, exists := data[key]; exists {
+		switch v := val.(type) {
+		case int:
+			return v, true
+		case float64:
+			return int(v), true
+		case string:
+			if i, err := strconv.Atoi(v); err == nil {
+				return i, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func isValidUUID(uuid string) bool {
+	r := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	return r.MatchString(strings.ToLower(uuid))
+}
+
+func validateAgentData(data map[string]interface{}) error {
+	required := []string{"id", "hostname", "username", "os"}
+
+	for _, field := range required {
+		if val, exists := data[field]; !exists || val == "" {
+			return fmt.Errorf("required field '%s' is missing or empty", field)
+		}
+	}
+
+	// Validate hostname
+	if hostname, ok := data["hostname"].(string); ok {
+		if len(hostname) > 255 {
+			return fmt.Errorf("hostname too long (max 255 characters)")
+		}
+		if !isValidHostname(hostname) {
+			return fmt.Errorf("invalid hostname format")
+		}
+	}
+
+	// Validate OS
+	if osName, ok := data["os"].(string); ok {
+		validOS := map[string]bool{
+			"windows": true, "linux": true, "darwin": true,
+			"freebsd": true, "openbsd": true, "netbsd": true,
+		}
+		if !validOS[strings.ToLower(osName)] {
+			return fmt.Errorf("unsupported OS: %s", osName)
+		}
+	}
+
+	return nil
+}
+
+func isValidHostname(hostname string) bool {
+	if len(hostname) == 0 || len(hostname) > 255 {
+		return false
+	}
+
+	// Basic hostname validation regex
+	r := regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$`)
+	return r.MatchString(hostname)
 }
 
 // UpdateAgentSystemInfo updates system information for an agent

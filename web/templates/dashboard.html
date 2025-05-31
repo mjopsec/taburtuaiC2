@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{.title}}</title>
+    <title>Taburtuai C2 - Enhanced Dashboard</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -12,247 +13,1197 @@
         }
         
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #0a0e1a;
+            color: #ffffff;
             min-height: 100vh;
-            padding: 20px;
         }
         
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 15px;
-            padding: 30px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-            backdrop-filter: blur(10px);
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 260px;
+            height: 100vh;
+            background: linear-gradient(135deg, #1a1f36 0%, #2d3561 100%);
+            padding: 20px;
+            z-index: 1000;
+            border-right: 1px solid #374151;
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #374151;
+        }
+        
+        .logo i {
+            font-size: 2em;
+            color: #00d4ff;
+        }
+        
+        .logo h2 {
+            font-size: 1.4em;
+            font-weight: 700;
+        }
+        
+        .nav-menu {
+            list-style: none;
+        }
+        
+        .nav-item {
+            margin-bottom: 8px;
+        }
+        
+        .nav-link {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            color: #d1d5db;
+            text-decoration: none;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+        }
+        
+        .nav-link:hover, .nav-link.active {
+            background: rgba(0, 212, 255, 0.1);
+            color: #00d4ff;
+        }
+        
+        .main-content {
+            margin-left: 260px;
+            padding: 20px;
+            min-height: 100vh;
         }
         
         .header {
-            text-align: center;
-            margin-bottom: 40px;
-            border-bottom: 2px solid #e9ecef;
-            padding-bottom: 20px;
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: linear-gradient(135deg, #1f2937 0%, #374151 100%);
+            border-radius: 12px;
+            border: 1px solid #4b5563;
         }
         
         .header h1 {
-            font-size: 2.5em;
-            color: #2c3e50;
-            margin-bottom: 10px;
+            font-size: 2em;
+            font-weight: 700;
         }
         
-        .header p {
-            color: #7f8c8d;
-            font-size: 1.1em;
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: #10b981;
+            color: white;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 500;
         }
         
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
             gap: 20px;
-            margin: 30px 0;
+            margin-bottom: 30px;
         }
         
         .stat-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 25px;
-            border-radius: 10px;
-            text-align: center;
-            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
-            transition: transform 0.3s ease;
+            background: linear-gradient(135deg, #1f2937 0%, #374151 100%);
+            padding: 24px;
+            border-radius: 12px;
+            border: 1px solid #4b5563;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
         }
         
         .stat-card:hover {
-            transform: translateY(-5px);
+            transform: translateY(-4px);
+            box-shadow: 0 12px 24px rgba(0, 212, 255, 0.15);
         }
         
-        .stat-number {
-            font-size: 3em;
-            font-weight: bold;
-            margin-bottom: 10px;
+        .stat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
         }
         
-        .stat-label {
-            font-size: 1.1em;
-            opacity: 0.9;
-        }
-        
-        .section {
-            background: #f8f9fa;
-            padding: 25px;
-            border-radius: 10px;
-            margin: 20px 0;
-        }
-        
-        .section h3 {
-            color: #2c3e50;
-            margin-bottom: 15px;
-            font-size: 1.3em;
-        }
-        
-        .endpoint {
-            font-family: 'Courier New', monospace;
-            background: #e9ecef;
-            padding: 10px 15px;
-            margin: 8px 0;
-            border-radius: 5px;
-            border-left: 4px solid #667eea;
+        .stat-title {
+            color: #9ca3af;
             font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
         
-        .footer {
-            text-align: center;
-            margin-top: 40px;
-            padding-top: 20px;
-            border-top: 2px solid #e9ecef;
-            color: #7f8c8d;
+        .stat-icon {
+            font-size: 1.5em;
+            color: #00d4ff;
         }
         
-        .status-indicator {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            margin-right: 8px;
+        .stat-value {
+            font-size: 2.5em;
+            font-weight: 700;
+            margin-bottom: 8px;
         }
         
-        .status-online {
-            background: #28a745;
+        .stat-change {
+            font-size: 0.85em;
+            color: #10b981;
         }
         
-        .status-offline {
-            background: #dc3545;
+        .dashboard-section {
+            background: linear-gradient(135deg, #1f2937 0%, #374151 100%);
+            border-radius: 12px;
+            border: 1px solid #4b5563;
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+        
+        .section-header {
+            padding: 20px;
+            border-bottom: 1px solid #4b5563;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .section-title {
+            font-size: 1.3em;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
         
         .btn {
-            display: inline-block;
-            padding: 10px 20px;
-            background: #667eea;
-            color: white;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: #00d4ff;
+            color: #0a0e1a;
             text-decoration: none;
-            border-radius: 5px;
-            margin: 5px;
-            transition: background 0.3s ease;
+            border-radius: 6px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
         }
         
         .btn:hover {
-            background: #5a6fd8;
+            background: #00b8d4;
+            transform: translateY(-1px);
+        }
+        
+        .btn-secondary {
+            background: #374151;
+            color: #ffffff;
+        }
+        
+        .btn-secondary:hover {
+            background: #4b5563;
+        }
+        
+        .agents-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .agents-table th,
+        .agents-table td {
+            padding: 16px;
+            text-align: left;
+            border-bottom: 1px solid #374151;
+        }
+        
+        .agents-table th {
+            background: #1f2937;
+            font-weight: 600;
+            color: #9ca3af;
+            text-transform: uppercase;
+            font-size: 0.85em;
+            letter-spacing: 0.05em;
+        }
+        
+        .agents-table tbody tr:hover {
+            background: rgba(0, 212, 255, 0.05);
+        }
+        
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: 500;
+        }
+        
+        .status-online {
+            background: rgba(16, 185, 129, 0.2);
+            color: #10b981;
+        }
+        
+        .status-offline {
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+        }
+        
+        .status-dormant {
+            background: rgba(245, 158, 11, 0.2);
+            color: #f59e0b;
+        }
+        
+        .command-terminal {
+            background: #111827;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px;
+            font-family: 'JetBrains Mono', 'Courier New', monospace;
+        }
+        
+        .terminal-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        
+        .terminal-button {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        
+        .terminal-button.red { background: #ef4444; }
+        .terminal-button.yellow { background: #f59e0b; }
+        .terminal-button.green { background: #10b981; }
+        
+        .terminal-input {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .terminal-prompt {
+            color: #00d4ff;
+        }
+        
+        .terminal-command {
+            background: transparent;
+            border: none;
+            color: #ffffff;
+            font-family: inherit;
+            flex: 1;
+            outline: none;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 10000;
+        }
+        
+        .modal-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #1f2937;
+            border-radius: 12px;
+            border: 1px solid #4b5563;
+            padding: 30px;
+            max-width: 600px;
+            width: 90%;
         }
     </style>
 </head>
 <body>
-    <div class="container">
+    <div class="sidebar">
+        <div class="logo">
+            <i class="fas fa-satellite-dish"></i>
+            <h2>Taburtuai C2</h2>
+        </div>
+        
+        <nav>
+            <ul class="nav-menu">
+                <li class="nav-item">
+                    <a href="#dashboard" class="nav-link active" data-section="dashboard">
+                        <i class="fas fa-chart-pie"></i>
+                        Dashboard
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="#agents" class="nav-link" data-section="agents">
+                        <i class="fas fa-laptop"></i>
+                        Agents
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="#commands" class="nav-link" data-section="commands">
+                        <i class="fas fa-terminal"></i>
+                        Commands
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="#files" class="nav-link" data-section="files">
+                        <i class="fas fa-file-alt"></i>
+                        File Manager
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="#logs" class="nav-link" data-section="logs">
+                        <i class="fas fa-list-alt"></i>
+                        Logs
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="#settings" class="nav-link" data-section="settings">
+                        <i class="fas fa-cog"></i>
+                        Settings
+                    </a>
+                </li>
+            </ul>
+        </nav>
+    </div>
+    
+    <div class="main-content">
         <div class="header">
-            <h1>🚀 Taburtuai C2 Dashboard</h1>
-            <p>Phase 1 Enhanced - Command & Control Management Interface</p>
-        </div>
-        
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-number" id="total-agents">0</div>
-                <div class="stat-label">Total Agents</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="online-agents">0</div>
-                <div class="stat-label">Online Agents</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="offline-agents">0</div>
-                <div class="stat-label">Offline Agents</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="total-commands">0</div>
-                <div class="stat-label">Commands Executed</div>
+            <div>
+                <h1>Command & Control Dashboard</h1>
+                <div class="status-badge">
+                    <i class="fas fa-circle"></i>
+                    Server Online
+                </div>
             </div>
         </div>
         
-        <div class="section">
-            <h3>🔗 API Endpoints</h3>
-            <div class="endpoint">GET /api/v1/agents - List all connected agents</div>
-            <div class="endpoint">GET /api/v1/agents/{id} - Get detailed agent information</div>
-            <div class="endpoint">POST /api/v1/checkin - Agent check-in and registration</div>
-            <div class="endpoint">GET /api/v1/stats - Server statistics and metrics</div>
-            <div class="endpoint">GET /api/v1/health - Health check endpoint</div>
-            <div class="endpoint">GET /api/v1/logs - Recent server logs</div>
-            <div class="endpoint">GET /api/v1/history/{id} - Agent command history</div>
+        <!-- Dashboard Section -->
+        <div id="dashboard-content" class="content-section">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-title">Total Agents</span>
+                        <i class="fas fa-laptop stat-icon"></i>
+                    </div>
+                    <div class="stat-value" id="total-agents">0</div>
+                    <div class="stat-change">↗ Active Connections</div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-title">Online</span>
+                        <i class="fas fa-wifi stat-icon"></i>
+                    </div>
+                    <div class="stat-value" id="online-agents">0</div>
+                    <div class="stat-change">Ready for commands</div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-title">Commands Executed</span>
+                        <i class="fas fa-bolt stat-icon"></i>
+                    </div>
+                    <div class="stat-value" id="total-commands">0</div>
+                    <div class="stat-change">Total operations</div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-title">Queue Status</span>
+                        <i class="fas fa-clock stat-icon"></i>
+                    </div>
+                    <div class="stat-value" id="queue-pending">0</div>
+                    <div class="stat-change">Pending tasks</div>
+                </div>
+            </div>
+            
+            <div class="dashboard-section">
+                <div class="section-header">
+                    <h3 class="section-title">
+                        <i class="fas fa-laptop"></i>
+                        Recent Agent Activity
+                    </h3>
+                    <button class="btn" onclick="refreshAgents()">
+                        <i class="fas fa-sync-alt"></i>
+                        Refresh
+                    </button>
+                </div>
+                
+                <table class="agents-table">
+                    <thead>
+                        <tr>
+                            <th>Agent ID</th>
+                            <th>Hostname</th>
+                            <th>OS</th>
+                            <th>Status</th>
+                            <th>Last Seen</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="agents-table-body">
+                        <!-- Dynamic content -->
+                    </tbody>
+                </table>
+            </div>
         </div>
         
-        <div class="section">
-            <h3>🖥️ CLI Interface Commands</h3>
-            <div class="endpoint"># Setup environment</div>
-            <div class="endpoint">export TABURTUAI_SERVER=http://localhost:8080</div>
-            <div class="endpoint">export TABURTUAI_API_KEY=your-api-key</div>
-            <div class="endpoint"></div>
-            <div class="endpoint"># Agent management</div>
-            <div class="endpoint">taburtuai-cli agents list</div>
-            <div class="endpoint">taburtuai-cli agents info [agent-id]</div>
-            <div class="endpoint"></div>
-            <div class="endpoint"># Command execution</div>
-            <div class="endpoint">taburtuai-cli cmd [agent-id] "whoami"</div>
-            <div class="endpoint">taburtuai-cli history [agent-id]</div>
-            <div class="endpoint"></div>
-            <div class="endpoint"># File operations</div>
-            <div class="endpoint">taburtuai-cli files upload [local] [remote]</div>
-            <div class="endpoint">taburtuai-cli files download [agent-id] [remote] [local]</div>
+        <div id="logs-content" class="content-section" style="display: none;">
+            <div class="dashboard-section">
+                <div class="section-header">
+                    <h3 class="section-title">
+                        <i class="fas fa-list-alt"></i>
+                        Server Logs
+                    </h3>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <select id="log-level-filter" style="padding: 8px; background: #374151; border: 1px solid #4b5563; border-radius: 4px; color: white;">
+                            <option value="">All Levels</option>
+                            <option value="INFO">INFO</option>
+                            <option value="WARN">WARN</option>
+                            <option value="ERROR">ERROR</option>
+                            <option value="DEBUG">DEBUG</option>
+                        </select>
+                        <select id="log-category-filter" style="padding: 8px; background: #374151; border: 1px solid #4b5563; border-radius: 4px; color: white;">
+                            <option value="">All Categories</option>
+                            <option value="SYSTEM">SYSTEM</option>
+                            <option value="COMMAND_EXEC">COMMAND_EXEC</option>
+                            <option value="AUDIT">AUDIT</option>
+                            <option value="AGENT">AGENT</option>
+                        </select>
+                        <input type="number" id="log-limit" min="10" max="1000" value="100" placeholder="Limit" 
+                               style="width: 80px; padding: 8px; background: #374151; border: 1px solid #4b5563; border-radius: 4px; color: white;">
+                        <button class="btn" onclick="refreshLogs()">
+                            <i class="fas fa-sync-alt"></i>
+                            Refresh
+                        </button>
+                        <button class="btn btn-secondary" onclick="clearLogsDisplay()">
+                            <i class="fas fa-trash"></i>
+                            Clear
+                        </button>
+                        <label style="display: flex; align-items: center; gap: 5px; color: white;">
+                            <input type="checkbox" id="auto-refresh-logs" onchange="toggleAutoRefresh()">
+                            Auto Refresh (5s)
+                        </label>
+                    </div>
+                </div>
+                
+                <div style="padding: 20px;">
+                    <div id="logs-container" style="background: #111827; border-radius: 8px; padding: 15px; font-family: 'Courier New', monospace; white-space: pre-wrap; max-height: 600px; overflow-y: auto; border: 1px solid #374151;">
+                        <div style="color: #9ca3af; text-align: center; padding: 20px;">
+                            Click "Refresh" to load logs
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
-        
-        <div class="section">
-            <h3>📊 Quick Actions</h3>
-            <a href="/api/v1/agents" class="btn">View Agents (JSON)</a>
-            <a href="/api/v1/stats" class="btn">Server Stats</a>
-            <a href="/api/v1/health" class="btn">Health Check</a>
-            <a href="/api/v1/logs" class="btn">Recent Logs</a>
-        </div>
-        
-        <div class="footer">
-            <p><strong>Server Status:</strong> <span class="status-indicator status-online"></span>Online</p>
-            <p><strong>Version:</strong> Taburtuai C2 v2.0 - Phase 1 Enhanced</p>
-            <p><strong>Uptime:</strong> <span id="uptime">Loading...</span></p>
-            <p style="margin-top: 15px;">⚠️ <strong>Legal Notice:</strong> This tool is for educational and authorized penetration testing purposes only.</p>
+
+        <!-- Commands Section -->
+        <div id="commands-content" class="content-section" style="display: none;">
+            <div class="dashboard-section">
+                <div class="section-header">
+                    <h3 class="section-title">
+                        <i class="fas fa-terminal"></i>
+                        Command Interface
+                    </h3>
+                </div>
+                
+                <div class="command-terminal">
+                    <div class="terminal-header">
+                        <div class="terminal-button red"></div>
+                        <div class="terminal-button yellow"></div>
+                        <div class="terminal-button green"></div>
+                        <span style="margin-left: 10px; color: #9ca3af;">Taburtuai C2 Terminal</span>
+                    </div>
+                    
+                    <div class="terminal-input">
+                        <span class="terminal-prompt">taburtuai@server:~$</span>
+                        <input type="text" class="terminal-command" placeholder="Enter command..." id="command-input">
+                        <button class="btn" onclick="executeCommand()">
+                            <i class="fas fa-play"></i>
+                            Execute
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="command-output" style="margin: 20px; padding: 20px; background: #111827; border-radius: 8px; font-family: monospace; white-space: pre-wrap;"></div>
+            </div>
         </div>
     </div>
     
     <script>
-        // Auto-refresh stats every 10 seconds
+        // Dashboard functionality
+        let currentSection = 'dashboard';
+        
+        // Navigation
+        document.querySelectorAll('.nav-link').forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const section = e.target.closest('.nav-link').dataset.section;
+                showSection(section);
+            });
+        });
+        
+        function showSection(sectionName) {
+            // Hide all sections
+            document.querySelectorAll('.content-section').forEach(section => {
+                section.style.display = 'none';
+            });
+            
+            // Show target section
+            const targetSection = document.getElementById(sectionName + '-content');
+            if (targetSection) {
+                targetSection.style.display = 'block';
+            }
+            
+            // Update navigation
+            document.querySelectorAll('.nav-link').forEach(link => {
+                link.classList.remove('active');
+            });
+            document.querySelector(`[data-section="${sectionName}"]`).classList.add('active');
+            
+            currentSection = sectionName;
+        }
+        
+        // Real-time data updates
         function updateStats() {
             fetch('/api/v1/stats')
                 .then(response => response.json())
                 .then(data => {
+                    console.log('Stats response:', data); // Debug log
                     if (data.success) {
-                        const agents = data.data.agents;
+                        // Handle nested structure
+                        let agents;
+                        if (data.data && data.data.result && data.data.result.agents) {
+                            agents = data.data.result;
+                        } else if (data.data && data.data.agents) {
+                            agents = data.data.agents;
+                        } else {
+                            console.warn('Unexpected stats structure:', data.data);
+                            return;
+                        }
+                        
                         document.getElementById('total-agents').textContent = agents.total_agents || 0;
                         document.getElementById('online-agents').textContent = agents.online_agents || 0;
-                        document.getElementById('offline-agents').textContent = agents.offline_agents || 0;
                         document.getElementById('total-commands').textContent = agents.total_commands || 0;
                     }
                 })
-                .catch(error => console.log('Stats update failed:', error));
-        }
-        
-        function updateUptime() {
-            fetch('/api/v1/health')
+                .catch(error => console.error('Stats update failed:', error));
+                
+            // Update queue stats
+            fetch('/api/v1/queue/stats')
                 .then(response => response.json())
                 .then(data => {
-                    if (data.success && data.data.timestamp) {
-                        const now = new Date();
-                        const serverTime = new Date(data.data.timestamp);
-                        // This is a simple approximation
-                        document.getElementById('uptime').textContent = 'Active';
+                    console.log('Queue stats response:', data); // Debug log
+                    if (data.success) {
+                        // Handle nested structure
+                        let queueData;
+                        if (data.data && data.data.result) {
+                            queueData = data.data.result;
+                        } else {
+                            queueData = data.data;
+                        }
+                        
+                        document.getElementById('queue-pending').textContent = queueData.total_queued || 0;
+                    }
+                })
+                .catch(error => console.error('Queue stats update failed:', error));
+        }
+        
+        function refreshAgents() {
+            fetch('/api/v1/agents')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Agents response:', data); // Debug log
+                    if (data.success) {
+                        // Handle nested structure dari server
+                        let agents = [];
+                        if (data.data && data.data.result && data.data.result.agents) {
+                            agents = data.data.result.agents;
+                        } else if (data.data && data.data.agents) {
+                            agents = data.data.agents;
+                        } else {
+                            console.warn('Unexpected agents structure:', data.data);
+                            return;
+                        }
+                        
+                        updateAgentsTable(agents);
+                    }
+                })
+                .catch(error => console.error('Agents refresh failed:', error));
+        }
+        
+        function updateAgentsTable(agents) {
+            const tbody = document.getElementById('agents-table-body');
+            tbody.innerHTML = '';
+            
+            agents.forEach(agent => {
+                const row = document.createElement('tr');
+                
+                const statusClass = agent.status === 'online' ? 'status-online' : 
+                                  agent.status === 'offline' ? 'status-offline' : 'status-dormant';
+                
+                const lastSeen = agent.last_seen ? 
+                    new Date(agent.last_seen).toLocaleString() : 'Never';
+                
+                row.innerHTML = `
+                    <td>${agent.id.substring(0, 8)}...</td>
+                    <td>${agent.hostname || 'Unknown'}</td>
+                    <td><i class="fab fa-${getOSIcon(agent.os)}"></i> ${agent.os || 'Unknown'}</td>
+                    <td>
+                        <span class="status-indicator ${statusClass}">
+                            <i class="fas fa-circle"></i>
+                            ${agent.status}
+                        </span>
+                    </td>
+                    <td>${lastSeen}</td>
+                    <td>
+                        <button class="btn btn-secondary" onclick="showAgentDetails('${agent.id}')">
+                            <i class="fas fa-info-circle"></i>
+                            Details
+                        </button>
+                        <button class="btn" onclick="openCommandModal('${agent.id}')">
+                            <i class="fas fa-terminal"></i>
+                            Command
+                        </button>
+                    </td>
+                `;
+                
+                tbody.appendChild(row);
+            });
+        }
+        
+        function getOSIcon(os) {
+            switch(os?.toLowerCase()) {
+                case 'windows': return 'windows';
+                case 'linux': return 'linux';
+                case 'darwin': return 'apple';
+                default: return 'desktop';
+            }
+        }
+        
+        function showAgentDetails(agentId) {
+            console.log('Fetching details for agent:', agentId); // Debug log
+            
+            fetch(`/api/v1/agents/${agentId}`)
+                .then(response => {
+                    console.log('Agent details response status:', response.status);
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Agent details response data:', data);
+                    
+                    if (data.success) {
+                        // Handle nested response structure
+                        let agent;
+                        if (data.data && data.data.result) {
+                            agent = data.data.result;
+                        } else {
+                            agent = data.data;
+                        }
+                        
+                        if (agent) {
+                            displayAgentModal(agent);
+                        } else {
+                            console.error('No agent data found in response');
+                            alert('Failed to load agent details: No data found');
+                        }
+                    } else {
+                        console.error('Failed to fetch agent details:', data.error);
+                        alert('Failed to load agent details: ' + (data.error || 'Unknown error'));
                     }
                 })
                 .catch(error => {
-                    document.getElementById('uptime').textContent = 'Unknown';
+                    console.error('Agent details request failed:', error);
+                    alert('Failed to load agent details: ' + error.message);
                 });
         }
         
-        // Initial load
-        updateStats();
-        updateUptime();
+        function displayAgentModal(agent) {
+            const modal = document.createElement('div');
+            modal.className = 'modal';
+            modal.style.display = 'block';
+            
+            modal.innerHTML = `
+                <div class="modal-content">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h2><i class="fas fa-laptop"></i> Agent Details</h2>
+                        <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div>
+                            <h4>Basic Information</h4>
+                            <p><strong>ID:</strong> ${agent.id}</p>
+                            <p><strong>Hostname:</strong> ${agent.hostname || 'Unknown'}</p>
+                            <p><strong>Username:</strong> ${agent.username || 'Unknown'}</p>
+                            <p><strong>OS:</strong> ${agent.os || 'Unknown'}</p>
+                            <p><strong>Architecture:</strong> ${agent.architecture || 'Unknown'}</p>
+                        </div>
+                        
+                        <div>
+                            <h4>Status Information</h4>
+                            <p><strong>Status:</strong> ${agent.status}</p>
+                            <p><strong>Last Seen:</strong> ${agent.last_seen ? new Date(agent.last_seen).toLocaleString() : 'Never'}</p>
+                            <p><strong>Commands Executed:</strong> ${agent.commands_executed || 0}</p>
+                            <p><strong>Files Transferred:</strong> ${agent.files_transferred || 0}</p>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 20px; display: flex; gap: 10px;">
+                        <button class="btn" onclick="openCommandModal('${agent.id}')">
+                            <i class="fas fa-terminal"></i> Execute Command
+                        </button>
+                        <button class="btn btn-secondary" onclick="showAgentHistory('${agent.id}')">
+                            <i class="fas fa-history"></i> View History
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            
+            // Close modal on background click
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.remove();
+                }
+            });
+        }
         
-        // Auto-refresh every 10 seconds
-        setInterval(updateStats, 10000);
-        setInterval(updateUptime, 30000);
+        function openCommandModal(agentId) {
+            const modal = document.createElement('div');
+            modal.className = 'modal';
+            modal.style.display = 'block';
+            
+            modal.innerHTML = `
+                <div class="modal-content">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h2><i class="fas fa-terminal"></i> Execute Command</h2>
+                        <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 5px;">Target Agent:</label>
+                        <input type="text" value="${agentId}" readonly style="width: 100%; padding: 8px; background: #374151; border: 1px solid #4b5563; border-radius: 4px; color: white;">
+                    </div>
+                    
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 5px;">Command:</label>
+                        <input type="text" id="modal-command" placeholder="Enter command to execute..." style="width: 100%; padding: 8px; background: #374151; border: 1px solid #4b5563; border-radius: 4px; color: white;">
+                    </div>
+                    
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 5px;">Timeout (seconds):</label>
+                        <input type="number" id="modal-timeout" value="300" style="width: 100%; padding: 8px; background: #374151; border: 1px solid #4b5563; border-radius: 4px; color: white;">
+                    </div>
+                    
+                    <div style="display: flex; gap: 10px;">
+                        <button class="btn" onclick="executeModalCommand('${agentId}')">
+                            <i class="fas fa-play"></i> Execute
+                        </button>
+                        <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">
+                            Cancel
+                        </button>
+                    </div>
+                    
+                    <div id="modal-output" style="margin-top: 20px; padding: 15px; background: #111827; border-radius: 8px; font-family: monospace; white-space: pre-wrap; display: none;"></div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            
+            // Focus on command input
+            document.getElementById('modal-command').focus();
+            
+            // Enter key to execute
+            document.getElementById('modal-command').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    executeModalCommand(agentId);
+                }
+            });
+        }
+        
+        function executeModalCommand(agentId) {
+            const command = document.getElementById('modal-command').value;
+            const timeout = document.getElementById('modal-timeout').value;
+            const output = document.getElementById('modal-output');
+            
+            if (!command.trim()) {
+                alert('Please enter a command');
+                return;
+            }
+            
+            output.style.display = 'block';
+            output.textContent = 'Executing command...\n';
+            
+            const payload = {
+                agent_id: agentId,
+                command: command,
+                timeout: parseInt(timeout) || 300
+            };
+            
+            console.log('Sending command payload:', payload); // Debug log
+            
+            fetch('/api/v1/command', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(response => {
+                console.log('Command response status:', response.status); // Debug log
+                return response.json();
+            })
+            .then(data => {
+                console.log('Command response data:', data); // Debug log
+                
+                if (data.success) {
+                    // Handle nested response structure
+                    let commandId;
+                    
+                    if (data.data && data.data.result && data.data.result.command_id) {
+                        commandId = data.data.result.command_id;
+                        console.log('Found command_id in nested result structure:', commandId);
+                    } else if (data.data && data.data.command_id) {
+                        commandId = data.data.command_id;
+                        console.log('Found command_id in direct structure:', commandId);
+                    } else {
+                        console.error('No command_id found in response:', data);
+                        output.textContent += `Error: No command ID returned from server\n`;
+                        output.textContent += `Response data: ${JSON.stringify(data, null, 2)}\n`;
+                        return;
+                    }
+                    
+                    output.textContent += `Command queued with ID: ${commandId}\nWaiting for execution...\n`;
+                    
+                    // Poll for results
+                    pollCommandResult(commandId, output);
+                } else {
+                    output.textContent += `Error: ${data.error || 'Unknown error'}\n`;
+                    console.error('Server error:', data.error);
+                }
+            })
+            .catch(error => {
+                output.textContent += `Request failed: ${error}\n`;
+                console.error('Request error:', error);
+            });
+        }
+
+        function pollCommandResult(commandId, outputElement) {
+            if (!commandId || commandId === 'undefined') {
+                outputElement.textContent += `\nError: Invalid command ID for polling\n`;
+                return;
+            }
+            
+            let pollCount = 0;
+            const maxPolls = 60; // Max 2 minutes of polling (2 second intervals)
+            
+            const poll = () => {
+                pollCount++;
+                
+                if (pollCount > maxPolls) {
+                    outputElement.textContent += `\nPolling timeout after ${maxPolls * 2} seconds\n`;
+                    return;
+                }
+                
+                console.log(`Polling command status (attempt ${pollCount}):`, commandId);
+                
+                fetch(`/api/v1/command/${commandId}/status`)
+                    .then(response => {
+                        console.log('Status response status:', response.status);
+                        return response.json();
+                    })
+                    .then(data => {
+                        console.log('Status response data:', data);
+                        
+                        if (data.success && data.data) {
+                            // Handle nested response structure for status
+                            let cmd;
+                            
+                            if (data.data.result) {
+                                cmd = data.data.result;
+                                console.log('Found command status in nested result structure');
+                            } else {
+                                cmd = data.data;
+                                console.log('Found command status in direct structure');
+                            }
+                            
+                            if (!cmd) {
+                                outputElement.textContent += `.`; // Show progress
+                                setTimeout(poll, 2000); // Poll every 2 seconds
+                                return;
+                            }
+                            
+                            const status = cmd.status || 'unknown';
+                            console.log('Command status:', status);
+                            
+                            if (status === 'completed' || status === 'failed' || status === 'timeout') {
+                                outputElement.textContent += `\n\nStatus: ${status}\n`;
+                                
+                                if (cmd.output) {
+                                    outputElement.textContent += `Output:\n${cmd.output}\n`;
+                                }
+                                
+                                if (cmd.error) {
+                                    outputElement.textContent += `Error:\n${cmd.error}\n`;
+                                }
+                                
+                                if (cmd.exit_code !== undefined) {
+                                    outputElement.textContent += `Exit Code: ${cmd.exit_code}\n`;
+                                }
+                                
+                                // Scroll to bottom
+                                outputElement.scrollTop = outputElement.scrollHeight;
+                                return; // Stop polling
+                            } else {
+                                outputElement.textContent += `.`; // Show progress
+                                setTimeout(poll, 2000); // Continue polling every 2 seconds
+                            }
+                        } else {
+                            console.error('Status check failed:', data.error);
+                            outputElement.textContent += `\nStatus check failed: ${data.error || 'Unknown error'}\n`;
+                            return; // Stop polling on error
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Polling error:', error);
+                        outputElement.textContent += `\nPolling error: ${error}\n`;
+                        // Continue polling on network errors, might be temporary
+                        setTimeout(poll, 3000); // Wait a bit longer on errors
+                    });
+            };
+            
+            // Start polling after a short delay
+            setTimeout(poll, 1000);
+        }
+        
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', () => {
+            updateStats();
+            refreshAgents();
+            
+            // Auto-refresh every 10 seconds
+            setInterval(updateStats, 10000);
+            setInterval(refreshAgents, 15000);
+        });
+        
+        // Command execution from main terminal
+        function executeCommand() {
+            const input = document.getElementById('command-input');
+            const command = input.value.trim();
+            
+            if (!command) return;
+            
+            const output = document.getElementById('command-output');
+            output.textContent += `$ ${command}\n`;
+            
+            // Simple command parsing - in real implementation, this would be more sophisticated
+            if (command.startsWith('agents')) {
+                output.textContent += 'Use the Agents section for agent management\n\n';
+            } else if (command === 'help') {
+                output.textContent += `Available commands:
+- agents: View agent management section
+- stats: Show current statistics
+- clear: Clear terminal
+- help: Show this help\n\n`;
+            } else if (command === 'clear') {
+                output.textContent = '';
+            } else if (command === 'stats') {
+                fetch('/api/v1/stats')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            output.textContent += JSON.stringify(data.data, null, 2) + '\n\n';
+                        }
+                    });
+            } else {
+                output.textContent += `Unknown command: ${command}\nType 'help' for available commands\n\n`;
+            }
+            
+            input.value = '';
+            output.scrollTop = output.scrollHeight;
+        }
+        
+        // Enter key support for terminal
+        document.getElementById('command-input')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                executeCommand();
+            }
+        });
+
+        let autoRefreshInterval = null;
+
+function refreshLogs() {
+    const level = document.getElementById('log-level-filter').value;
+    const category = document.getElementById('log-category-filter').value;
+    const limit = document.getElementById('log-limit').value || 100;
+    
+    console.log('Refreshing logs with filters:', { level, category, limit });
+    
+    // Build query parameters
+    let queryParams = `?count=${limit}`;
+    if (level) queryParams += `&level=${level}`;
+    if (category) queryParams += `&category=${category}`;
+    
+    const container = document.getElementById('logs-container');
+    container.innerHTML = '<div style="color: #9ca3af; text-align: center; padding: 20px;">Loading logs...</div>';
+    
+    fetch(`/api/v1/logs${queryParams}`)
+        .then(response => {
+            console.log('Logs response status:', response.status);
+            return response.json();
+        })
+        .then(data => {
+            console.log('Logs response data:', data);
+            
+            if (data.success) {
+                // Handle nested response structure for logs
+                let logs = [];
+                
+                if (data.data && data.data.result) {
+                    // Nested structure
+                    if (data.data.result.logs) {
+                        logs = data.data.result.logs;
+                    } else if (data.data.result.entries) {
+                        logs = data.data.result.entries;
+                    }
+                    console.log('Found logs in nested result structure');
+                } else if (data.data && Array.isArray(data.data.logs)) {
+                    // Direct structure with logs array
+                    logs = data.data.logs;
+                    console.log('Found logs in direct structure');
+                } else if (data.data && Array.isArray(data.data.entries)) {
+                    // Direct structure with entries array
+                    logs = data.data.entries;
+                    console.log('Found log entries in direct structure');
+                } else if (Array.isArray(data.data)) {
+                    // Direct array
+                    logs = data.data;
+                    console.log('Found logs as direct array');
+                }
+                
+                displayLogs(logs);
+            } else {
+                container.innerHTML = `<div style="color: #ef4444;">Error loading logs: ${data.error || 'Unknown error'}</div>`;
+            }
+        })
+        .catch(error => {
+            console.error('Logs request failed:', error);
+            container.innerHTML = `<div style="color: #ef4444;">Failed to load logs: ${error.message}</div>`;
+        });
+}
+
+function displayLogs(logs) {
+    const container = document.getElementById('logs-container');
+    
+    if (!logs || logs.length === 0) {
+        container.innerHTML = '<div style="color: #9ca3af; text-align: center; padding: 20px;">No logs found</div>';
+        return;
+    }
+    
+    let logHtml = '';
+    
+    logs.forEach(log => {
+        const timestamp = log.timestamp || 'N/A';
+        const level = log.level || 'INFO';
+        const category = log.category || 'UNKNOWN';
+        const message = log.message || '';
+        const agentId = log.agent_id || '';
+        
+        // Color coding for different log levels
+        let levelColor = '#ffffff';
+        switch (level) {
+            case 'INFO':
+                levelColor = '#3b82f6'; // Blue
+                break;
+            case 'WARN':
+                levelColor = '#f59e0b'; // Yellow
+                break;
+            case 'ERROR':
+            case 'CRITICAL':
+                levelColor = '#ef4444'; // Red
+                break;
+            case 'DEBUG':
+                levelColor = '#a855f7'; // Purple
+                break;
+        }
+        
+        const agentInfo = agentId ? ` (Agent: ${agentId.substring(0, 8)})` : '';
+        
+        logHtml += `<div style="margin-bottom: 4px; line-height: 1.4;">`;
+        logHtml += `<span style="color: ${levelColor}; font-weight: bold;">[${level}]</span> `;
+        logHtml += `<span style="color: #9ca3af;">[${timestamp}]</span> `;
+        logHtml += `<span style="color: #60a5fa;">[${category}]</span> `;
+        logHtml += `<span style="color: #ffffff;">${message}</span>`;
+        logHtml += `<span style="color: #9ca3af;">${agentInfo}</span>`;
+        logHtml += `</div>`;
+    });
+    
+    container.innerHTML = logHtml;
+    
+    // Auto scroll to bottom
+    container.scrollTop = container.scrollHeight;
+    
+    // Update timestamp
+    const now = new Date().toLocaleTimeString();
+    console.log(`Logs updated at ${now}, showing ${logs.length} entries`);
+}
+
+function clearLogsDisplay() {
+    const container = document.getElementById('logs-container');
+    container.innerHTML = '<div style="color: #9ca3af; text-align: center; padding: 20px;">Logs cleared. Click "Refresh" to reload.</div>';
+}
+
+function toggleAutoRefresh() {
+    const checkbox = document.getElementById('auto-refresh-logs');
+    
+    if (checkbox.checked) {
+        // Start auto refresh every 5 seconds
+        autoRefreshInterval = setInterval(refreshLogs, 5000);
+        console.log('Auto-refresh enabled');
+        refreshLogs(); // Initial load
+    } else {
+        // Stop auto refresh
+        if (autoRefreshInterval) {
+            clearInterval(autoRefreshInterval);
+            autoRefreshInterval = null;
+        }
+        console.log('Auto-refresh disabled');
+    }
+}
+
+// Auto-load logs when logs section is first opened
+document.addEventListener('DOMContentLoaded', () => {
+    const originalShowSection = showSection;
+    showSection = function(sectionName) {
+        originalShowSection(sectionName);
+        
+        // If logs section is opened and hasn't been loaded yet
+        if (sectionName === 'logs') {
+            const container = document.getElementById('logs-container');
+            if (container && container.innerHTML.includes('Click "Refresh" to load logs')) {
+                refreshLogs();
+            }
+        }
+    };
+});
     </script>
 </body>
 </html>
