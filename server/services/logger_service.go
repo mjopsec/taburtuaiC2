@@ -1,4 +1,4 @@
-package main
+package services
 
 import (
 	"encoding/json"
@@ -120,7 +120,7 @@ func InitLogger(logLevel LogLevel, logDir string) error {
 func (l *Logger) Close() {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
-	
+
 	if l.logFile != nil {
 		l.logFile.Close()
 	}
@@ -150,7 +150,7 @@ func (l *Logger) Log(level LogLevel, category LogCategory, message, agentID, com
 
 	// Add to memory buffer
 	l.entries = append(l.entries, entry)
-	
+
 	// Trim if too many entries
 	if len(l.entries) > l.maxSize {
 		l.entries = l.entries[len(l.entries)-l.maxSize:]
@@ -160,14 +160,14 @@ func (l *Logger) Log(level LogLevel, category LogCategory, message, agentID, com
 	if l.logFile != nil {
 		logLine := fmt.Sprintf("[%s] [%s] [%s] %s",
 			entry.Timestamp, entry.Level, entry.Category, entry.Message)
-		
+
 		if entry.AgentID != "" {
 			logLine += fmt.Sprintf(" | Agent: %s", entry.AgentID)
 		}
 		if entry.Command != "" {
 			logLine += fmt.Sprintf(" | Command: %s", entry.Command)
 		}
-		
+
 		logLine += "\n"
 		l.logFile.WriteString(logLine)
 		l.logFile.Sync()
@@ -367,8 +367,8 @@ func (l *Logger) GetStats() map[string]interface{} {
 	stats := map[string]interface{}{
 		"total_entries": len(l.entries),
 		"categories":    make(map[string]int),
-		"levels":       make(map[string]int),
-		"agents":       make(map[string]int),
+		"levels":        make(map[string]int),
+		"agents":        make(map[string]int),
 	}
 
 	for _, entry := range l.entries {
@@ -436,4 +436,48 @@ func LogFileOp(agentID, operation, filename, size string, success bool) {
 	if GlobalLogger != nil {
 		GlobalLogger.LogFileTransfer(agentID, operation, filename, size, success)
 	}
+}
+
+func LogWarn(category LogCategory, message, agentID string) {
+	if GlobalLogger != nil {
+		GlobalLogger.Warn(category, message, agentID, "", nil)
+	}
+}
+
+// NewLogger creates a new logger instance
+func NewLogger(logLevel LogLevel, logDir string) (*Logger, error) {
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create log directory: %v", err)
+	}
+
+	// Create log files
+	logFile, err := os.OpenFile(
+		filepath.Join(logDir, "taburtuai.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+		0644,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open log file: %v", err)
+	}
+
+	jsonFile, err := os.OpenFile(
+		filepath.Join(logDir, "taburtuai.json"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+		0644,
+	)
+	if err != nil {
+		logFile.Close()
+		return nil, fmt.Errorf("failed to open JSON log file: %v", err)
+	}
+
+	logger := &Logger{
+		level:    logLevel,
+		logFile:  logFile,
+		jsonFile: jsonFile,
+		entries:  make([]LogEntry, 0),
+		maxSize:  1000,
+	}
+
+	logger.Info(SYSTEM, "Logger initialized", "", "", nil)
+	return logger, nil
 }
