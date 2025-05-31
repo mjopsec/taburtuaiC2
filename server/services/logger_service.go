@@ -1,4 +1,4 @@
-package main
+package services
 
 import (
 	"encoding/json"
@@ -442,4 +442,42 @@ func LogWarn(category LogCategory, message, agentID string) {
 	if GlobalLogger != nil {
 		GlobalLogger.Warn(category, message, agentID, "", nil)
 	}
+}
+
+// NewLogger creates a new logger instance
+func NewLogger(logLevel LogLevel, logDir string) (*Logger, error) {
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create log directory: %v", err)
+	}
+
+	// Create log files
+	logFile, err := os.OpenFile(
+		filepath.Join(logDir, "taburtuai.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+		0644,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open log file: %v", err)
+	}
+
+	jsonFile, err := os.OpenFile(
+		filepath.Join(logDir, "taburtuai.json"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+		0644,
+	)
+	if err != nil {
+		logFile.Close()
+		return nil, fmt.Errorf("failed to open JSON log file: %v", err)
+	}
+
+	logger := &Logger{
+		level:    logLevel,
+		logFile:  logFile,
+		jsonFile: jsonFile,
+		entries:  make([]LogEntry, 0),
+		maxSize:  1000,
+	}
+
+	logger.Info(SYSTEM, "Logger initialized", "", "", nil)
+	return logger, nil
 }
