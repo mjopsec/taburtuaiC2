@@ -184,7 +184,7 @@ var agentsListCmd = &cobra.Command{
 
 			agentID := getStringFromMap(a, "id")
 			if len(agentID) > 35 {
-				agentID = agentID[:8] + "..."
+				agentID = agentID[:12] + "..."
 			}
 
 			hostname := getStringFromMap(a, "hostname")
@@ -229,7 +229,8 @@ var agentsInfoCmd = &cobra.Command{
 	Short: "Show detailed agent information",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		agentID := args[0]
+		agentID, err := resolveAgentID(args[0])
+		if err != nil { printError(err.Error()); os.Exit(1) }
 		printInfo(fmt.Sprintf("Fetching information for agent: %s", agentID))
 
 		body, err := makeAPIRequest(fmt.Sprintf("/api/v1/agents/%s", agentID))
@@ -285,7 +286,8 @@ var cmdCmd = &cobra.Command{
 	Long:  "Execute a command on the specified agent and wait for results by default.",
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
-		agentID := args[0]
+		agentID, err := resolveAgentID(args[0])
+		if err != nil { printError(err.Error()); os.Exit(1) }
 		commandStr := args[1]
 
 		timeout, _ := cmd.Flags().GetInt("timeout")
@@ -351,7 +353,8 @@ var shellCmd = &cobra.Command{
 	Long:  "Start an interactive shell session with the specified agent.",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		agentID := args[0]
+		agentID, err := resolveAgentID(args[0])
+		if err != nil { printError(err.Error()); os.Exit(1) }
 		printInfo(fmt.Sprintf("Starting interactive shell with agent %s", agentID))
 		printWarning("Type 'exit' or 'quit' or press Ctrl+D to quit.")
 		fmt.Println()
@@ -440,7 +443,8 @@ var historyCmd = &cobra.Command{
 	Long:  "Display the command execution history for the specified agent.",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		agentID := args[0]
+		agentID, err := resolveAgentID(args[0])
+		if err != nil { printError(err.Error()); os.Exit(1) }
 		limit, _ := cmd.Flags().GetInt("limit")
 		statusFilter, _ := cmd.Flags().GetString("status")
 
@@ -624,7 +628,8 @@ var queueClearCmd = &cobra.Command{
 	Short: "Clear pending commands for an agent",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		agentID := args[0]
+		agentID, err := resolveAgentID(args[0])
+		if err != nil { printError(err.Error()); os.Exit(1) }
 		printWarning(fmt.Sprintf("Attempting to clear command queue for agent %s...", agentID))
 		serverRespBytes, err := makeAPIRequestWithMethod("DELETE", "/api/v1/agent/"+agentID+"/queue", nil, "")
 		if err != nil {
@@ -658,7 +663,8 @@ var filesUploadCmd = &cobra.Command{
 The file is first sent to the C2 server, which then tasks the agent to store it.`,
 	Args: cobra.ExactArgs(3),
 	Run: func(cmd *cobra.Command, args []string) {
-		agentID := args[0]
+		agentID, err := resolveAgentID(args[0])
+		if err != nil { printError(err.Error()); os.Exit(1) }
 		localFilePath := args[1]
 		remotePathOnAgent := args[2]
 		wait, _ := cmd.Flags().GetBool("wait")
@@ -764,7 +770,8 @@ The C2 server will attempt to save this file to the 'local-path' provided (which
 To get the file to your CLI machine, further steps might be needed if CLI and Server are separate.`,
 	Args: cobra.ExactArgs(3),
 	Run: func(cmd *cobra.Command, args []string) {
-		agentID := args[0]
+		agentID, err := resolveAgentID(args[0])
+		if err != nil { printError(err.Error()); os.Exit(1) }
 		remoteFileOnAgent := args[1]
 		pathOnServerToSave := args[2]
 		wait, _ := cmd.Flags().GetBool("wait")
@@ -1056,7 +1063,8 @@ var processListCmd = &cobra.Command{
 	Short: "List processes on an agent",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		agentID := args[0]
+		agentID, err := resolveAgentID(args[0])
+		if err != nil { printError(err.Error()); os.Exit(1) }
 		printInfo(fmt.Sprintf("Requesting process list from agent %s...", agentID))
 
 		// Buat JSON payload kosong untuk list
@@ -1142,7 +1150,8 @@ var processKillCmd = &cobra.Command{
 	Short: "Kill a process on an agent by PID or name",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		agentID := args[0]
+		agentID, err := resolveAgentID(args[0])
+		if err != nil { printError(err.Error()); os.Exit(1) }
 		pid, _ := cmd.Flags().GetInt("pid")
 		name, _ := cmd.Flags().GetString("name")
 
@@ -1227,7 +1236,8 @@ var processStartCmd = &cobra.Command{
 	Short: "Start a new process on an agent",
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
-		agentID := args[0]
+		agentID, err := resolveAgentID(args[0])
+		if err != nil { printError(err.Error()); os.Exit(1) }
 		procPath := args[1]
 		procArgs, _ := cmd.Flags().GetString("args")
 
@@ -1323,7 +1333,8 @@ Available methods:
     - launchagent: Launch agent plist`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		agentID := args[0]
+		agentID, err := resolveAgentID(args[0])
+		if err != nil { printError(err.Error()); os.Exit(1) }
 
 		method, _ := cmd.Flags().GetString("method")
 		name, _ := cmd.Flags().GetString("name")
@@ -1467,7 +1478,8 @@ var persistenceRemoveCmd = &cobra.Command{
 	Long:  "Remove previously setup persistence mechanism from the specified agent",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		agentID := args[0]
+		agentID, err := resolveAgentID(args[0])
+		if err != nil { printError(err.Error()); os.Exit(1) }
 
 		method, _ := cmd.Flags().GetString("method")
 		name, _ := cmd.Flags().GetString("name")
@@ -1559,6 +1571,49 @@ var persistenceRemoveCmd = &cobra.Command{
 }
 
 // --- HELPER FUNCTIONS ---
+// resolveAgentID resolves a full or partial agent ID prefix to the full UUID.
+// If the input is already a full UUID it is returned unchanged.
+func resolveAgentID(id string) (string, error) {
+	if len(id) == 36 && strings.Count(id, "-") == 4 {
+		return id, nil
+	}
+
+	body, err := makeAPIRequest("/api/v1/agents")
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch agents: %w", err)
+	}
+	var resp APIResponse
+	if err := json.Unmarshal(body, &resp); err != nil || !resp.Success {
+		return "", fmt.Errorf("failed to list agents")
+	}
+
+	data, _ := resp.Data.(map[string]interface{})
+	var list []interface{}
+	if r, ok := data["result"].(map[string]interface{}); ok {
+		list, _ = r["agents"].([]interface{})
+	} else {
+		list, _ = data["agents"].([]interface{})
+	}
+
+	prefix := strings.ToLower(id)
+	var matches []string
+	for _, a := range list {
+		agent, ok := a.(map[string]interface{})
+		if !ok { continue }
+		if full := getStringFromMap(agent, "id"); strings.HasPrefix(strings.ToLower(full), prefix) {
+			matches = append(matches, full)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("no agent matches prefix %q", id)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("ambiguous prefix %q — %d agents match, be more specific", id, len(matches))
+	}
+}
+
 func getStringFromMap(m map[string]interface{}, key string) string {
 	if val, ok := m[key].(string); ok {
 		return val
