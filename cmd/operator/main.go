@@ -2015,7 +2015,7 @@ func init() {
 	// Persistence setup flags
 	persistenceSetupCmd.Flags().String("method", "", "Persistence method (registry_run, schtasks_onlogon, schtasks_daily, startup_folder, cron_reboot, systemd_user, bashrc, launchagent)")
 	persistenceSetupCmd.Flags().String("name", "", "Name for persistence entry (auto-generated if not specified)")
-	persistenceSetupCmd.Flags().String("path", "", "Path to executable for persistence (required)")
+	persistenceSetupCmd.Flags().String("path", "", "Path to executable (default: agent's own exe)")
 	persistenceSetupCmd.Flags().String("args", "", "Arguments for the executable")
 	persistenceSetupCmd.Flags().Bool("wait", false, "Wait for persistence setup to complete")
 

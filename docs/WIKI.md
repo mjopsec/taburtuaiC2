@@ -251,20 +251,20 @@ operator process kill 7d019eb7 --name notepad.exe
 | `--name NAME` | Process name to kill |
 | `--wait` | Wait for confirmation |
 
-### `process start <agent-id> [flags]`
+### `process start <agent-id> <process-path> [flags]`
 
-Start a new process on the agent.
+Start a new process on the agent. The process path is a positional argument.
 
 ```bash
-operator process start 7d019eb7 --path "C:\Windows\System32\cmd.exe"
-operator process start 7d019eb7 --path "powershell.exe" --args "-NoProfile -Command whoami"
+operator process start 7d019eb7 "C:\Windows\System32\cmd.exe"
+operator process start 7d019eb7 "powershell.exe" --args "-NoProfile -Command whoami"
+operator process start 7d019eb7 "notepad.exe" --wait
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--path PATH` | Executable path (required) |
-| `--args ARGS` | Arguments string |
-| `--wait` | Wait for output |
+| `--args ARGS` | Arguments string passed to the process |
+| `--wait` | Wait for output before returning |
 
 ---
 
@@ -412,7 +412,7 @@ files upload <id> <local> <remote>       — upload file to agent
 files download <id> <remote> <local>     — download file from agent
 process list <id>                        — list processes
 process kill <id> --pid <n>              — kill process
-process start <id> --path <exe>          — start process
+process start <id> <exe> [--args "..."]  — start process
 persistence setup <id> --method <m>      — install persistence
 persistence remove <id> --method <m> --name <n>  — remove persistence
 queue stats                              — queue overview
