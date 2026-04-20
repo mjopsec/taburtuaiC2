@@ -56,9 +56,9 @@ func (h *Handlers) ExecuteCommand(c *gin.Context) {
 		h.APIResponse(c, false, "", nil, "Agent not found")
 		return
 	}
-	if agent.Status != services.StatusOnline {
+	if agent.Status == services.StatusOffline {
 		c.Status(http.StatusBadRequest)
-		h.APIResponse(c, false, "", nil, fmt.Sprintf("Agent is %s", agent.Status))
+		h.APIResponse(c, false, "", nil, "Agent is offline")
 		return
 	}
 
