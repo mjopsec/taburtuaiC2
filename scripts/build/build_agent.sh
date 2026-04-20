@@ -15,8 +15,8 @@ die()     { echo -e "${RED}[error]${NC} $*"; exit 1; }
 SERVER_URL="http://127.0.0.1:8080"
 ENC_KEY="SpookyOrcaC2AES1"
 SEC_KEY="TaburtuaiSecondary"
-INTERVAL="30"
-JITTER="30"
+INTERVAL="10"
+JITTER="20"
 TARGET_OS=$(go env GOOS 2>/dev/null || echo "linux")
 TARGET_ARCH="amd64"
 OUTPUT_NAME=""
@@ -194,9 +194,11 @@ build_ldflags() {
     [[ -n "${PROFILE_UA_ROT:-}"      ]] && flags+=" -X ${pkg}.defaultUserAgentRotation=${PROFILE_UA_ROT}"
     [[ -n "${PROFILE_EVASION:-}"     ]] && flags+=" -X ${pkg}.defaultEnableEvasion=${PROFILE_EVASION}"
 
-    # Debug mode — keeps console open on exit
+    # Debug mode — keeps console open on exit, disables evasion
     if $DEBUG; then
         flags+=" -X ${pkg}.debugMode=true"
+        flags+=" -X ${pkg}.defaultEnableEvasion=false"
+        flags+=" -X ${pkg}.defaultSleepMasking=false"
     fi
 
     # Stealth: strip debug symbols + hide console window
