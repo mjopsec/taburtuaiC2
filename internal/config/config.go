@@ -9,6 +9,7 @@ import (
 
 // Config holds server configuration
 type Config struct {
+	Host          string
 	Port          string
 	LogLevel      services.LogLevel
 	LogDir        string
@@ -24,6 +25,7 @@ type Config struct {
 // Load loads configuration from environment
 func Load() *Config {
 	config := &Config{
+		Host:          getEnvOrDefault("HOST", ""),
 		Port:          getEnvOrDefault("PORT", "8080"),
 		LogLevel:      services.INFO,
 		LogDir:        getEnvOrDefault("LOG_DIR", "./logs"),
@@ -53,6 +55,22 @@ func Load() *Config {
 	}
 
 	return config
+}
+
+// SetLogLevel parses and applies a log-level string.
+func (c *Config) SetLogLevel(s string) {
+	switch s {
+	case "DEBUG":
+		c.LogLevel = services.DEBUG
+	case "INFO":
+		c.LogLevel = services.INFO
+	case "WARN":
+		c.LogLevel = services.WARN
+	case "ERROR":
+		c.LogLevel = services.ERROR
+	case "CRITICAL":
+		c.LogLevel = services.CRITICAL
+	}
 }
 
 func getEnvOrDefault(key, defaultValue string) string {

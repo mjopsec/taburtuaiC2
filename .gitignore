@@ -1,0 +1,64 @@
+# ── Compiled binaries ─────────────────────────────────────────
+*.exe
+*.dll
+*.so
+*.dylib
+*.out
+taburtuai-server
+taburtuai-server.exe
+taburtuai-cli
+taburtuai-cli.exe
+operator.exe
+server.exe
+bin/
+
+# ── Built agents / payloads ───────────────────────────────────
+agent/build/
+builder/output/
+*.bin
+*.shellcode
+*.payload
+
+# ── Runtime data ──────────────────────────────────────────────
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# ── Logs ──────────────────────────────────────────────────────
+logs/
+*.log
+*.log.*
+security.log
+
+# ── Secrets / keys ────────────────────────────────────────────
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+taburtuai.json
+
+# ── Config overrides (keep template, ignore local overrides) ──
+config/local*.yaml
+config/*.local.yaml
+
+# ── Go toolchain ──────────────────────────────────────────────
+vendor/
+
+# ── OS junk ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Editor / IDE ──────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Test artifacts ────────────────────────────────────────────
+coverage.out
+*.test
