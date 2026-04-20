@@ -6,6 +6,7 @@ import (
 
 	"github.com/mjopsec/taburtuaiC2/internal/config"
 	"github.com/mjopsec/taburtuaiC2/internal/services"
+	"github.com/mjopsec/taburtuaiC2/internal/storage"
 	"github.com/mjopsec/taburtuaiC2/pkg/crypto"
 )
 
@@ -16,31 +17,34 @@ type Server struct {
 	CommandQueue *CommandQueue
 	Monitor      *services.AgentMonitor
 	Logger       *services.Logger
+	Store        *storage.Store
 }
 
 // NewServer creates a new server instance
 func NewServer(cfg *config.Config) (*Server, error) {
-	// Initialize crypto manager
 	cryptoMgr, err := crypto.NewManager(cfg.EncryptionKey, cfg.SecondaryKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize crypto: %v", err)
 	}
 
-	// Initialize logger
 	logger, err := services.NewLogger(cfg.LogLevel, cfg.LogDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize logger: %v", err)
 	}
 
-	// Initialize monitor with proper parameters
+	store, err := storage.New(cfg.DBPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize database: %v", err)
+	}
+
 	monitor := services.NewAgentMonitor(
-		30*time.Second,   // heartbeatWindow
-		cfg.AgentTimeout, // offlineWindow (use from config)
-		10*time.Second,   // checkInterval
+		30*time.Second,
+		cfg.AgentTimeout,
+		10*time.Second,
+		store,
 	)
 
-	// Initialize command queue
-	cmdQueue := NewCommandQueue()
+	cmdQueue := NewCommandQueue(store)
 
 	return &Server{
 		Config:       cfg,
@@ -48,6 +52,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		CommandQueue: cmdQueue,
 		Monitor:      monitor,
 		Logger:       logger,
+		Store:        store,
 	}, nil
 }
 
@@ -61,4 +66,7 @@ func (s *Server) Start() {
 func (s *Server) Stop() {
 	s.Monitor.Stop()
 	s.Logger.Close()
+	if s.Store != nil {
+		_ = s.Store.Close()
+	}
 }

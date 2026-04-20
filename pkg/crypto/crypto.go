@@ -111,6 +111,14 @@ func (m *Manager) DecryptData(obfuscatedData string) ([]byte, error) {
 	return data, nil
 }
 
+// PrimaryKeyBytes returns a copy of the primary AES key bytes.
+// Used by the agent to pass sensitive key material to sleep masking.
+func (m *Manager) PrimaryKeyBytes() []byte {
+	out := make([]byte, len(m.primaryKey))
+	copy(out, m.primaryKey)
+	return out
+}
+
 // Helper methods
 func (m *Manager) compressData(data []byte) ([]byte, error) {
 	var buf bytes.Buffer

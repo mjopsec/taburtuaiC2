@@ -1,0 +1,102 @@
+/* ─────────────────────────────────────────────
+   Design Tokens — Taburtuai C2
+   All colour, spacing, and type decisions live here.
+   ───────────────────────────────────────────── */
+
+:root {
+  /* ── Backgrounds ───────────────────────────── */
+  --bg-base:     #0d1117;
+  --bg-surface:  #161b22;
+  --bg-elevated: #1c2128;
+  --bg-overlay:  #22272e;
+  --bg-hover:    #2d333b;
+
+  /* ── Borders ───────────────────────────────── */
+  --border:      #30363d;
+  --border-muted:#21262d;
+  --border-focus:#58a6ff;
+
+  /* ── Text ──────────────────────────────────── */
+  --text-primary:   #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted:     #6e7681;
+  --text-link:      #58a6ff;
+  --text-on-accent: #0d1117;
+
+  /* ── Accent / Status ───────────────────────── */
+  --accent-blue:   #58a6ff;
+  --accent-green:  #3fb950;
+  --accent-red:    #f85149;
+  --accent-orange: #d29922;
+  --accent-purple: #bc8cff;
+  --accent-cyan:   #39c5cf;
+
+  /* ── Status aliases ────────────────────────── */
+  --color-online:  var(--accent-green);
+  --color-offline: var(--accent-red);
+  --color-dormant: var(--accent-orange);
+  --color-error:   var(--accent-red);
+  --color-info:    var(--accent-blue);
+
+  /* ── Typography ────────────────────────────── */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
+
+  --text-xs:   11px;
+  --text-sm:   12px;
+  --text-base: 14px;
+  --text-md:   15px;
+  --text-lg:   16px;
+  --text-xl:   18px;
+  --text-2xl:  20px;
+  --text-3xl:  24px;
+
+  --weight-normal:   400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+
+  --leading-tight:  1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed:1.65;
+
+  /* ── Spacing scale (4px base) ──────────────── */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ── Layout ────────────────────────────────── */
+  --sidebar-width:       240px;
+  --topbar-height:       56px;
+  --content-max-width:   1400px;
+
+  /* ── Radius ────────────────────────────────── */
+  --radius-sm:  4px;
+  --radius-md:  6px;
+  --radius-lg:  8px;
+  --radius-xl:  12px;
+  --radius-full:9999px;
+
+  /* ── Shadows ───────────────────────────────── */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
+  --shadow-md: 0 4px 12px rgba(0,0,0,.5);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,.6);
+
+  /* ── Transitions ───────────────────────────── */
+  --transition-fast:   120ms ease;
+  --transition-normal: 200ms ease;
+  --transition-slow:   350ms ease;
+
+  /* ── Z-index scale ─────────────────────────── */
+  --z-base:    1;
+  --z-dropdown:100;
+  --z-sticky:  200;
+  --z-modal:   300;
+  --z-toast:   400;
+}

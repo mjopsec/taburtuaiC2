@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/mjopsec/taburtuaiC2/internal/storage"
 )
 
 // RegisterAgent adds a new agent or updates an existing one from checkin data
@@ -72,6 +74,8 @@ func (am *AgentMonitor) RegisterAgent(data map[string]interface{}) error {
 		agent.Status = StatusOnline
 		am.triggerCallback("agent_reconnected", agent)
 	}
+
+	am.persistAgent(agent)
 	return nil
 }
 
@@ -83,6 +87,9 @@ func (am *AgentMonitor) RemoveAgent(agentID string) {
 		delete(am.agents, agentID)
 		am.triggerCallback("agent_removed", agent)
 		LogAgentActivity(agentID, "removed", "")
+		if am.store != nil {
+			_ = am.store.DeleteAgent(agentID)
+		}
 	}
 }
 
@@ -93,6 +100,7 @@ func (am *AgentMonitor) UpdateAgentSystemInfo(agentID string, info SystemInfo) {
 	if a, ok := am.agents[agentID]; ok {
 		a.SystemInfo = info
 		a.LastSeen = time.Now()
+		am.persistAgent(a)
 	}
 }
 
@@ -103,6 +111,7 @@ func (am *AgentMonitor) UpdateAgentNetworkInfo(agentID string, info NetworkInfo)
 	if a, ok := am.agents[agentID]; ok {
 		a.NetworkInfo = info
 		a.LastSeen = time.Now()
+		am.persistAgent(a)
 	}
 }
 
@@ -114,6 +123,7 @@ func (am *AgentMonitor) UpdateAgentSecurityInfo(agentID string, info SecurityInf
 		a.SecurityInfo = info
 		a.LastSeen = time.Now()
 		am.checkSecurityConcerns(a)
+		am.persistAgent(a)
 	}
 }
 
@@ -124,6 +134,7 @@ func (am *AgentMonitor) UpdateAgentPerformance(agentID string, perf PerformanceM
 	if a, ok := am.agents[agentID]; ok {
 		a.Performance = perf
 		a.LastSeen = time.Now()
+		am.persistAgent(a)
 	}
 }
 
@@ -152,6 +163,7 @@ func (am *AgentMonitor) RecordCommand(agentID, command string, success bool, dur
 	}
 	a.Performance.ErrorRate = 1 - a.Performance.SuccessRate
 	a.LastSeen = time.Now()
+	am.persistAgent(a)
 }
 
 // RecordError appends an error entry for an agent
@@ -162,8 +174,9 @@ func (am *AgentMonitor) RecordError(agentID, errType, message, command, severity
 	if !ok {
 		return
 	}
+	now := time.Now()
 	a.Errors = append(a.Errors, ErrorInfo{
-		Timestamp:   time.Now(),
+		Timestamp:   now,
 		Type:        errType,
 		Message:     message,
 		Command:     command,
@@ -177,7 +190,21 @@ func (am *AgentMonitor) RecordError(agentID, errType, message, command, severity
 		a.Status = StatusError
 		am.triggerCallback("agent_error", a)
 	}
-	a.LastSeen = time.Now()
+	a.LastSeen = now
+
+	if am.store != nil {
+		_ = am.store.AppendAgentError(storage.AgentErrorRow{
+			AgentID:     agentID,
+			ErrorType:   errType,
+			Message:     message,
+			Command:     command,
+			Severity:    severity,
+			Recoverable: recoverable,
+			OccurredAt:  now.Unix(),
+		})
+		_ = am.store.PruneAgentErrors(agentID, 50)
+		am.persistAgent(a)
+	}
 }
 
 // RecordFileTransfer updates file transfer counters
@@ -200,6 +227,7 @@ func (am *AgentMonitor) RecordFileTransfer(agentID string, success bool, size in
 		}
 	}
 	a.LastSeen = time.Now()
+	am.persistAgent(a)
 }
 
 // ExportAgentData serialises all agent records to JSON
@@ -219,6 +247,94 @@ func (am *AgentMonitor) ImportAgentData(data []byte) error {
 	defer am.mu.Unlock()
 	for id, a := range agents {
 		am.agents[id] = a
+		am.persistAgent(a)
 	}
 	return nil
+}
+
+// ── persistence helpers ───────────────────────────────────────────────────────
+
+// persistAgent writes an agent to SQLite. Must be called with am.mu held.
+func (am *AgentMonitor) persistAgent(a *AgentHealth) {
+	if am.store == nil {
+		return
+	}
+	row, err := agentToRow(a)
+	if err != nil {
+		return
+	}
+	_ = am.store.UpsertAgent(row)
+}
+
+// loadFromDB restores all agents from SQLite into the in-memory map
+func (am *AgentMonitor) loadFromDB() {
+	rows, err := am.store.GetAllAgents()
+	if err != nil {
+		return
+	}
+	for _, r := range rows {
+		a := agentFromRow(r)
+		am.agents[a.ID] = a
+	}
+}
+
+// agentToRow converts an AgentHealth to a flat storage row
+func agentToRow(a *AgentHealth) (storage.AgentRow, error) {
+	netJSON, _ := json.Marshal(a.NetworkInfo)
+	sysJSON, _ := json.Marshal(a.SystemInfo)
+	secJSON, _ := json.Marshal(a.SecurityInfo)
+	perfJSON, _ := json.Marshal(a.Performance)
+	metaJSON, _ := json.Marshal(a.Metadata)
+
+	return storage.AgentRow{
+		ID:               a.ID,
+		Hostname:         a.Hostname,
+		Username:         a.Username,
+		OS:               a.OS,
+		Architecture:     a.Architecture,
+		ProcessID:        a.ProcessID,
+		ParentProcessID:  a.ParentProcessID,
+		Privileges:       a.Privileges,
+		Status:           string(a.Status),
+		LastSeen:         a.LastSeen.Unix(),
+		LastHeartbeat:    a.LastHeartbeat.Unix(),
+		FirstContact:     a.FirstContact.Unix(),
+		TotalConnections: a.TotalConnections,
+		CmdsExecuted:     a.CommandsExecuted,
+		FilesTransferred: a.FilesTransferred,
+		NetworkInfoJSON:  string(netJSON),
+		SystemInfoJSON:   string(sysJSON),
+		SecurityInfoJSON: string(secJSON),
+		PerformanceJSON:  string(perfJSON),
+		MetadataJSON:     string(metaJSON),
+	}, nil
+}
+
+// agentFromRow converts a flat storage row to an AgentHealth
+func agentFromRow(r storage.AgentRow) *AgentHealth {
+	a := &AgentHealth{
+		ID:               r.ID,
+		Hostname:         r.Hostname,
+		Username:         r.Username,
+		OS:               r.OS,
+		Architecture:     r.Architecture,
+		ProcessID:        r.ProcessID,
+		ParentProcessID:  r.ParentProcessID,
+		Privileges:       r.Privileges,
+		Status:           AgentStatus(r.Status),
+		LastSeen:         time.Unix(r.LastSeen, 0),
+		LastHeartbeat:    time.Unix(r.LastHeartbeat, 0),
+		FirstContact:     time.Unix(r.FirstContact, 0),
+		TotalConnections: r.TotalConnections,
+		CommandsExecuted: r.CmdsExecuted,
+		FilesTransferred: r.FilesTransferred,
+		Metadata:         make(map[string]interface{}),
+		Errors:           make([]ErrorInfo, 0),
+	}
+	_ = json.Unmarshal([]byte(r.NetworkInfoJSON), &a.NetworkInfo)
+	_ = json.Unmarshal([]byte(r.SystemInfoJSON), &a.SystemInfo)
+	_ = json.Unmarshal([]byte(r.SecurityInfoJSON), &a.SecurityInfo)
+	_ = json.Unmarshal([]byte(r.PerformanceJSON), &a.Performance)
+	_ = json.Unmarshal([]byte(r.MetadataJSON), &a.Metadata)
+	return a
 }

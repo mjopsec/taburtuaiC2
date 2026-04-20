@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mjopsec/taburtuaiC2/shared/types"
+	"github.com/mjopsec/taburtuaiC2/pkg/types"
 )
 
 // ExecuteCommand executes a command and returns the result

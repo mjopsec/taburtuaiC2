@@ -67,15 +67,16 @@ bash scripts/build/build_agent.sh \
 
 Server reads from environment variables (with defaults):
 
-| Variable         | Default               | Description             |
-|------------------|-----------------------|-------------------------|
-| `PORT`           | `8080`                | Listening port          |
-| `ENCRYPTION_KEY` | *(set this)*          | Primary AES key         |
-| `SECONDARY_KEY`  | *(set this)*          | Secondary AES key       |
-| `AUTH_ENABLED`   | `false`               | Require API key on all requests |
-| `API_KEY`        | *(set this)*          | Bearer token for operators |
-| `LOG_DIR`        | `./logs`              | Log output directory    |
-| `LOG_LEVEL`      | `INFO`                | DEBUG/INFO/WARN/ERROR   |
+| Variable         | Default                    | Description             |
+|------------------|----------------------------|-------------------------|
+| `PORT`           | `8080`                     | Listening port          |
+| `ENCRYPTION_KEY` | *(set this)*               | Primary AES key         |
+| `SECONDARY_KEY`  | *(set this)*               | Secondary AES key       |
+| `AUTH_ENABLED`   | `false`                    | Require API key on all requests |
+| `API_KEY`        | *(set this)*               | Bearer token for operators |
+| `LOG_DIR`        | `./logs`                   | Log output directory    |
+| `LOG_LEVEL`      | `INFO`                     | DEBUG/INFO/WARN/ERROR   |
+| `DB_PATH`        | `./data/taburtuai.db`      | SQLite database path    |
 
 ---
 
@@ -115,7 +116,7 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for the full development plan.
 |-------|--------|-------|
 | 1 — Foundation      | ✅ Done    | API, agent, logging, auth |
 | 2 — Core Operations | ✅ Done    | Files, processes, persistence |
-| 3 — OPSEC           | 🎯 Next   | Malleable profiles, ECDH, SQLite |
+| 3 — OPSEC           | 🔨 In Progress | Malleable profiles, ECDH, SQLite |
 | 4 — Listeners       | Planned   | HTTPS, DNS, SMB, WebSocket |
 | 5 — Team Server     | Planned   | Multi-operator, RBAC, gRPC |
 | 6 — Payloads        | Planned   | Staged, shellcode, obfuscation |

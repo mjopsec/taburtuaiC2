@@ -1,494 +1,371 @@
 package core
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/mjopsec/taburtuaiC2/internal/storage"
 	"github.com/mjopsec/taburtuaiC2/pkg/types"
 )
 
-// CommandQueue manages commands for agents
+// CommandQueue persists and dispatches commands via SQLite
 type CommandQueue struct {
-	queues  map[string][]*types.Command
-	active  map[string]*types.Command
-	results map[string]*types.Command
-	mutex   sync.RWMutex
+	store *storage.Store
+	mu    sync.Mutex // serialises GetNext to prevent double-dispatch
 }
 
-// NewCommandQueue creates a new command queue
-func NewCommandQueue() *CommandQueue {
-	return &CommandQueue{
-		queues:  make(map[string][]*types.Command),
-		active:  make(map[string]*types.Command),
-		results: make(map[string]*types.Command),
-	}
+// NewCommandQueue creates a queue backed by store
+func NewCommandQueue(store *storage.Store) *CommandQueue {
+	return &CommandQueue{store: store}
 }
 
-// Add adds a command to agent's queue with enhanced validation
+// Add validates and persists a command as 'pending'
 func (cq *CommandQueue) Add(agentID string, cmd *types.Command) error {
 	if cmd == nil {
 		return fmt.Errorf("command cannot be nil")
 	}
-
 	if agentID == "" {
 		return fmt.Errorf("agent ID cannot be empty")
 	}
-
 	if cmd.ID == "" {
 		return fmt.Errorf("command ID cannot be empty")
 	}
-
-	cq.mutex.Lock()
-	defer cq.mutex.Unlock()
-
-	// Check queue size limits
-	const maxQueueSize = 1000
-	if queue := cq.queues[agentID]; len(queue) >= maxQueueSize {
-		return fmt.Errorf("command queue full for agent %s (max %d commands)", agentID, maxQueueSize)
-	}
-
-	// Validate command fields
 	if err := validateCommandForQueue(cmd); err != nil {
 		return fmt.Errorf("command validation failed: %v", err)
 	}
 
-	// Initialize queue if doesn't exist
-	if cq.queues[agentID] == nil {
-		cq.queues[agentID] = make([]*types.Command, 0)
+	const maxQueueSize = 1000
+	size, err := cq.store.GetAgentQueueSize(agentID)
+	if err != nil {
+		return fmt.Errorf("queue size check: %w", err)
+	}
+	if size >= maxQueueSize {
+		return fmt.Errorf("command queue full for agent %s (max %d commands)", agentID, maxQueueSize)
 	}
 
-	cq.queues[agentID] = append(cq.queues[agentID], cmd)
-
-	fmt.Printf("[DEBUG] Added command to queue for agent %s: ID=%s, Command=%s, Type=%s\n",
-		agentID, cmd.ID, cmd.Command, cmd.OperationType)
-	fmt.Printf("[DEBUG] Queue size for agent %s: %d\n", agentID, len(cq.queues[agentID]))
-
-	return nil
+	row, err := cmdToRow(cmd)
+	if err != nil {
+		return fmt.Errorf("encode command: %w", err)
+	}
+	return cq.store.InsertCommand(row)
 }
 
-// GetNext returns the next command for an agent with enhanced error handling
+// GetNext returns the next command the agent should execute.
+// If a command is already executing it is returned (unless it timed out).
+// If timed out the command is marked and the next pending command is dispatched.
 func (cq *CommandQueue) GetNext(agentID string) *types.Command {
-	cq.mutex.Lock()
-	defer cq.mutex.Unlock()
-
 	if agentID == "" {
 		return nil
 	}
+	cq.mu.Lock()
+	defer cq.mu.Unlock()
 
-	// Check if agent has active command
-	if active, exists := cq.active[agentID]; exists {
-		// Check for timeout
-		if active.Timeout > 0 && time.Since(active.ExecutedAt) > time.Duration(active.Timeout)*time.Second {
+	// Check for active command
+	active, hasActive, err := cq.store.GetAgentExecutingCommand(agentID)
+	if err == nil && hasActive {
+		cmd := rowToCmd(active)
+		if cmd.Timeout > 0 && time.Since(cmd.ExecutedAt) > time.Duration(cmd.Timeout)*time.Second {
+			// Timeout — mark it and fall through to next pending
 			active.Status = "timeout"
-			active.CompletedAt = time.Now()
-			active.Error = fmt.Sprintf("Command execution timeout after %d seconds", active.Timeout)
-			cq.results[active.ID] = active
-			delete(cq.active, agentID)
-			fmt.Printf("[DEBUG] Command %s timed out for agent %s\n", active.ID, agentID)
+			active.CompletedAt = time.Now().Unix()
+			active.Error = fmt.Sprintf("Command execution timeout after %d seconds", cmd.Timeout)
+			_ = cq.store.UpdateCommandStatus(active)
 		} else {
-			fmt.Printf("[DEBUG] Agent %s has active command %s (status: %s)\n", agentID, active.ID, active.Status)
-			return active
-		}
-	}
-
-	// Get next command from queue
-	if queue, exists := cq.queues[agentID]; exists && len(queue) > 0 {
-		cmd := queue[0]
-		cq.queues[agentID] = queue[1:]
-
-		// Mark as executing
-		cmd.Status = "executing"
-		cmd.ExecutedAt = time.Now()
-		cq.active[agentID] = cmd
-
-		fmt.Printf("[DEBUG] Dispatching command to agent %s: ID=%s, Command=%s, Type=%s\n",
-			agentID, cmd.ID, cmd.Command, cmd.OperationType)
-
-		return cmd
-	}
-
-	fmt.Printf("[DEBUG] No commands in queue for agent %s\n", agentID)
-	return nil
-}
-
-// CompleteCommand marks a command as completed with enhanced validation
-func (cq *CommandQueue) CompleteCommand(commandID string, result *types.CommandResult) (*types.Command, error) {
-	if commandID == "" {
-		return nil, fmt.Errorf("command ID cannot be empty")
-	}
-
-	if result == nil {
-		return nil, fmt.Errorf("command result cannot be nil")
-	}
-
-	cq.mutex.Lock()
-	defer cq.mutex.Unlock()
-
-	var cmd *types.Command
-	var agentID string
-
-	// Find command in active commands
-	for aid, active := range cq.active {
-		if active.ID == commandID {
-			cmd = active
-			agentID = aid
-			delete(cq.active, agentID)
-			break
-		}
-	}
-
-	if cmd == nil {
-		// Check if already in results
-		if existingResult, exists := cq.results[commandID]; exists {
-			return existingResult, nil
-		}
-		return nil, fmt.Errorf("command not found: %s", commandID)
-	}
-
-	// Update command with result
-	cmd.CompletedAt = time.Now()
-	cmd.ExitCode = result.ExitCode
-
-	// Sanitize output and error (limit size)
-	if len(result.Output) > 1000000 { // 1MB limit
-		cmd.Output = result.Output[:1000000] + "\n[Output truncated - too large]"
-	} else {
-		cmd.Output = result.Output
-	}
-
-	if len(result.Error) > 10000 { // 10KB limit for errors
-		cmd.Error = result.Error[:10000] + "\n[Error message truncated - too large]"
-	} else {
-		cmd.Error = result.Error
-	}
-
-	// Determine status based on exit code and error
-	if result.ExitCode == 0 && cmd.Error == "" {
-		cmd.Status = "completed"
-	} else {
-		cmd.Status = "failed"
-	}
-
-	cq.results[cmd.ID] = cmd
-	return cmd, nil
-}
-
-// GetCommand returns a specific command
-func (cq *CommandQueue) GetCommand(commandID string) *types.Command {
-	cq.mutex.RLock()
-	defer cq.mutex.RUnlock()
-
-	if commandID == "" {
-		return nil
-	}
-
-	// Check results first
-	if cmd, exists := cq.results[commandID]; exists {
-		return cmd
-	}
-
-	// Check active commands
-	for _, cmd := range cq.active {
-		if cmd.ID == commandID {
 			return cmd
 		}
 	}
 
-	// Check queued commands
-	for _, queue := range cq.queues {
-		for _, cmd := range queue {
-			if cmd.ID == commandID {
-				return cmd
-			}
-		}
+	// Dispatch next pending
+	pending, hasPending, err := cq.store.GetAgentNextPending(agentID)
+	if err != nil || !hasPending {
+		return nil
 	}
-
-	return nil
+	pending.Status = "executing"
+	pending.ExecutedAt = time.Now().Unix()
+	if err := cq.store.UpdateCommandStatus(pending); err != nil {
+		return nil
+	}
+	return rowToCmd(pending)
 }
 
-// GetAgentCommands returns all commands for an agent with enhanced filtering
-func (cq *CommandQueue) GetAgentCommands(agentID string, status string, limit int) []*types.Command {
-	cq.mutex.RLock()
-	defer cq.mutex.RUnlock()
+// CompleteCommand records the result of a finished command
+func (cq *CommandQueue) CompleteCommand(commandID string, result *types.CommandResult) (*types.Command, error) {
+	if commandID == "" {
+		return nil, fmt.Errorf("command ID cannot be empty")
+	}
+	if result == nil {
+		return nil, fmt.Errorf("command result cannot be nil")
+	}
 
+	row, found, err := cq.store.GetCommand(commandID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("command not found: %s", commandID)
+	}
+	// Already completed — return as-is
+	if row.Status != "executing" && row.Status != "pending" {
+		return rowToCmd(row), nil
+	}
+
+	row.CompletedAt = time.Now().Unix()
+	row.ExitCode = result.ExitCode
+
+	if len(result.Output) > 1000000 {
+		row.Output = result.Output[:1000000] + "\n[Output truncated - too large]"
+	} else {
+		row.Output = result.Output
+	}
+	if len(result.Error) > 10000 {
+		row.Error = result.Error[:10000] + "\n[Error message truncated - too large]"
+	} else {
+		row.Error = result.Error
+	}
+
+	if result.ExitCode == 0 && row.Error == "" {
+		row.Status = "completed"
+	} else {
+		row.Status = "failed"
+	}
+
+	if err := cq.store.UpdateCommandStatus(row); err != nil {
+		return nil, err
+	}
+	return rowToCmd(row), nil
+}
+
+// GetCommand returns a command by ID regardless of status
+func (cq *CommandQueue) GetCommand(commandID string) *types.Command {
+	if commandID == "" {
+		return nil
+	}
+	row, found, err := cq.store.GetCommand(commandID)
+	if err != nil || !found {
+		return nil
+	}
+	return rowToCmd(row)
+}
+
+// GetAgentCommands returns commands for an agent with optional status filter
+func (cq *CommandQueue) GetAgentCommands(agentID string, status string, limit int) []*types.Command {
 	if agentID == "" {
 		return []*types.Command{}
 	}
-
-	// Validate and sanitize limit
 	if limit <= 0 || limit > 1000 {
-		limit = 50 // Default limit
+		limit = 50
 	}
-
-	var commands []*types.Command
-
-	// Collect all commands for the agent
-	for _, cmd := range cq.results {
-		if cmd.AgentID == agentID && (status == "" || cmd.Status == status) {
-			commands = append(commands, cmd)
-		}
+	rows, err := cq.store.GetAgentCommands(agentID, status, limit)
+	if err != nil {
+		return []*types.Command{}
 	}
-
-	// Add active command if exists
-	if active, exists := cq.active[agentID]; exists {
-		if status == "" || active.Status == status {
-			commands = append(commands, active)
-		}
+	cmds := make([]*types.Command, 0, len(rows))
+	for _, r := range rows {
+		cmds = append(cmds, rowToCmd(r))
 	}
-
-	// Add queued commands
-	if queue, exists := cq.queues[agentID]; exists {
-		for _, cmd := range queue {
-			if status == "" || cmd.Status == status {
-				commands = append(commands, cmd)
-			}
-		}
-	}
-
-	// Sort by creation time (newest first)
-	// Note: For production, consider using sort.Slice for proper sorting
-
-	// Apply limit
-	if len(commands) > limit {
-		commands = commands[:limit]
-	}
-
-	return commands
+	return cmds
 }
 
-// ClearQueue clears pending commands for an agent
+// ClearQueue cancels all pending commands for an agent and returns how many were cleared
 func (cq *CommandQueue) ClearQueue(agentID string) int {
-	cq.mutex.Lock()
-	defer cq.mutex.Unlock()
-
 	if agentID == "" {
 		return 0
 	}
-
-	count := 0
-	if queue, exists := cq.queues[agentID]; exists {
-		count = len(queue)
-		delete(cq.queues, agentID)
-	}
-
-	return count
+	n, _ := cq.store.CancelAgentPendingCommands(agentID)
+	return n
 }
 
-// GetStats returns queue statistics with enhanced metrics
-func (cq *CommandQueue) GetStats() map[string]interface{} {
-	cq.mutex.RLock()
-	defer cq.mutex.RUnlock()
-
-	totalQueued := 0
-	totalActive := len(cq.active)
-	totalCompleted := len(cq.results)
-
-	agentStats := make(map[string]map[string]int)
-
-	// Count queued commands per agent
-	for agentID, queue := range cq.queues {
-		queueCount := len(queue)
-		totalQueued += queueCount
-
-		agentStats[agentID] = map[string]int{
-			"queued":    queueCount,
-			"active":    0,
-			"completed": 0,
-		}
+// GetStats returns aggregate command queue statistics
+func (cq *CommandQueue) GetStats() map[string]any {
+	stats, err := cq.store.GetCommandStats()
+	if err != nil {
+		return map[string]any{"error": err.Error()}
 	}
-
-	// Count active commands per agent
-	for agentID := range cq.active {
-		if _, exists := agentStats[agentID]; !exists {
-			agentStats[agentID] = map[string]int{
-				"queued": 0, "active": 0, "completed": 0,
-			}
-		}
-		agentStats[agentID]["active"] = 1
-	}
-
-	// Count completed commands per agent
-	for _, cmd := range cq.results {
-		agentID := cmd.AgentID
-		if _, exists := agentStats[agentID]; !exists {
-			agentStats[agentID] = map[string]int{
-				"queued": 0, "active": 0, "completed": 0,
-			}
-		}
-		agentStats[agentID]["completed"]++
-	}
-
-	stats := map[string]interface{}{
-		"total_queued":    totalQueued,
-		"total_active":    totalActive,
-		"total_completed": totalCompleted,
-		"by_agent":        agentStats,
-		"timestamp":       time.Now().Format(time.RFC3339),
-		"total_agents":    len(agentStats),
-	}
-
 	return stats
 }
 
-// CleanOldResults removes old command results with enhanced cleanup
+// CleanOldResults removes completed commands older than maxAge
 func (cq *CommandQueue) CleanOldResults(maxAge time.Duration) int {
-	cq.mutex.Lock()
-	defer cq.mutex.Unlock()
-
 	if maxAge <= 0 {
 		return 0
 	}
-
-	cutoff := time.Now().Add(-maxAge)
-	cleaned := 0
-
-	for id, cmd := range cq.results {
-		if cmd.CompletedAt.Before(cutoff) {
-			delete(cq.results, id)
-			cleaned++
-		}
-	}
-
-	return cleaned
+	n, _ := cq.store.CleanOldCommands(maxAge)
+	return n
 }
 
-// GetQueueSize returns the current queue size for an agent
+// GetQueueSize returns the pending command count for an agent
 func (cq *CommandQueue) GetQueueSize(agentID string) int {
-	cq.mutex.RLock()
-	defer cq.mutex.RUnlock()
-
 	if agentID == "" {
 		return 0
 	}
-
-	if queue, exists := cq.queues[agentID]; exists {
-		return len(queue)
-	}
-
-	return 0
+	n, _ := cq.store.GetAgentQueueSize(agentID)
+	return n
 }
 
-// HasActiveCommand checks if an agent has an active command
+// HasActiveCommand reports whether an agent has an executing command
 func (cq *CommandQueue) HasActiveCommand(agentID string) bool {
-	cq.mutex.RLock()
-	defer cq.mutex.RUnlock()
-
 	if agentID == "" {
 		return false
 	}
-
-	_, exists := cq.active[agentID]
-	return exists
+	_, has, _ := cq.store.GetAgentExecutingCommand(agentID)
+	return has
 }
 
-// GetActiveCommand returns the active command for an agent
+// GetActiveCommand returns the executing command for an agent, or nil
 func (cq *CommandQueue) GetActiveCommand(agentID string) *types.Command {
-	cq.mutex.RLock()
-	defer cq.mutex.RUnlock()
-
 	if agentID == "" {
 		return nil
 	}
-
-	if cmd, exists := cq.active[agentID]; exists {
-		return cmd
+	row, has, err := cq.store.GetAgentExecutingCommand(agentID)
+	if err != nil || !has {
+		return nil
 	}
-
-	return nil
+	return rowToCmd(row)
 }
 
-// CancelCommand cancels a pending or active command
+// CancelCommand cancels a pending or executing command by ID
 func (cq *CommandQueue) CancelCommand(commandID string) error {
 	if commandID == "" {
 		return fmt.Errorf("command ID cannot be empty")
 	}
-
-	cq.mutex.Lock()
-	defer cq.mutex.Unlock()
-
-	// Check if command is active
-	for agentID, active := range cq.active {
-		if active.ID == commandID {
-			active.Status = "cancelled"
-			active.CompletedAt = time.Now()
-			active.Error = "Command cancelled by user"
-			cq.results[active.ID] = active
-			delete(cq.active, agentID)
-			return nil
-		}
+	row, found, err := cq.store.GetCommand(commandID)
+	if err != nil {
+		return err
 	}
-
-	// Check if command is queued
-	for agentID, queue := range cq.queues {
-		for i, cmd := range queue {
-			if cmd.ID == commandID {
-				// Remove from queue
-				cq.queues[agentID] = append(queue[:i], queue[i+1:]...)
-
-				// Add to results as cancelled
-				cmd.Status = "cancelled"
-				cmd.CompletedAt = time.Now()
-				cmd.Error = "Command cancelled before execution"
-				cq.results[cmd.ID] = cmd
-
-				return nil
-			}
-		}
+	if !found {
+		return fmt.Errorf("command not found: %s", commandID)
 	}
-
-	// Check if already completed
-	if _, exists := cq.results[commandID]; exists {
+	if row.Status != "pending" && row.Status != "executing" {
 		return fmt.Errorf("command already completed, cannot cancel")
 	}
-
-	return fmt.Errorf("command not found: %s", commandID)
+	row.Status = "cancelled"
+	row.CompletedAt = time.Now().Unix()
+	row.Error = "Command cancelled by user"
+	return cq.store.UpdateCommandStatus(row)
 }
 
-// validateCommandForQueue validates command fields before adding to queue
+// ── conversion helpers ────────────────────────────────────────────────────────
+
+func cmdToRow(cmd *types.Command) (storage.CommandRow, error) {
+	argsJSON, err := json.Marshal(cmd.Args)
+	if err != nil {
+		return storage.CommandRow{}, err
+	}
+	metaJSON, err := json.Marshal(cmd.Metadata)
+	if err != nil {
+		return storage.CommandRow{}, err
+	}
+	procArgsJSON, err := json.Marshal(cmd.ProcessArgs)
+	if err != nil {
+		return storage.CommandRow{}, err
+	}
+
+	var execAt, compAt int64
+	if !cmd.ExecutedAt.IsZero() {
+		execAt = cmd.ExecutedAt.Unix()
+	}
+	if !cmd.CompletedAt.IsZero() {
+		compAt = cmd.CompletedAt.Unix()
+	}
+
+	return storage.CommandRow{
+		ID:              cmd.ID,
+		AgentID:         cmd.AgentID,
+		Command:         cmd.Command,
+		ArgsJSON:        string(argsJSON),
+		WorkingDir:      cmd.WorkingDir,
+		Timeout:         cmd.Timeout,
+		Status:          cmd.Status,
+		ExitCode:        cmd.ExitCode,
+		Output:          cmd.Output,
+		Error:           cmd.Error,
+		MetadataJSON:    string(metaJSON),
+		OperationType:   cmd.OperationType,
+		SourcePath:      cmd.SourcePath,
+		DestinationPath: cmd.DestinationPath,
+		FileContent:     cmd.FileContent,
+		IsEncrypted:     cmd.IsEncrypted,
+		ProcessName:     cmd.ProcessName,
+		ProcessID:       cmd.ProcessID,
+		ProcessPath:     cmd.ProcessPath,
+		ProcessArgsJSON: string(procArgsJSON),
+		PersistMethod:   cmd.PersistMethod,
+		PersistName:     cmd.PersistName,
+		CreatedAt:       cmd.CreatedAt.Unix(),
+		ExecutedAt:      execAt,
+		CompletedAt:     compAt,
+	}, nil
+}
+
+func rowToCmd(r storage.CommandRow) *types.Command {
+	cmd := &types.Command{
+		ID:              r.ID,
+		AgentID:         r.AgentID,
+		Command:         r.Command,
+		WorkingDir:      r.WorkingDir,
+		Timeout:         r.Timeout,
+		Status:          r.Status,
+		ExitCode:        r.ExitCode,
+		Output:          r.Output,
+		Error:           r.Error,
+		OperationType:   r.OperationType,
+		SourcePath:      r.SourcePath,
+		DestinationPath: r.DestinationPath,
+		FileContent:     r.FileContent,
+		IsEncrypted:     r.IsEncrypted,
+		ProcessName:     r.ProcessName,
+		ProcessID:       r.ProcessID,
+		ProcessPath:     r.ProcessPath,
+		PersistMethod:   r.PersistMethod,
+		PersistName:     r.PersistName,
+		CreatedAt:       time.Unix(r.CreatedAt, 0),
+	}
+	if r.ExecutedAt > 0 {
+		cmd.ExecutedAt = time.Unix(r.ExecutedAt, 0)
+	}
+	if r.CompletedAt > 0 {
+		cmd.CompletedAt = time.Unix(r.CompletedAt, 0)
+	}
+
+	_ = json.Unmarshal([]byte(r.ArgsJSON), &cmd.Args)
+	_ = json.Unmarshal([]byte(r.MetadataJSON), &cmd.Metadata)
+	_ = json.Unmarshal([]byte(r.ProcessArgsJSON), &cmd.ProcessArgs)
+	return cmd
+}
+
+// ── validation (unchanged) ────────────────────────────────────────────────────
+
 func validateCommandForQueue(cmd *types.Command) error {
 	if cmd.Command == "" {
 		return fmt.Errorf("command text cannot be empty")
 	}
-
 	if len(cmd.Command) > 10000 {
 		return fmt.Errorf("command too long (max 10000 characters)")
 	}
-
 	if cmd.Timeout < 0 || cmd.Timeout > 3600 {
 		return fmt.Errorf("invalid timeout value (must be 0-3600 seconds)")
 	}
-
 	if cmd.AgentID == "" {
 		return fmt.Errorf("agent ID cannot be empty")
 	}
-
-	// Validate operation type
-	validOperations := map[string]bool{
-		"":        true, // empty is valid for backwards compatibility
-		"execute": true, "upload": true, "download": true,
+	validOps := map[string]bool{
+		"": true, "execute": true, "upload": true, "download": true,
 		"process_list": true, "process_kill": true, "process_start": true,
 		"persist_setup": true, "persist_remove": true,
 	}
-
-	if !validOperations[cmd.OperationType] {
+	if !validOps[cmd.OperationType] {
 		return fmt.Errorf("invalid operation type: %s", cmd.OperationType)
 	}
-
-	// Validate file operations
-	if cmd.OperationType == "upload" || cmd.OperationType == "download" {
-		if cmd.OperationType == "upload" && cmd.DestinationPath == "" {
-			return fmt.Errorf("destination path required for upload operation")
-		}
-		if cmd.OperationType == "download" && cmd.SourcePath == "" {
-			return fmt.Errorf("source path required for download operation")
-		}
+	if cmd.OperationType == "upload" && cmd.DestinationPath == "" {
+		return fmt.Errorf("destination path required for upload operation")
 	}
-
-	// Validate file content size for uploads
+	if cmd.OperationType == "download" && cmd.SourcePath == "" {
+		return fmt.Errorf("source path required for download operation")
+	}
 	if cmd.OperationType == "upload" && len(cmd.FileContent) > 100*1024*1024 {
 		return fmt.Errorf("file content too large (max 100MB)")
 	}
-
 	return nil
 }

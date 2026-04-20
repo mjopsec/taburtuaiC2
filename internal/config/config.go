@@ -12,6 +12,7 @@ type Config struct {
 	Port          string
 	LogLevel      services.LogLevel
 	LogDir        string
+	DBPath        string
 	EncryptionKey string
 	SecondaryKey  string
 	AuthEnabled   bool
@@ -26,6 +27,7 @@ func Load() *Config {
 		Port:          getEnvOrDefault("PORT", "8080"),
 		LogLevel:      services.INFO,
 		LogDir:        getEnvOrDefault("LOG_DIR", "./logs"),
+		DBPath:        getEnvOrDefault("DB_PATH", "./data/taburtuai.db"),
 		EncryptionKey: getEnvOrDefault("ENCRYPTION_KEY", "SpookyOrcaC2AES1"),
 		SecondaryKey:  getEnvOrDefault("SECONDARY_KEY", "TaburtuaiSecondary"),
 		AuthEnabled:   getEnvOrDefault("AUTH_ENABLED", "false") == "true",

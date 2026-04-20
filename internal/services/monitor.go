@@ -3,6 +3,8 @@ package services
 import (
 	"sync"
 	"time"
+
+	"github.com/mjopsec/taburtuaiC2/internal/storage"
 )
 
 // AgentMonitor tracks agent health and status in real time
@@ -15,18 +17,24 @@ type AgentMonitor struct {
 	callbacks       map[string]func(*AgentHealth)
 	running         bool
 	stopChan        chan struct{}
+	store           *storage.Store
 }
 
-// NewAgentMonitor creates a monitor with the given timing windows
-func NewAgentMonitor(heartbeatWindow, offlineWindow, checkInterval time.Duration) *AgentMonitor {
-	return &AgentMonitor{
+// NewAgentMonitor creates a monitor with the given timing windows backed by store
+func NewAgentMonitor(heartbeatWindow, offlineWindow, checkInterval time.Duration, store *storage.Store) *AgentMonitor {
+	am := &AgentMonitor{
 		agents:          make(map[string]*AgentHealth),
 		heartbeatWindow: heartbeatWindow,
 		offlineWindow:   offlineWindow,
 		checkInterval:   checkInterval,
 		callbacks:       make(map[string]func(*AgentHealth)),
 		stopChan:        make(chan struct{}),
+		store:           store,
 	}
+	if store != nil {
+		am.loadFromDB()
+	}
+	return am
 }
 
 // Start begins the background monitoring loop
