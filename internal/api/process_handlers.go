@@ -168,7 +168,7 @@ func (h *Handlers) SetupPersistence(c *gin.Context) {
 	var req struct {
 		PersistMethod string `json:"persist_method" binding:"required"`
 		PersistName   string `json:"persist_name"`
-		ProcessPath   string `json:"process_path" binding:"required"`
+		ProcessPath   string `json:"process_path"`
 		ProcessArgs   string `json:"process_args"`
 	}
 
@@ -219,13 +219,6 @@ func (h *Handlers) SetupPersistence(c *gin.Context) {
 	// Auto-generate name if not provided
 	if req.PersistName == "" {
 		req.PersistName = fmt.Sprintf("Taburtuai_%s_%s", req.PersistMethod, uuid.New().String()[:8])
-	}
-
-	// Validate process path
-	if req.ProcessPath == "" {
-		c.Status(http.StatusBadRequest)
-		h.APIResponse(c, false, "", nil, "Process path is required")
-		return
 	}
 
 	// Log the persistence setup attempt
