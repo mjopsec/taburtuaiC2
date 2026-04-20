@@ -338,10 +338,14 @@ var cmdCmd = &cobra.Command{
 		printSuccess(fmt.Sprintf("Command queued. Command ID: %s", commandID))
 
 		if background {
-			printInfo(fmt.Sprintf("Running in background. Check status with: taburtuai-cli status %s", commandID))
+			printInfo(fmt.Sprintf("check status: status %s", commandID))
 		} else {
-			printInfo("Waiting for command execution to complete...")
-			waitForCommand(commandID, timeout)
+			result := waitForCommand(commandID, timeout)
+			if result != nil {
+				if cmdData, ok := result.(map[string]interface{}); ok {
+					displayFinalCommandStatus(cmdData, commandID)
+				}
+			}
 		}
 	},
 }
@@ -355,16 +359,15 @@ var shellCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		agentID, err := resolveAgentID(args[0])
 		if err != nil { printError(err.Error()); os.Exit(1) }
-		printInfo(fmt.Sprintf("Starting interactive shell with agent %s", agentID))
-		printWarning("Type 'exit' or 'quit' or press Ctrl+D to quit.")
-		fmt.Println()
+		fmt.Printf("  %sshell%s  %s%s%s  · exit to quit\n\n",
+			ColorCyan, ColorReset, ColorGreen, agentID[:8], ColorReset)
 		reader := bufio.NewReader(os.Stdin)
 
 		for {
-			fmt.Printf("%s[%s]$ %s", ColorGreen, agentID[:8], ColorReset)
+			fmt.Printf("%s[%s]%s › ", ColorGreen, agentID[:8], ColorReset)
 			input, err := reader.ReadString('\n')
-			if err != nil { // EOF (Ctrl+D) akan masuk sini
-				fmt.Println("\nExiting shell session.")
+			if err != nil {
+				fmt.Println()
 				break
 			}
 			commandStr := strings.TrimSpace(input)
@@ -372,7 +375,6 @@ var shellCmd = &cobra.Command{
 				continue
 			}
 			if commandStr == "exit" || commandStr == "quit" {
-				printInfo("Exiting shell session.")
 				break
 			}
 			executeShellCommand(agentID, commandStr)
@@ -1718,13 +1720,14 @@ func executeShellCommand(agentID, commandStr string) {
 		if statusMap, ok := finalStatusData.(map[string]interface{}); ok {
 			output, _ := statusMap["output"].(string)
 			errorMsg, _ := statusMap["error"].(string)
+			status, _ := statusMap["status"].(string)
 			if output != "" {
 				fmt.Print(output)
 				if !strings.HasSuffix(output, "\n") {
 					fmt.Println()
 				}
 			}
-			if errorMsg != "" {
+			if errorMsg != "" && status != "completed" {
 				fmt.Printf("%s%s%s\n", ColorRed, errorMsg, ColorReset)
 			}
 		}
@@ -1818,13 +1821,12 @@ func waitForCommand(commandID string, timeoutSeconds int) interface{} {
 		}
 
 		status, _ := cmdData["status"].(string)
-		fmt.Printf("\r%s Status: %s %s %s", ColorCyan, status, spinner[spinIdx], ColorReset)
+		fmt.Printf("\r  %s%s%s %s", ColorCyan, spinner[spinIdx], ColorReset, status)
 		spinIdx = (spinIdx + 1) % len(spinner)
 
 		switch status {
 		case "completed", "failed", "timeout":
-			fmt.Printf("\r%s Status: %s. Finalizing...                %s\n", ColorGreen, status, ColorReset)
-			displayFinalCommandStatus(cmdData, commandID)
+			fmt.Printf("\r\033[K")
 			return cmdData
 		}
 
@@ -1842,47 +1844,46 @@ func displayFinalCommandStatus(cmdData map[string]interface{}, commandID string)
 	output := getStringFromMap(cmdData, "output")
 	errorMsg := getStringFromMap(cmdData, "error")
 	opType := getStringFromMap(cmdData, "operation_type")
-	cmdStr := getStringFromMap(cmdData, "command")
 
-	fmt.Printf("%s\n%sFinal Status for Command ID %s (%s: %s):%s\n", strings.Repeat("=", 60), ColorBlue, commandID, opType, cmdStr, ColorReset)
-	fmt.Printf("%sStatus:%s ", ColorCyan, ColorReset)
+	// Status line
+	var statusColor string
 	switch status {
 	case "completed":
-		fmt.Printf("%s%s%s\n", ColorGreen, status, ColorReset)
+		statusColor = ColorGreen
 	case "failed", "timeout":
-		fmt.Printf("%s%s%s\n", ColorRed, status, ColorReset)
+		statusColor = ColorRed
 	default:
-		fmt.Println(status)
+		statusColor = ColorYellow
 	}
-	if opType == "execute" { // Exit code lebih relevan untuk execute
-		fmt.Printf("%sExit Code:%s %d\n", ColorCyan, ColorReset, exitCode)
+	exitInfo := ""
+	if opType == "execute" {
+		exitInfo = fmt.Sprintf("  exit:%d", exitCode)
 	}
+	fmt.Printf("  %s%s%s%s\n", statusColor, status, ColorReset, exitInfo)
+
 	if output != "" {
-		fmt.Printf("\n%sOutput:%s\n", ColorGreen, ColorReset)
-		// Jangan tampilkan konten file besar secara langsung di sini
-		if (opType == "download" && strings.HasPrefix(output, "[File content too large")) || (len(output) > 1024 && opType != "upload") {
-			fmt.Println(output) // Pesan dari server sudah cukup
-		} else if opType == "upload" {
-			fmt.Println(output) // Pesan konfirmasi upload
-		} else if len(output) > 1024 {
-			fmt.Printf("%s... (Output truncated, %d bytes total)\n", output[:1000], len(output))
+		fmt.Println()
+		if len(output) > 4096 {
+			fmt.Printf("%s... (%d bytes, truncated)\n", output[:4000], len(output))
 		} else {
-			fmt.Println(output)
+			fmt.Print(output)
+			if !strings.HasSuffix(output, "\n") {
+				fmt.Println()
+			}
 		}
 	}
 	if errorMsg != "" {
-		fmt.Printf("\n%sError:%s\n%s\n", ColorRed, ColorReset, errorMsg)
+		fmt.Printf("%s%s%s\n", ColorRed, errorMsg, ColorReset)
 	}
-	fmt.Println(strings.Repeat("=", 60))
 }
 
-func printInfo(msg string)    { fmt.Printf("%s[INFO]%s %s\n", ColorBlue, ColorReset, msg) }
-func printSuccess(msg string) { fmt.Printf("%s[SUCCESS]%s %s\n", ColorGreen, ColorReset, msg) }
-func printWarning(msg string) { fmt.Printf("%s[WARNING]%s %s\n", ColorYellow, ColorReset, msg) }
-func printError(msg string)   { fmt.Printf("%s[ERROR]%s %s\n", ColorRed, ColorReset, msg) }
+func printInfo(msg string)    { fmt.Printf("%s[*]%s %s\n", ColorBlue, ColorReset, msg) }
+func printSuccess(msg string) { fmt.Printf("%s[+]%s %s\n", ColorGreen, ColorReset, msg) }
+func printWarning(msg string) { fmt.Printf("%s[!]%s %s\n", ColorYellow, ColorReset, msg) }
+func printError(msg string)   { fmt.Printf("%s[-]%s %s\n", ColorRed, ColorReset, msg) }
 func printVerbose(msg string) {
 	if verbose {
-		fmt.Printf("%s[DEBUG]%s %s\n", ColorPurple, ColorReset, msg)
+		fmt.Printf("%s[~]%s %s\n", ColorPurple, ColorReset, msg)
 	}
 }
 
