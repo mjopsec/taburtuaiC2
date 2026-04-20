@@ -1367,6 +1367,11 @@ Available methods:
 			os.Exit(1)
 		}
 
+		if processPath == "" {
+			printError("--path is required (path to executable for persistence)")
+			os.Exit(1)
+		}
+
 		printInfo(fmt.Sprintf("Setting up %s persistence '%s' on agent %s...", method, name, agentID))
 		printVerbose(fmt.Sprintf("Method: %s, Name: %s, Path: %s, Args: %s", method, name, processPath, processArgs))
 

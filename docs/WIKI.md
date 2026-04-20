@@ -284,7 +284,7 @@ operator persistence setup <agent-id> --method <method> [flags]
 |------|---------|-------------|
 | `--method METHOD` | — | Persistence method (required, see table below) |
 | `--name NAME` | auto-generated | Registry key / task / service name |
-| `--path PATH` | agent's own exe | Path to the executable to persist |
+| `--path PATH` | — | Path to the executable to persist (required) |
 | `--args ARGS` | — | Arguments passed to the executable |
 | `--wait` | `false` | Wait for agent to confirm |
 
