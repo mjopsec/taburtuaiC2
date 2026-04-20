@@ -1,0 +1,113 @@
+package api
+
+import (
+	"runtime"
+	"time"
+)
+
+// serverID returns a unique identifier for this server instance
+func (h *Handlers) serverID() string {
+	return "taburtuai-" + serverStartTime.Format("20060102-150405")
+}
+
+// componentStatus returns "ok", "disabled", or "error" for a named component
+func (h *Handlers) componentStatus(component string) string {
+	switch component {
+	case "logger":
+		if h.server.Logger != nil {
+			return "ok"
+		}
+	case "monitor":
+		if h.server.Monitor != nil {
+			return "ok"
+		}
+	case "crypto":
+		if h.server.CryptoMgr != nil {
+			return "ok"
+		}
+		return "disabled"
+	case "command_queue":
+		if h.server.CommandQueue != nil {
+			return "ok"
+		}
+	}
+	return "error"
+}
+
+// detailedHealth returns memory, runtime, and subsystem detail
+func (h *Handlers) detailedHealth() map[string]interface{} {
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+
+	return map[string]interface{}{
+		"memory": map[string]interface{}{
+			"alloc_mb":       bToMb(mem.Alloc),
+			"total_alloc_mb": bToMb(mem.TotalAlloc),
+			"sys_mb":         bToMb(mem.Sys),
+			"gc_cycles":      mem.NumGC,
+			"heap_objects":   mem.HeapObjects,
+		},
+		"runtime": map[string]interface{}{
+			"goroutines": runtime.NumGoroutine(),
+			"cpu_count":  runtime.NumCPU(),
+			"go_version": runtime.Version(),
+			"arch":       runtime.GOARCH,
+			"os":         runtime.GOOS,
+		},
+		"agents":        h.server.Monitor.GetStats(),
+		"command_queue": h.server.CommandQueue.GetStats(),
+	}
+}
+
+// systemHealth evaluates overall health and returns a status string + issues list
+func (h *Handlers) systemHealth() (string, []string) {
+	var issues []string
+	status := "healthy"
+
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+	if mem.Alloc > 1024*1024*1024 {
+		issues = append(issues, "High memory usage (>1GB)")
+		status = "degraded"
+	}
+
+	if runtime.NumGoroutine() > 1000 {
+		issues = append(issues, "High goroutine count")
+		status = "degraded"
+	}
+
+	agentStats := h.server.Monitor.GetStats()
+	if total, ok := agentStats["total_agents"].(int); ok && total > 0 {
+		if offline, ok := agentStats["offline_agents"].(int); ok {
+			if ratio := float64(offline) / float64(total); ratio > 0.95 {
+				issues = append(issues, "Critical: >95% agents offline")
+				status = "critical"
+			} else if ratio > 0.8 {
+				issues = append(issues, "Warning: >80% agents offline")
+				if status == "healthy" {
+					status = "degraded"
+				}
+			}
+		}
+	}
+
+	queueStats := h.server.CommandQueue.GetStats()
+	if queued, ok := queueStats["total_queued"].(int); ok && queued > 5000 {
+		issues = append(issues, "Command queue backlog >5000")
+		if status == "healthy" {
+			status = "degraded"
+		}
+	}
+
+	return status, issues
+}
+
+// bToMb converts bytes to megabytes
+func bToMb(b uint64) uint64 {
+	return b / 1024 / 1024
+}
+
+// uptimeSince returns duration since t as a human-readable string
+func uptimeSince(t time.Time) string {
+	return time.Since(t).Round(time.Second).String()
+}

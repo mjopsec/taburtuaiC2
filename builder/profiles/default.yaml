@@ -1,0 +1,12 @@
+# Default OPSEC profile - balanced stealth vs reliability
+name: default
+sleep_interval: 30s
+jitter_percent: 30
+max_retries: 5
+enable_sandbox_check: true
+enable_vm_check: true
+enable_debug_check: true
+sleep_masking: true
+user_agent_rotation: true
+kill_date: ""
+working_hours_only: false

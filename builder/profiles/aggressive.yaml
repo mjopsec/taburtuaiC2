@@ -1,0 +1,12 @@
+# Aggressive profile - fast beacon, minimal evasion (noisy but responsive)
+name: aggressive
+sleep_interval: 5s
+jitter_percent: 10
+max_retries: 10
+enable_sandbox_check: false
+enable_vm_check: false
+enable_debug_check: false
+sleep_masking: false
+user_agent_rotation: false
+kill_date: ""
+working_hours_only: false
