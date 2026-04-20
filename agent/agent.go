@@ -384,19 +384,20 @@ func (a *Agent) Stop() { a.isRunning = false }
 
 // ── private helpers ───────────────────────────────────────────────────────────
 
-// marshalPayload JSON-encodes v and encrypts with the active key if available
+// marshalPayload JSON-encodes v and encrypts with the static key.
+// Always uses the static key (not the ECDH session key) so the server can
+// decrypt with its CryptoMgr regardless of session state.
 func (a *Agent) marshalPayload(v any) ([]byte, error) {
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
 	}
-	mgr := a.activeCrypto()
-	if mgr == nil {
+	if a.crypto == nil {
 		return raw, nil
 	}
-	enc, err := mgr.EncryptData(raw)
+	enc, err := a.crypto.EncryptData(raw)
 	if err != nil {
-		return raw, nil // fall back to plaintext on encrypt failure
+		return raw, nil
 	}
 	wrapped, _ := json.Marshal(map[string]string{"encrypted_payload": enc})
 	return wrapped, nil

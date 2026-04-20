@@ -131,16 +131,7 @@ func (h *Handlers) GetNextCommand(c *gin.Context) {
 		fmt.Sprintf("Dispatching command ID=%s Type=%s", cmd.ID, cmd.OperationType),
 		agentID, cmd.Command, nil)
 
-	var payload interface{} = cmd
-	if h.server.CryptoMgr != nil {
-		if raw, err := json.Marshal(cmd); err == nil {
-			if enc, err := h.server.CryptoMgr.EncryptData(raw); err == nil {
-				payload = map[string]string{"encrypted": enc}
-			}
-		}
-	}
-
-	c.JSON(http.StatusOK, types.APIResponse{Success: true, Data: payload})
+	c.JSON(http.StatusOK, types.APIResponse{Success: true, Data: cmd})
 }
 
 // SubmitCommandResult processes a result submitted by an agent

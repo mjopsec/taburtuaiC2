@@ -29,6 +29,9 @@ var (
 	defaultEnableEvasion     = "true"
 	defaultSleepMasking      = "true"
 	defaultUserAgentRotation = "true"
+
+	// Debug mode — keeps console open on exit (Windows)
+	debugMode = "false"
 )
 
 func main() {
@@ -69,12 +72,22 @@ func main() {
 	agent, err := NewAgent(cfg)
 	if err != nil {
 		fmt.Printf("[!] Failed to create agent: %v\n", err)
+		pauseIfDebug()
 		os.Exit(1)
 	}
 
 	if err := agent.Start(); err != nil {
 		fmt.Printf("[!] Agent failed: %v\n", err)
+		pauseIfDebug()
 		os.Exit(1)
+	}
+}
+
+// pauseIfDebug waits for Enter before exiting when debugMode == "true"
+func pauseIfDebug() {
+	if debugMode == "true" {
+		fmt.Print("\n[DEBUG] Press Enter to exit...")
+		fmt.Scanln()
 	}
 }
 

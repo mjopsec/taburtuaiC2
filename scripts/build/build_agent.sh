@@ -194,7 +194,12 @@ build_ldflags() {
     [[ -n "${PROFILE_UA_ROT:-}"      ]] && flags+=" -X ${pkg}.defaultUserAgentRotation=${PROFILE_UA_ROT}"
     [[ -n "${PROFILE_EVASION:-}"     ]] && flags+=" -X ${pkg}.defaultEnableEvasion=${PROFILE_EVASION}"
 
-    # Stealth: strip debug symbols
+    # Debug mode — keeps console open on exit
+    if $DEBUG; then
+        flags+=" -X ${pkg}.debugMode=true"
+    fi
+
+    # Stealth: strip debug symbols + hide console window
     if $STEALTH && ! $DEBUG; then
         flags+=" -s -w"
         [[ "$TARGET_OS" == "windows" ]] && flags+=" -H windowsgui"
