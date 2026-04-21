@@ -279,6 +279,23 @@ var agentsInfoCmd = &cobra.Command{
 	},
 }
 
+var agentsDeleteCmd = &cobra.Command{
+	Use:   "delete <agent-id>",
+	Short: "Remove agent from server",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		agentID, err := resolveAgentID(args[0])
+		if err != nil { printError(err.Error()); os.Exit(1) }
+
+		_, err = makeAPIRequestWithMethod("DELETE", fmt.Sprintf("/api/v1/agents/%s", agentID), nil, "")
+		if err != nil {
+			printError(fmt.Sprintf("Failed to delete agent: %v", err))
+			os.Exit(1)
+		}
+		printSuccess(fmt.Sprintf("Agent %s... removed", agentID[:12]))
+	},
+}
+
 // Command execution command
 var cmdCmd = &cobra.Command{
 	Use:   "cmd <agent-id> <command>",
@@ -1976,6 +1993,7 @@ func init() {
 	// Add subcommands to agents
 	agentsCmd.AddCommand(agentsListCmd)
 	agentsCmd.AddCommand(agentsInfoCmd)
+	agentsCmd.AddCommand(agentsDeleteCmd)
 
 	// Add subcommands to queue
 	queueCmd.AddCommand(queueStatsCmd)
@@ -2035,6 +2053,7 @@ func init() {
 
 	// Add to root command
 	rootCmd.AddCommand(persistenceCmd)
+	rootCmd.AddCommand(consoleCmd)
 }
 
 func main() {

