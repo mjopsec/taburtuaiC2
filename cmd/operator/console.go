@@ -23,6 +23,11 @@ var consoleCmd = &cobra.Command{
 }
 
 func runConsole() {
+	// Auto-prepend http:// if scheme is missing
+	if !strings.HasPrefix(config.ServerURL, "http://") && !strings.HasPrefix(config.ServerURL, "https://") {
+		config.ServerURL = "http://" + config.ServerURL
+	}
+
 	display := config.ServerURL
 	display = strings.TrimPrefix(display, "http://")
 	display = strings.TrimPrefix(display, "https://")
@@ -149,14 +154,13 @@ func consoleError(errMsg string, tokens []string) {
 	switch {
 	case strings.Contains(errMsg, "arg(s)") || strings.Contains(errMsg, "argument"):
 		if hasCmd {
-			// Strip root command name from UseLine (e.g. "taburtuai-cli history <id>" → "history <id>")
 			useLine := matched.UseLine()
 			if idx := strings.Index(useLine, matched.Use); idx >= 0 {
 				useLine = useLine[idx:]
 			}
-			fmt.Printf("  %s[!]%s %s\n", ColorYellow, ColorReset, matched.Short)
-			fmt.Printf("      \033[2musage:\033[0m  %s\n", useLine)
-			fmt.Printf("      \033[2mhelp:\033[0m   %s --help\n\n", tokens[0])
+			fmt.Printf("%s[!]%s %s\n", ColorYellow, ColorReset, matched.Short)
+			fmt.Printf("    \033[2musage:\033[0m  %s\n", useLine)
+			fmt.Printf("    \033[2mhelp:\033[0m   %s --help\n\n", tokens[0])
 		} else {
 			printError(errMsg)
 		}
@@ -166,11 +170,11 @@ func consoleError(errMsg string, tokens []string) {
 		if len(tokens) > 0 {
 			cmd = tokens[0]
 		}
-		fmt.Printf("  %s[!]%s unknown command %s'%s'%s  —  type %shelp%s to list commands\n",
+		fmt.Printf("%s[!]%s unknown command %s'%s'%s  —  type %shelp%s to list commands\n",
 			ColorYellow, ColorReset, ColorRed, cmd, ColorReset, ColorCyan, ColorReset)
 
 	case strings.Contains(errMsg, "unknown flag") || strings.Contains(errMsg, "unknown shorthand"):
-		fmt.Printf("  %s[!]%s %s", ColorYellow, ColorReset, errMsg)
+		fmt.Printf("%s[!]%s %s", ColorYellow, ColorReset, errMsg)
 		if hasCmd {
 			fmt.Printf("  —  run '%s --help'\n", tokens[0])
 		} else {
