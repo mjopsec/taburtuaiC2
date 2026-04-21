@@ -1,0 +1,14 @@
+# OPSEC profile - real-world balance: moderate beacon, full evasion, 24/7 operation
+# Suitable for engagements where AV/EDR is present but you need reasonable responsiveness.
+# Shell timeout: use --timeout 180 (beacon max = 60s * 1.3 jitter = ~78s)
+name: opsec
+sleep_interval: 60s
+jitter_percent: 30
+max_retries: 5
+enable_sandbox_check: true
+enable_vm_check: true
+enable_debug_check: true
+sleep_masking: true
+user_agent_rotation: true
+kill_date: ""
+working_hours_only: false

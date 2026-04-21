@@ -1,0 +1,17 @@
+# Paranoid profile - maximum OPSEC for high-value targets (EDR/SOC monitored)
+# Beacons only during business hours to blend with legitimate traffic.
+# Shell timeout: use --timeout 900 (beacon max = 600s * 1.5 jitter = ~900s)
+# Set kill_date to auto-wipe after engagement (format: 2006-01-02)
+name: paranoid
+sleep_interval: 600s
+jitter_percent: 50
+max_retries: 2
+enable_sandbox_check: true
+enable_vm_check: true
+enable_debug_check: true
+sleep_masking: true
+user_agent_rotation: true
+kill_date: ""
+working_hours_only: true
+working_hours_start: 9
+working_hours_end: 17

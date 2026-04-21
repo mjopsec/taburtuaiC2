@@ -376,6 +376,7 @@ var shellCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		agentID, err := resolveAgentID(args[0])
 		if err != nil { printError(err.Error()); os.Exit(1) }
+		shellTimeout, _ := cmd.Flags().GetInt("timeout")
 		fmt.Printf("  %sshell%s  %s%s%s  · exit to quit\n\n",
 			ColorCyan, ColorReset, ColorGreen, agentID[:8], ColorReset)
 		reader := bufio.NewReader(os.Stdin)
@@ -394,7 +395,7 @@ var shellCmd = &cobra.Command{
 			if commandStr == "exit" || commandStr == "quit" {
 				break
 			}
-			executeShellCommand(agentID, commandStr)
+			executeShellCommand(agentID, commandStr, shellTimeout)
 		}
 	},
 }
@@ -1696,12 +1697,12 @@ func makeAPIRequestWithMethod(method, endpoint string, body io.Reader, contentTy
 	return respBody, nil
 }
 
-func executeShellCommand(agentID, commandStr string) {
+func executeShellCommand(agentID, commandStr string, timeout int) {
 	printVerbose(fmt.Sprintf("Shell command for %s: %s", agentID, commandStr))
 	reqBody := map[string]interface{}{
 		"agent_id": agentID,
 		"command":  commandStr,
-		"timeout":  60,
+		"timeout":  timeout,
 	}
 	reqJSON, _ := json.Marshal(reqBody)
 	serverRespBytes, err := makeAPIRequestWithMethod("POST", "/api/v1/command", bytes.NewBuffer(reqJSON), "application/json")
@@ -1732,7 +1733,7 @@ func executeShellCommand(agentID, commandStr string) {
 		return
 	}
 
-	finalStatusData := waitForCommand(commandID, 60)
+	finalStatusData := waitForCommand(commandID, timeout)
 	if finalStatusData != nil {
 		if statusMap, ok := finalStatusData.(map[string]interface{}); ok {
 			output, _ := statusMap["output"].(string)
@@ -2007,6 +2008,9 @@ func init() {
 	processCmd.AddCommand(processListCmd)
 	processCmd.AddCommand(processKillCmd)
 	processCmd.AddCommand(processStartCmd)
+
+	// Shell flags
+	shellCmd.Flags().Int("timeout", 600, "Seconds to wait for command result (increase for slow-beacon agents)")
 
 	// Command flags
 	cmdCmd.Flags().Int("timeout", 300, "Command timeout in seconds (server default if 0)")
