@@ -82,7 +82,7 @@ func runConsole() {
 
 		rootCmd.SetArgs(fullArgs)
 		if err := rootCmd.Execute(); err != nil {
-			printError(err.Error())
+			consoleError(err.Error(), tokens)
 		}
 	}
 
@@ -138,6 +138,47 @@ func printConsoleHelp() {
 				"\033[2m", e.desc, "\033[0m")
 		}
 		fmt.Println()
+	}
+}
+
+// consoleError prints a contextual error message using the matched cobra command's usage.
+func consoleError(errMsg string, tokens []string) {
+	matched, _, _ := rootCmd.Find(tokens)
+	hasCmd := matched != nil && matched != rootCmd && matched.Use != ""
+
+	switch {
+	case strings.Contains(errMsg, "arg(s)") || strings.Contains(errMsg, "argument"):
+		if hasCmd {
+			// Strip root command name from UseLine (e.g. "taburtuai-cli history <id>" → "history <id>")
+			useLine := matched.UseLine()
+			if idx := strings.Index(useLine, matched.Use); idx >= 0 {
+				useLine = useLine[idx:]
+			}
+			fmt.Printf("  %s[!]%s %s\n", ColorYellow, ColorReset, matched.Short)
+			fmt.Printf("      \033[2musage:\033[0m  %s\n", useLine)
+			fmt.Printf("      \033[2mhelp:\033[0m   %s --help\n\n", tokens[0])
+		} else {
+			printError(errMsg)
+		}
+
+	case strings.Contains(errMsg, "unknown command"):
+		cmd := ""
+		if len(tokens) > 0 {
+			cmd = tokens[0]
+		}
+		fmt.Printf("  %s[!]%s unknown command %s'%s'%s  —  type %shelp%s to list commands\n",
+			ColorYellow, ColorReset, ColorRed, cmd, ColorReset, ColorCyan, ColorReset)
+
+	case strings.Contains(errMsg, "unknown flag") || strings.Contains(errMsg, "unknown shorthand"):
+		fmt.Printf("  %s[!]%s %s", ColorYellow, ColorReset, errMsg)
+		if hasCmd {
+			fmt.Printf("  —  run '%s --help'\n", tokens[0])
+		} else {
+			fmt.Println()
+		}
+
+	default:
+		printError(errMsg)
 	}
 }
 
