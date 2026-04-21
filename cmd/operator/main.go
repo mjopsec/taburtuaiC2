@@ -1990,6 +1990,8 @@ func init() {
 	rootCmd.AddCommand(statsCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(processCmd)
+	rootCmd.AddCommand(adsCmd)
+	rootCmd.AddCommand(fetchCmd)
 
 	// Add subcommands to agents
 	agentsCmd.AddCommand(agentsListCmd)
@@ -2054,6 +2056,18 @@ func init() {
 	// Add subcommands
 	persistenceCmd.AddCommand(persistenceSetupCmd)
 	persistenceCmd.AddCommand(persistenceRemoveCmd)
+
+	// ADS subcommands and flags
+	adsCmd.AddCommand(adsWriteCmd)
+	adsCmd.AddCommand(adsReadCmd)
+	adsCmd.AddCommand(adsExecCmd)
+	adsExecCmd.Flags().Bool("wait", false, "Wait for execution result")
+	adsExecCmd.Flags().Int("timeout", 60, "Seconds to wait for result")
+
+	// Fetch flags
+	fetchCmd.Flags().StringP("method", "m", "certutil", "LOLBin to use: certutil | bitsadmin | curl | powershell")
+	fetchCmd.Flags().Bool("wait", false, "Wait for download to complete on the agent")
+	fetchCmd.Flags().Int("timeout", 120, "Seconds to wait for result")
 
 	// Add to root command
 	rootCmd.AddCommand(persistenceCmd)

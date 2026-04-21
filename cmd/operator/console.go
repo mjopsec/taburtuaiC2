@@ -126,6 +126,17 @@ func printConsoleHelp() {
 			{"persistence setup <id> --method <m> --path <p>", "install persistence"},
 			{"persistence remove <id> --method <m> --name <n>", "remove persistence"},
 		}},
+		{"ADS (Windows NTFS)", []entry{
+			{"ads write <id> <local> <target:stream>", "write file into Alternate Data Stream"},
+			{"ads read <id> <source:stream> <local>", "read ADS to local file"},
+			{"ads exec <id> <path:stream.js>", "execute script from ADS via LOLBin"},
+		}},
+		{"LOLBin Fetch", []entry{
+			{"fetch <id> <url> <remote-path>", "download via certutil (default)"},
+			{"fetch <id> <url> <remote-path> --method bitsadmin", "download via BITS (looks like WU)"},
+			{"fetch <id> <url> <remote-path> --method curl", "download via curl.exe"},
+			{"fetch <id> <url> <remote-path> --method powershell", "download via WebClient"},
+		}},
 		{"Queue & Server", []entry{
 			{"queue stats", "pending command overview"},
 			{"queue clear <id>", "flush pending queue"},

