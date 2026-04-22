@@ -2260,6 +2260,23 @@ func init() {
 	stageUploadCmd.Flags().String("arch", "amd64", "Payload architecture")
 	stageUploadCmd.Flags().Int("ttl", 24, "TTL in hours (0=no expiry)")
 	stageUploadCmd.Flags().String("desc", "", "Description")
+
+	// Phase 11 — Network recon, registry, SOCKS5 pivot
+	rootCmd.AddCommand(netscanCmd)
+	rootCmd.AddCommand(arpscanCmd)
+
+	rootCmd.AddCommand(registryCmd)
+	registryCmd.AddCommand(regReadCmd)
+	registryCmd.AddCommand(regWriteCmd)
+	registryCmd.AddCommand(regDeleteCmd)
+	registryCmd.AddCommand(regListCmd)
+
+	rootCmd.AddCommand(socks5Cmd)
+	socks5Cmd.AddCommand(socks5StartCmd)
+	socks5Cmd.AddCommand(socks5StopCmd)
+	socks5Cmd.AddCommand(socks5StatusCmd)
+
+	initPivotFlags()
 }
 
 func main() {

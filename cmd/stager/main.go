@@ -1,9 +1,6 @@
 package main
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/sha256"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -77,21 +74,3 @@ func download(url string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// decrypt decrypts AES-256-GCM ciphertext.
-// Format: nonce(12) | ciphertext  (mirrors stageEncrypt on the server)
-func decrypt(key string, data []byte) ([]byte, error) {
-	k := sha256.Sum256([]byte(key))
-	block, err := aes.NewCipher(k[:])
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	ns := gcm.NonceSize()
-	if len(data) < ns {
-		return nil, fmt.Errorf("ciphertext too short")
-	}
-	return gcm.Open(nil, data[:ns], data[ns:], nil)
-}

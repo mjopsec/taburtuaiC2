@@ -483,6 +483,10 @@ func validateCommandForQueue(cmd *types.Command) error {
 		"bof_exec": true,
 		// phase 10 — OPSEC
 		"antidebug": true, "antivm": true, "timegate_set": true,
+		// phase 11 — network recon / registry / SOCKS5 pivot
+		"net_scan": true, "arp_scan": true,
+		"reg_read": true, "reg_write": true, "reg_delete": true, "reg_list": true,
+		"socks5_start": true, "socks5_stop": true, "socks5_status": true,
 	}
 	if !validOps[cmd.OperationType] {
 		return fmt.Errorf("invalid operation type: %s", cmd.OperationType)
