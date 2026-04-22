@@ -39,6 +39,19 @@ type Command struct {
 	// LOLBin Fetch Fields (operation_type: lolbin_fetch)
 	FetchURL    string `json:"fetch_url,omitempty"`    // URL to download from
 	FetchMethod string `json:"fetch_method,omitempty"` // certutil | bitsadmin | curl | powershell
+
+	// Level 2 — Process Injection (operation_type: inject_remote | inject_self)
+	ShellcodeB64 string `json:"shellcode_b64,omitempty"` // base64-encoded shellcode
+	InjectMethod string `json:"inject_method,omitempty"` // crt | apc (remote injection method)
+	InjectPID    uint32 `json:"inject_pid,omitempty"`    // target PID for remote injection
+
+	// Level 2 — PPID Spoofing (operation_type: process_start with ppid fields set)
+	SpoofParentPID  uint32 `json:"spoof_parent_pid,omitempty"`  // explicit parent PID
+	SpoofParentName string `json:"spoof_parent_name,omitempty"` // parent process name (e.g. "explorer.exe")
+
+	// Level 2 — Timestomping (operation_type: timestomp)
+	TimestompRef  string `json:"timestomp_ref,omitempty"`  // reference file to copy timestamps from
+	TimestompTime string `json:"timestomp_time,omitempty"` // explicit RFC3339 time to set
 }
 
 // CommandResult represents the result of a command execution
