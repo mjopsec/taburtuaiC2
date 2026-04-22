@@ -62,6 +62,7 @@ func (m *Middleware) Auth() gin.HandlerFunc {
 			"/api/v1/checkin", // Allow agent checkin without auth
 			"/",               // Dashboard
 			"/static/",        // Static files
+			"/stage/",         // Stage payload delivery (token is the credential)
 		}
 
 		path := c.Request.URL.Path

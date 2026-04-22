@@ -119,14 +119,29 @@ func (s *Store) initSchema() error {
 		payload_json     TEXT DEFAULT '{}'
 	);
 
+	CREATE TABLE IF NOT EXISTS stages (
+		token       TEXT PRIMARY KEY,
+		payload     BLOB NOT NULL,
+		format      TEXT DEFAULT 'exe',
+		arch        TEXT DEFAULT 'amd64',
+		os_target   TEXT DEFAULT 'windows',
+		created_at  INTEGER DEFAULT 0,
+		expires_at  INTEGER DEFAULT 0,
+		used        INTEGER DEFAULT 0,
+		used_at     INTEGER DEFAULT 0,
+		used_by_ip  TEXT DEFAULT '',
+		description TEXT DEFAULT ''
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_commands_agent_status ON commands(agent_id, status);
 	CREATE INDEX IF NOT EXISTS idx_commands_created      ON commands(created_at);
 	CREATE INDEX IF NOT EXISTS idx_agent_errors_agent   ON agent_errors(agent_id, occurred_at);
+	CREATE INDEX IF NOT EXISTS idx_stages_created        ON stages(created_at);
 	`)
 	if err != nil {
 		return err
 	}
-	// Migration: add payload_json to existing databases that predate this column.
+	// Migrations for existing databases
 	_, _ = s.db.Exec(`ALTER TABLE commands ADD COLUMN payload_json TEXT DEFAULT '{}'`)
 	return nil
 }

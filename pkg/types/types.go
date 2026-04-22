@@ -102,6 +102,23 @@ type Command struct {
 	WorkingHoursStart int    `json:"working_hours_start,omitempty"` // 0-23
 	WorkingHoursEnd   int    `json:"working_hours_end,omitempty"`   // 0-23
 	KillDate          string `json:"kill_date,omitempty"`           // YYYY-MM-DD or RFC3339
+
+	// Phase 11 — Network recon (operation_type: net_scan | arp_scan)
+	ScanTargets     []string `json:"scan_targets,omitempty"`      // CIDR or IPs
+	ScanPorts       []int    `json:"scan_ports,omitempty"`        // port list; empty = common
+	ScanTimeout     int      `json:"scan_timeout,omitempty"`      // ms per probe (default 500)
+	ScanWorkers     int      `json:"scan_workers,omitempty"`      // concurrency (default 200)
+	ScanGrabBanners bool     `json:"scan_grab_banners,omitempty"` // grab service banners
+
+	// Phase 11 — Registry (operation_type: reg_read | reg_write | reg_delete | reg_list)
+	RegHive  string `json:"reg_hive,omitempty"`  // HKLM | HKCU | HKCR | HKU | HKCC
+	RegKey   string `json:"reg_key,omitempty"`   // e.g. SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+	RegValue string `json:"reg_value,omitempty"` // value name ("" = enumerate/delete key)
+	RegData  string `json:"reg_data,omitempty"`  // data to write
+	RegType  string `json:"reg_type,omitempty"`  // sz | dword | qword | expand_sz | multi_sz
+
+	// Phase 11 — SOCKS5 proxy pivot (operation_type: socks5_start | socks5_stop | socks5_status)
+	Socks5Addr string `json:"socks5_addr,omitempty"` // bind address e.g. "127.0.0.1:1080"
 }
 
 // CommandResult represents the result of a command execution

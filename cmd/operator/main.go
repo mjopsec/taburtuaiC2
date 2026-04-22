@@ -2249,6 +2249,17 @@ func init() {
 	opsecTimegateCmd.Flags().String("kill-date", "", "Kill date YYYY-MM-DD (empty = disabled)")
 	opsecTimegateCmd.Flags().Bool("wait", false, "Wait for result")
 	opsecTimegateCmd.Flags().Int("timeout", 15, "Seconds to wait")
+
+	// Stage management
+	rootCmd.AddCommand(stageCmd)
+	stageCmd.AddCommand(stageUploadCmd)
+	stageCmd.AddCommand(stageListCmd)
+	stageCmd.AddCommand(stageDeleteCmd)
+
+	stageUploadCmd.Flags().String("format", "exe", "Payload format: exe|shellcode|dll")
+	stageUploadCmd.Flags().String("arch", "amd64", "Payload architecture")
+	stageUploadCmd.Flags().Int("ttl", 24, "TTL in hours (0=no expiry)")
+	stageUploadCmd.Flags().String("desc", "", "Description")
 }
 
 func main() {
