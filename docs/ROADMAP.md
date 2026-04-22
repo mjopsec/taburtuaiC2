@@ -1,273 +1,182 @@
-# Taburtuai C2 — Development Roadmap
+# taburtuaiC2 — Development Roadmap
 
-> Goal: Build an OPSEC-minded, modular, adaptive C2 framework that goes beyond standard tooling.  
-> Each phase is independently mergeable. Phases build on each other but can be developed in parallel branches.
-
----
-
-## Phase 1 — Foundation ✅ DONE
-**Goal:** Functional skeleton — server boots, agent checks in, commands execute.
-
-- [x] REST API (Gin) — checkin, command queue, result submission
-- [x] Agent: HTTP transport, AES-256-GCM + gzip encryption
-- [x] Command types: execute, upload, download, process list/kill/start, persist
-- [x] Server-side agent monitoring, health tracking, rate limiting
-- [x] Authentication (API key + Bearer token)
-- [x] Multi-format logging (text, JSON, security events)
-- [x] Web dashboard (HTML)
-- [x] CLI operator (`cmd/operator/`)
+> Goal: enterprise-grade modular C2 that surpasses Cobalt Strike, Havoc, and Sliver in technique depth and implementation quality.  
+> Approach: phased, test-as-you-build. Each phase ships a working, operator-usable capability increment.
 
 ---
 
-## Phase 2 — Core Operations ✅ DONE
-**Goal:** Full post-exploitation capability on a single host.
+## Already Shipped
 
-- [x] File upload/download with encryption
-- [x] Process enumeration, kill, spawn
-- [x] Cross-platform persistence:
-  - Windows: Registry Run, Scheduled Tasks, Startup Folder
-  - Linux: Cron (@reboot), systemd user service, .bashrc
-  - macOS: LaunchAgent plist
-- [x] Evasion stubs: sandbox/VM/debugger detection
-- [x] Module manager interface (plugin architecture)
-- [x] Agent group management, bulk command dispatch
-- [x] Build system (`scripts/build/`)
-
----
-
-## Phase 3 — OPSEC Hardening 🎯 NEXT
-**Goal:** Make traffic and agent behavior blend into the environment. This is the biggest differentiator vs commodity C2s.
-
-### 3.1 Malleable C2 Profiles
-- [ ] YAML-based traffic profiles (URI paths, headers, User-Agents, response bodies)
-- [ ] Per-listener profile assignment
-- [ ] Rotate profiles on reconnect
-- [ ] Mimic legitimate app traffic (Office365, Azure, Google APIs)
-
-### 3.2 Proper Key Exchange
-- [ ] Replace hardcoded shared key with ECDH (Noise Protocol or X25519)
-- [ ] Per-session symmetric keys derived from key exchange
-- [ ] Key rotation on reconnect
-- [ ] Certificate pinning for HTTPS listener
-
-### 3.3 Agent Sleep Obfuscation
-- [ ] Proper sleep masking: encrypt agent memory during sleep (Windows: VirtualProtect + AES)
-- [ ] Stack spoofing stubs
-- [ ] Syscall-based sleep (Windows: NtDelayExecution) to avoid timing analysis
-
-### 3.4 Traffic Shaping
-- [ ] Configurable beacon interval + jitter (already in config, needs profile-driven)
-- [ ] Working-hours-only beaconing (kill switch outside 08:00-18:00)
-- [ ] Bandwidth throttling for large transfers
-- [ ] Domain Fronting support (CDN-based C2 via Host header)
-
-### 3.5 Kill Switch & Self-Destruct
-- [ ] Kill date baked into agent at build time
-- [ ] Remote kill command (agent deletes itself + persistence)
-- [ ] Anti-forensic: wipe agent artifacts on exit
-
-### 3.6 SQLite Persistence
-- [ ] Replace in-memory agent/command storage with SQLite
-- [ ] Migrations system (`internal/storage/migrations/`)
-- [ ] Agent history survives server restarts
-- [ ] Command audit log persisted to DB
+| Phase | Capability |
+|-------|-----------|
+| 1 | Basic C2: checkin, exec (cmd/powershell/wmi/mshta), upload/download, process management |
+| 1 | Persistence: registry_run, schtasks, startup_folder, cron_reboot, systemd_user, bashrc, launchagent |
+| 1 | Build profiles (default/opsec/stealth/paranoid), garble obfuscation, goversioninfo PE masquerade |
+| 1 | NTFS ADS: write/read/exec via LOLBin |
+| 1 | LOLBin fetch: certutil/bitsadmin/curl/powershell |
+| 2 | Process injection: CRT + APC into remote process |
+| 2 | Fileless in-memory exec (inject self, no disk write) |
+| 2 | PPID spoofing via PROC_THREAD_ATTRIBUTE_PARENT_PROCESS |
+| 2 | Timestomping (copy timestamps from reference file or explicit RFC3339 time) |
+| 2 | Staged payload delivery (fetch URL → base64 → inject in-memory) |
 
 ---
 
-## Phase 4 — Multi-Protocol Listeners 🔌
-**Goal:** One C2, many transport options. Critical for bypassing network controls.
+## Phase 3 — EDR Bypass Fundamentals ← **Current**
 
-### 4.1 HTTPS Listener
-- [ ] TLS with operator-provided cert or auto Let's Encrypt (ACME)
-- [ ] SNI-based multiplexing (serve multiple domains from one IP)
-- [ ] HTTP/2 support for blending with modern web traffic
-
-### 4.2 DNS Listener
-- [ ] DNS tunneling (A, TXT, CNAME record encoding)
-- [ ] Subdomain-based data exfiltration
-- [ ] Encoding: Base32/Base64 over DNS labels
-- [ ] Integrate with `miekg/dns` library
-
-### 4.3 SMB / Named Pipe Listener
-- [ ] Windows Named Pipe server
-- [ ] Lateral movement within network: agent-to-agent relay
-- [ ] No internet required — pivoting through compromised hosts
-
-### 4.4 WebSocket Listener
-- [ ] Persistent bidirectional channel
-- [ ] Lower latency than polling
-- [ ] Disguise as legitimate WebSocket app (e.g., chat, monitoring)
-
-### 4.5 gRPC Listener (Internal Team Server)
-- [ ] Operator ↔ Team Server protocol over gRPC (replaces REST for operators)
-- [ ] TLS mutual auth for operators
-- [ ] Event streaming (real-time agent events pushed to operators)
+| # | Technique | File | Status |
+|---|-----------|------|--------|
+| 3.1 | AMSI byte-patch (in-process + remote PID) | agent/amsi_windows.go | ✅ |
+| 3.2 | ETW byte-patch (EtwEventWrite, in-process + remote) | agent/etw_windows.go | ✅ |
+| 3.3 | Token steal + impersonate (from any process) | agent/token_windows.go | ✅ |
+| 3.4 | make_token (LogonUser, lateral movement) | agent/token_windows.go | ✅ |
+| 3.5 | Token revert (revert to self) | agent/token_windows.go | ✅ |
+| 3.6 | Screenshot capture (GDI BitBlt → PNG → base64) | agent/screenshot_windows.go | ✅ |
+| 3.7 | Keylogger: start/dump/stop (polling GetAsyncKeyState) | agent/keylog_windows.go | ✅ |
+| 3.8 | Persistence: Windows Service (sc.exe) | agent/persistence.go | ✅ |
+| 3.9 | Persistence: WMI Event Subscription | agent/persistence.go | ✅ |
 
 ---
 
-## Phase 5 — Team Server & Multi-Operator 👥
-**Goal:** Enable collaborative red team operations with proper RBAC.
+## Phase 4 — Advanced Process Injection
 
-### 5.1 Operator Authentication
-- [ ] Named operator accounts (not shared API keys)
-- [ ] Role-based access: `admin`, `operator`, `viewer`
-- [ ] Per-operator audit log
-- [ ] Session tokens with expiry
-
-### 5.2 Real-Time Collaboration
-- [ ] Operator event stream (WebSocket or gRPC streaming)
-- [ ] Shared command history visible to all operators
-- [ ] "Typed by" indicator — show who queued each command
-- [ ] Operator chat / notes tied to engagement
-
-### 5.3 Engagement Management
-- [ ] Named engagements / operations
-- [ ] Scope definition (IP ranges, domains)
-- [ ] Agent tagging by engagement
-- [ ] Export engagement data (JSON, PDF report)
+| # | Technique | Notes |
+|---|-----------|-------|
+| 4.1 | Process hollowing | Suspend → NtUnmapViewOfSection → remap PE → SetThreadContext → Resume |
+| 4.2 | Ghost process injection | NtCreateSection from file marked delete-pending → hollow |
+| 4.3 | Module stomping (local) | Overwrite legitimate DLL's .text section |
+| 4.4 | Remote module stomping | Same across process boundary |
+| 4.5 | Local mapping injection | NtCreateSection + NtMapViewOfSection → execute |
+| 4.6 | Remote mapping injection | Cross-process shared section |
+| 4.7 | Thread hijacking | Suspend + GetThreadContext + patch RIP + Resume |
+| 4.8 | Threadless injection | HijackExport → overwrite + restore without spawning thread |
+| 4.9 | Reflective DLL injection | Self-loading DLL from memory (no LoadLibrary) |
+| 4.10 | sRDI — Shellcode Reflective DLL Injection | Convert PE/DLL to position-independent shellcode |
+| 4.11 | Local PE execution (fileless) | Map + fix imports + run PE entirely in memory |
+| 4.12 | Proxy execute via Timer APIs | NtAllocateVirtualMemory → execute via CreateTimerQueueTimer callback |
+| 4.13 | Proxy execute via Work Item APIs | RtlQueueWorkItem / TpAllocWork |
 
 ---
 
-## Phase 6 — Advanced Payload Generation 🛠️
-**Goal:** Generate diverse, obfuscated payloads for different delivery methods.
+## Phase 5 — Credential Access
 
-### 6.1 Staged Payloads
-- [ ] Stage 0 (stager): tiny downloader that fetches Stage 1
-- [ ] Stage 1 (loader): loads Stage 2 into memory
-- [ ] Stage 2 (implant): full agent, never touches disk
-- [ ] Stager formats: PowerShell one-liner, macro, HTA, VBA
-
-### 6.2 Output Formats
-- [ ] Shellcode (raw, position-independent)
-- [ ] Reflective DLL injection loader
-- [ ] PowerShell base64-encoded dropper
-- [ ] C source code (for custom compilation on target)
-- [ ] EXE/ELF (current)
-
-### 6.3 Obfuscation Pipeline
-- [ ] String encryption at build time (XOR / AES with compile-time key)
-- [ ] Import table obfuscation (syscall-direct where possible)
-- [ ] Control flow flattening stub
-- [ ] Garble integration (`burrowers/garble`) for Go binary obfuscation
-
-### 6.4 Payload Signing
-- [ ] Code signing with operator-provided cert (Windows Authenticode)
-- [ ] Timestamp signing for longevity past cert expiry
+| # | Technique | Notes |
+|---|-----------|-------|
+| 5.1 | LSASS minidump via MiniDumpWriteDump | Classic, high-noise |
+| 5.2 | LSASS via handle duplication | Duplicate handle from existing open handle in another process |
+| 5.3 | LSASS via RtlReportSilentProcessExit | Trigger WER to produce dump without opening LSASS |
+| 5.4 | LSASS via Seclogon race condition | seclogon handle hijack technique |
+| 5.5 | SAM database dump (reg save HKLM\SAM) | Local offline dump |
+| 5.6 | SAM dump from disk (VSS shadow copy) | Volume Shadow Copy bypass |
+| 5.7 | Chrome cookies (DPAPI AES-256-GCM) | Encrypted cookie decryption |
+| 5.8 | Chrome saved credentials (Login Data SQLite) | Master password bypass |
+| 5.9 | Firefox cookies (cookies.sqlite) | SQLite extraction |
+| 5.10 | Firefox saved credentials (key4.db + logins.json) | NSS key derivation |
+| 5.11 | Clipboard capture (GetClipboardData) | Credential/OTP harvesting |
 
 ---
 
-## Phase 7 — Post-Exploitation Modules 💣
-**Goal:** Built-in post-ex capabilities loaded on-demand (BOF-style or Go plugin).
+## Phase 6 — Sleep Obfuscation & Memory Encryption
 
-### 7.1 Injection Techniques (Windows)
-- [ ] Classic CreateRemoteThread injection
-- [ ] Process hollowing (NtUnmapViewOfSection)
-- [ ] APC injection (QueueUserAPC)
-- [ ] Early bird APC injection
-- [ ] Syscall-direct injection (bypass userland hooks)
-- [ ] Shellcode runner in Go with VirtualAlloc
-
-### 7.2 Token & Privilege Manipulation
-- [ ] Token impersonation (steal token from process)
-- [ ] `Make/ImpersonateToken`, `DuplicateTokenEx`
-- [ ] UAC bypass techniques
-- [ ] LSASS dump (MiniDumpWriteDump or direct syscall)
-
-### 7.3 Credential Access
-- [ ] SAM/NTDS.dit extraction stubs
-- [ ] DPAPI decryption (Chrome, Windows Credential Manager)
-- [ ] Kerberos ticket extraction (pass-the-ticket)
-- [ ] NTLM hash extraction
-
-### 7.4 Lateral Movement
-- [ ] WMI remote execution
-- [ ] PSExec-style SMB service install
-- [ ] DCOM lateral movement
-- [ ] Pass-the-Hash (NTLM relay)
-- [ ] Pass-the-Ticket (Kerberos)
-- [ ] SSH key reuse (Linux pivoting)
-
-### 7.5 Discovery & Enumeration
-- [ ] Active Directory enumeration (LDAP queries, no ADSI required)
-- [ ] Network share discovery
-- [ ] Kerberoastable account discovery
-- [ ] Trust relationship mapping
+| # | Technique | Notes |
+|---|-----------|-------|
+| 6.1 | Ekko sleep obfuscation | ROP chain: NtSetTimer → encrypt image → sleep → decrypt → resume |
+| 6.2 | Ekko + stack spoofing | Fake legitimate call stack during sleep window |
+| 6.3 | Heap encryption during Ekko sleep | Encrypt heap allocations while inactive |
+| 6.4 | Foliage sleep obfuscation | Alternative ROP-based sleep encrypt |
+| 6.5 | RtlEncryptMemory / RtlDecryptMemory | Native API for memory encryption |
+| 6.6 | PeFluctuation | Change PE section permissions (RW→RX) during sleep |
 
 ---
 
-## Phase 8 — Pivot Infrastructure 🔀
-**Goal:** Route traffic through compromised hosts to reach segmented networks.
+## Phase 7 — Syscalls & NTDLL Unhooking
 
-### 8.1 SOCKS5 Proxy
-- [ ] Agent acts as SOCKS5 proxy (operator tunnels through agent)
-- [ ] Multiplexed over existing C2 channel
-- [ ] Automatic route advertisement to team server
-
-### 8.2 Port Forwarding
-- [ ] Local → Remote port forward
-- [ ] Remote → Local reverse port forward
-- [ ] Bind vs connect modes
-
-### 8.3 Agent-to-Agent Relay (Peer-to-Peer)
-- [ ] SMB Named Pipe relay: internal agents relay through internet-connected agent
-- [ ] No direct internet access required for internal agents
-- [ ] Automatic path discovery
-
-### 8.4 Traffic Relay Chain
-- [ ] Multi-hop: Operator → Redirector → Agent → Target
-- [ ] Redirectors: HAProxy / Nginx / socat configs generated automatically
+| # | Technique | Notes |
+|---|-----------|-------|
+| 7.1 | Direct syscalls (static SSN table) | Embed syscall numbers for Win10/11 |
+| 7.2 | Hell's Gate — dynamic SSN resolution | Read SSN from ntdll memory at runtime |
+| 7.3 | Halo's Gate — hooked stub bypass | Find SSN from nearby unhooked stub |
+| 7.4 | NTDLL unhooking: fresh copy from disk | Map ntdll.dll from disk, overwrite hooked stubs |
+| 7.5 | NTDLL unhooking: via KnownDlls section | Use KnownDlls\\ntdll handle for clean copy |
+| 7.6 | NTDLL unhooking: via suspend/resume trick | Use another thread to copy clean ntdll |
+| 7.7 | KnownDll cache poisoning injection | Write shellcode to KnownDlls section |
+| 7.8 | API set name resolution (ApiSetMap walking) | Handle API-MS-Win forwarded exports correctly |
 
 ---
 
-## Phase 9 — Intelligence & Reporting 📊
-**Goal:** Turn raw operator data into actionable reports and TTPs.
+## Phase 8 — Hardware Breakpoint (HWBP) Techniques
 
-### 9.1 MITRE ATT&CK Mapping
-- [ ] Tag each command/module with ATT&CK Technique IDs
-- [ ] Auto-generate ATT&CK Navigator layer from operation
-- [ ] Detect coverage gaps
-
-### 9.2 Automated Reporting
-- [ ] HTML/PDF report generation (engagement summary)
-- [ ] Timeline of all operator actions
-- [ ] IOC list (IPs, domains, hashes, persistence names)
-- [ ] Screenshot capture module (agent-side)
-
-### 9.3 Threat Intelligence
-- [ ] IOC tracking database
-- [ ] Deconfliction: warn operators when targeting overlaps
+| # | Technique | Notes |
+|---|-----------|-------|
+| 8.1 | VEH-based HWBP hooking | Set DR0-DR3 via SetThreadContext, handle via VEH |
+| 8.2 | Patchless AMSI bypass via HWBP | Hook AmsiScanBuffer return without writing to .text |
+| 8.3 | Patchless ETW bypass via HWBP | Hook EtwEventWrite without writing to .text |
+| 8.4 | Tampered syscalls via HWBP | Intercept + modify syscall arguments in VEH handler |
+| 8.5 | Threadless injection via HWBP BoF | Overwrite export → HWBP to restore after execution |
+| 8.6 | Credential dumping via HWBP | Hook NtReadVirtualMemory, redirect reads |
 
 ---
 
-## Priority Matrix
+## Phase 9 — BOF Engine & In-Process Execution
 
-| Feature                          | Impact | Effort | Do Next? |
-|----------------------------------|--------|--------|----------|
-| SQLite persistence               | High   | Low    | YES      |
-| Malleable C2 profiles            | High   | Medium | YES      |
-| ECDH key exchange                | High   | Medium | YES      |
-| HTTPS listener                   | High   | Low    | YES      |
-| Sleep obfuscation (Windows)      | High   | High   | Phase 3  |
-| DNS listener                     | Medium | High   | Phase 4  |
-| SOCKS5 proxy                     | High   | Medium | Phase 8  |
-| gRPC team server                 | Medium | High   | Phase 5  |
-| Garble obfuscation               | Medium | Low    | Phase 6  |
-| Process injection                | High   | High   | Phase 7  |
+| # | Technique | Notes |
+|---|-----------|-------|
+| 9.1 | COFF BoF loader (CS-compatible) | Parse COFF object, resolve BeaconAPI, execute |
+| 9.2 | .NET assembly in-memory (CLR hosting) | ICLRRuntimeHost::ExecuteInDefaultAppDomain |
+| 9.3 | PowerShell runspace (in-process) | CLR + System.Management.Automation |
+| 9.4 | Fiber-based payload execution | ConvertThreadToFiber → CreateFiber → SwitchToFiber |
+| 9.5 | VEH-based local code execution | Trigger AV exception → restore + redirect to shellcode |
+| 9.6 | Execution via callback APIs | EnumWindows, SetTimer, EnumChildWindows |
+| 9.7 | Custom assembly emission (runtime shellcode) | Generate position-independent shellcode at runtime |
 
 ---
 
-## What Makes Taburtuai Different
+## Phase 10 — Anti-Analysis & Expert Evasion
 
-| Feature                          | Metasploit | CS | Havoc | Taburtuai Goal |
-|----------------------------------|------------|-----|-------|----------------|
-| OPSEC profiles (malleable)       | ❌         | ✅  | ✅    | ✅             |
-| Written in Go (cross-compile)    | ❌         | ❌  | ❌    | ✅             |
-| Open source                      | ✅         | ❌  | ✅    | ✅             |
-| DNS tunneling                    | ✅         | ✅  | ❌    | ✅ (Phase 4)   |
-| SMB relay/pivot                  | ✅         | ✅  | ✅    | ✅ (Phase 4/8) |
-| Working-hours beaconing          | ❌         | ✅  | ✅    | ✅ (Phase 3)   |
-| Plugin module system             | ✅         | ✅  | ✅    | ✅ (Phase 2+)  |
-| Adaptive sleep masking           | ❌         | ✅  | ✅    | ✅ (Phase 3)   |
-| Multi-operator + RBAC            | ❌         | ✅  | ✅    | ✅ (Phase 5)   |
-| Staged payload delivery          | ✅         | ✅  | ✅    | ✅ (Phase 6)   |
-| ATT&CK mapped reporting          | ❌         | ❌  | ❌    | ✅ (Phase 9)   |
+| # | Technique | Notes |
+|---|-----------|-------|
+| 10.1 | Anti-debug: multi-method | IsDebuggerPresent, NtQueryInformationProcess, heap flag |
+| 10.2 | Anti-VM: multi-method | CPUID, RDTSC timing, MAC OUI check, registry artifacts |
+| 10.3 | TLS callbacks for anti-debug | Execute before main entry point via TLS |
+| 10.4 | Working hours enforcement | Kill if outside configured hours |
+| 10.5 | Kill date | Self-destruct after date |
+| 10.6 | IP whitelist / domain kill switch | Verify target environment before activating |
+| 10.7 | File bloating (entropy reduction) | Append junk to lower file entropy score |
+| 10.8 | Compile-time string encryption | XOR key baked in at build time, decrypt at runtime |
+| 10.9 | IAT obfuscation (delay + forwarding) | Mask imports, use forwarded export chains |
+| 10.10 | BYOVD | RTCore64 / gdrv / WinRing0 for kernel access |
+| 10.11 | DLL sideloading | at.exe, Microsoft Teams, OneDrive targets |
+| 10.12 | Steganography loader | Extract shellcode from PNG/JPEG pixel data |
+| 10.13 | PE packer | Runtime LZ4/zlib compress → decompress + execute |
+| 10.14 | Self-signed binary signing | Fake Authenticode cert embedded at build |
+
+---
+
+## Phase 11 — C2 Protocol & Infrastructure Hardening
+
+| # | Technique | Notes |
+|---|-----------|-------|
+| 11.1 | Malleable HTTP profiles | Mimic OCSP/CDN/Office365 traffic patterns |
+| 11.2 | Domain fronting | CDN (Cloudflare/Fastly) front with real host header |
+| 11.3 | DNS-over-HTTPS beacon | Covert channel via DoH (Cloudflare/Google) |
+| 11.4 | ICMP C2 channel | Data exfil via ICMP echo payload |
+| 11.5 | SMB named pipe transport | Lateral movement via \\.\pipe\ |
+| 11.6 | SQLite persistence store | Durable encrypted command/result history |
+| 11.7 | Multi-operator team server | Shared session state, role-based access |
+
+---
+
+## Technique Count
+
+| Phase | Count | ETA |
+|-------|-------|-----|
+| 3 EDR Bypass Fundamentals | 9 | **Done** |
+| 4 Advanced Injection | 13 | Week 2 |
+| 5 Credential Access | 11 | Month 2 |
+| 6 Sleep Obfuscation | 6 | Month 2 |
+| 7 Syscalls & Unhooking | 8 | Month 3 |
+| 8 HWBP Techniques | 6 | Month 3 |
+| 9 BOF Engine | 7 | Month 4 |
+| 10 Anti-Analysis | 14 | Month 4-5 |
+| 11 C2 Protocol | 7 | Month 5-6 |
+| **Total** | **81** | — |

