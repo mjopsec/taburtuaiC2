@@ -108,9 +108,9 @@ func printConsoleHelp() {
 		}},
 		{"Execution", []entry{
 			{"shell <id>", "interactive shell session"},
-			{"cmd execute <id> \"<cmd>\"", "single command"},
+			{"cmd <id> \"<cmd>\"", "single command (use quotes for multi-word commands)"},
 			{"status <cmd-id>", "check command result"},
-			{"history <id>", "execution history"},
+			{"history <id>", "agent command history"},
 		}},
 		{"Files", []entry{
 			{"files upload <id> <local> <remote>", "push file to agent"},
