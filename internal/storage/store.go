@@ -93,7 +93,7 @@ func (s *Store) initSchema() error {
 	CREATE TABLE IF NOT EXISTS commands (
 		id               TEXT PRIMARY KEY,
 		agent_id         TEXT NOT NULL,
-		command          TEXT NOT NULL,
+		command          TEXT NOT NULL DEFAULT '',
 		args             TEXT DEFAULT '[]',
 		working_dir      TEXT DEFAULT '',
 		timeout          INTEGER DEFAULT 0,
@@ -115,12 +115,18 @@ func (s *Store) initSchema() error {
 		persist_name     TEXT DEFAULT '',
 		created_at       INTEGER DEFAULT 0,
 		executed_at      INTEGER DEFAULT 0,
-		completed_at     INTEGER DEFAULT 0
+		completed_at     INTEGER DEFAULT 0,
+		payload_json     TEXT DEFAULT '{}'
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_commands_agent_status ON commands(agent_id, status);
 	CREATE INDEX IF NOT EXISTS idx_commands_created      ON commands(created_at);
 	CREATE INDEX IF NOT EXISTS idx_agent_errors_agent   ON agent_errors(agent_id, occurred_at);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	// Migration: add payload_json to existing databases that predate this column.
+	_, _ = s.db.Exec(`ALTER TABLE commands ADD COLUMN payload_json TEXT DEFAULT '{}'`)
+	return nil
 }

@@ -32,6 +32,7 @@ type CommandRow struct {
 	CreatedAt       int64
 	ExecutedAt      int64
 	CompletedAt     int64
+	PayloadJSON     string
 }
 
 // InsertCommand inserts a new command record
@@ -42,13 +43,14 @@ func (s *Store) InsertCommand(r CommandRow) error {
 		(id,agent_id,command,args,working_dir,timeout,status,exit_code,output,error,
 		 metadata,operation_type,source_path,destination_path,file_content,is_encrypted,
 		 process_name,process_id,process_path,process_args,persist_method,persist_name,
-		 created_at,executed_at,completed_at)
-	VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 created_at,executed_at,completed_at,payload_json)
+	VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		r.ID, r.AgentID, r.Command, r.ArgsJSON, r.WorkingDir, r.Timeout,
 		r.Status, r.ExitCode, r.Output, r.Error, r.MetadataJSON,
 		r.OperationType, r.SourcePath, r.DestinationPath, r.FileContent, enc,
 		r.ProcessName, r.ProcessID, r.ProcessPath, r.ProcessArgsJSON,
 		r.PersistMethod, r.PersistName, r.CreatedAt, r.ExecutedAt, r.CompletedAt,
+		r.PayloadJSON,
 	)
 	return err
 }
@@ -199,7 +201,8 @@ const cmdSelectSQL = `
 SELECT id,agent_id,command,args,working_dir,timeout,status,exit_code,
        output,error,metadata,operation_type,source_path,destination_path,file_content,
        is_encrypted,process_name,process_id,process_path,process_args,
-       persist_method,persist_name,created_at,executed_at,completed_at
+       persist_method,persist_name,created_at,executed_at,completed_at,
+       COALESCE(payload_json,'{}')
 FROM commands`
 
 type cmdScanner interface {
@@ -217,6 +220,7 @@ func scanCommand(row cmdScanner) (CommandRow, error) {
 		&r.ProcessName, &r.ProcessID, &r.ProcessPath, &r.ProcessArgsJSON,
 		&r.PersistMethod, &r.PersistName,
 		&r.CreatedAt, &r.ExecutedAt, &r.CompletedAt,
+		&r.PayloadJSON,
 	)
 	r.IsEncrypted = enc != 0
 	return r, err

