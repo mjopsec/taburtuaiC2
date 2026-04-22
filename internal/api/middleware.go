@@ -411,8 +411,9 @@ func (m *Middleware) SecurityHeaders() gin.HandlerFunc {
 // RequestSizeLimit limits the size of request bodies
 func (m *Middleware) RequestSizeLimit(maxSize int64) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Skip for file upload endpoints (they have their own limits)
-		if strings.Contains(c.Request.URL.Path, "/upload") {
+		// Skip for endpoints that manage their own size limits
+		path := c.Request.URL.Path
+		if strings.Contains(path, "/upload") || strings.HasSuffix(path, "/stage") {
 			c.Next()
 			return
 		}
