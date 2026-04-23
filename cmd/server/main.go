@@ -25,6 +25,7 @@ func main() {
 	dbPath   := flag.String("db",        "", "SQLite database path (default: ./data/taburtuai.db)")
 	apiKey   := flag.String("api-key",   "", "API key for operator auth")
 	authOn   := flag.Bool("auth",        false, "enable API key authentication")
+	profile  := flag.String("profile",   "", "malleable C2 profile: default|office365|cdn|jquery|slack|ocsp")
 	flag.Parse()
 
 	// ── Load base config from env ─────────────────────────────────────────────
@@ -38,6 +39,7 @@ func main() {
 	if *dbPath   != "" { cfg.DBPath   = *dbPath   }
 	if *apiKey   != "" { cfg.APIKey   = *apiKey   }
 	if *authOn             { cfg.AuthEnabled = true }
+	if *profile  != "" { cfg.Profile  = *profile  }
 
 	// ── Banner ────────────────────────────────────────────────────────────────
 	c   := "\033[36m"  // cyan
@@ -67,6 +69,7 @@ func main() {
 
 	router    := api.NewRouter(server)
 	ginRouter := router.Setup()
+	router.RegisterProfileAliases(ginRouter, cfg.Profile)
 
 	// Periodic old-result cleanup
 	go func() {
@@ -90,8 +93,11 @@ func main() {
 	// ── Print config summary ──────────────────────────────────────────────────
 	bind := cfg.Host
 	if bind == "" { bind = "0.0.0.0" }
+	profileName := cfg.Profile
+	if profileName == "" { profileName = "default" }
 	fmt.Printf("  %saddr%s    %s%s:%s%s\n",  d, rst, w+b, bind, cfg.Port, rst)
 	fmt.Printf("  %sauth%s    %v\n",          d, rst, cfg.AuthEnabled)
+	fmt.Printf("  %sprofile%s  %s\n",         d, rst, profileName)
 	fmt.Printf("  %slogs%s    %s\n",          d, rst, cfg.LogDir)
 	fmt.Printf("  %sdb%s      %s\n",          d, rst, cfg.DBPath)
 	fmt.Println()

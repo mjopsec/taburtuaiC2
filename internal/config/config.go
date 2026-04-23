@@ -20,6 +20,9 @@ type Config struct {
 	APIKey        string
 	MaxAgents     int
 	AgentTimeout  time.Duration
+	// Malleable HTTP profile — registers alias routes matching the agent's profile.
+	// Values: default | office365 | cdn | jquery | slack | ocsp
+	Profile string
 }
 
 // Load loads configuration from environment

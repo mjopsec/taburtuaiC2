@@ -27,6 +27,8 @@
 | 14 | [Network & Pivoting](14-network.md) | Port scan, ARP scan, SOCKS5 proxy |
 | 15 | [Advanced Techniques](15-advanced.md) | BOF, registry ops, OPSEC settings |
 | 16 | [Red Team Scenarios](16-scenarios.md) | Skenario engagement end-to-end |
+| 17 | [Malleable HTTP Profiles](17-profiles.md) | Camouflage traffic C2 — office365, cdn, jquery, slack, ocsp |
+| 18 | [OPSEC Hardening](18-opsec-hardening.md) | String encryption + Authenticode self-signing |
 
 ---
 

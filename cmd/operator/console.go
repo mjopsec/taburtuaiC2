@@ -145,12 +145,15 @@ func printConsoleHelp() {
 			{"token steal <id> --pid <pid>", "steal + impersonate token from PID"},
 			{"token make <id> --user U --domain D --pass P", "LogonUser token (lateral movement)"},
 			{"token revert <id>", "revert to original token (RevertToSelf)"},
+			{"token runas <id> <exe> --pid <pid>", "spawn exe under stolen token"},
+			{"token runas <id> <exe> --user U --pass P", "spawn exe under LogonUser token"},
 		}},
 		{"Reconnaissance (Phase 3)", []entry{
 			{"screenshot <id> --save /tmp/out.png", "capture desktop as PNG"},
 			{"keylog start <id> [--duration N]", "start keylogger (N=0: run until stop)"},
 			{"keylog dump <id>", "retrieve buffered keystrokes"},
 			{"keylog stop <id>", "stop keylogger + return final buffer"},
+			{"keylog clear <id>", "discard buffered keystrokes"},
 		}},
 		{"Process Injection (Level 2)", []entry{
 			{"inject remote <id> --pid <pid> --file <sc.bin>", "CRT injection into remote process"},
@@ -199,6 +202,20 @@ func printConsoleHelp() {
 			{"opsec antivm <id>", "check for VM/sandbox artifacts"},
 			{"opsec timegate <id> --start 8 --end 18", "set working-hours window"},
 			{"opsec timegate <id> --kill-date 2026-12-31", "set kill date (agent stops after date)"},
+		}},
+		{"Network & Pivot (Phase 11)", []entry{
+			{"netscan <id> -t 10.0.0.0/24 -p 445,3389,22", "TCP port scan via agent"},
+			{"netscan <id> -t 10.0.0.1 --banners --wait", "scan with service banner grab"},
+			{"arpscan <id> --wait", "ARP scan local subnet"},
+			{"socks5 start <id> --addr 127.0.0.1:1080", "start SOCKS5 proxy via agent"},
+			{"socks5 stop <id>", "stop SOCKS5 proxy"},
+			{"socks5 status <id>", "check proxy status"},
+		}},
+		{"Registry (Windows)", []entry{
+			{"registry read <id> HKLM\\SOFTWARE\\key -V value", "read registry value"},
+			{"registry write <id> HKCU\\Software\\key -V val -d data", "write registry value"},
+			{"registry delete <id> HKLM\\SOFTWARE\\key -V value", "delete value (or key)"},
+			{"registry list <id> HKLM\\SOFTWARE\\key", "list subkeys and values"},
 		}},
 		{"Queue & Server", []entry{
 			{"queue stats", "pending command overview"},

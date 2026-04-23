@@ -372,5 +372,11 @@ cmd <id> "del C:\Windows\Temp\*.dmp && del C:\Temp\*.exe"
 
 ---
 
+---
+
+**Selanjutnya:** [17 — Malleable HTTP Profiles](17-profiles.md) — camouflage traffic C2 agar menyerupai Office365, CDN, OCSP, dan lainnya.
+
+---
+
 *Taburtuai C2 — For authorized security testing only.*
 *Selalu dapatkan izin tertulis sebelum melakukan penetration testing.*

