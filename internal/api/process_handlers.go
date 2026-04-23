@@ -168,7 +168,7 @@ func (h *Handlers) SetupPersistence(c *gin.Context) {
 	var req struct {
 		PersistMethod string `json:"persist_method" binding:"required"`
 		PersistName   string `json:"persist_name"`
-		ProcessPath   string `json:"process_path" binding:"required"`
+		ProcessPath   string `json:"process_path"` // empty = agent uses os.Executable()
 		ProcessArgs   string `json:"process_args"`
 	}
 

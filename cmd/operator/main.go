@@ -1385,9 +1385,10 @@ Available methods:
 			os.Exit(1)
 		}
 
-		if processPath == "" {
-			printError("--path is required (path to executable for persistence)")
-			os.Exit(1)
+		// processPath empty = agent uses os.Executable() (persist itself)
+		pathDesc := processPath
+		if pathDesc == "" {
+			pathDesc = "<agent self>"
 		}
 
 		printInfo(fmt.Sprintf("Setting up %s persistence '%s' on agent %s...", method, name, agentID))
@@ -2047,11 +2048,15 @@ func init() {
 	persistenceSetupCmd.Flags().String("path", "", "Path to executable (default: agent's own exe)")
 	persistenceSetupCmd.Flags().String("args", "", "Arguments for the executable")
 	persistenceSetupCmd.Flags().Bool("wait", false, "Wait for persistence setup to complete")
+	persistenceSetupCmd.SilenceUsage = true
+	persistenceSetupCmd.SilenceErrors = true
 
 	// Persistence remove flags
 	persistenceRemoveCmd.Flags().String("method", "", "Persistence method used during setup (required)")
 	persistenceRemoveCmd.Flags().String("name", "", "Name of persistence entry to remove (required)")
 	persistenceRemoveCmd.Flags().Bool("wait", false, "Wait for persistence removal to complete")
+	persistenceRemoveCmd.SilenceUsage = true
+	persistenceRemoveCmd.SilenceErrors = true
 
 	// Add subcommands
 	persistenceCmd.AddCommand(persistenceSetupCmd)
