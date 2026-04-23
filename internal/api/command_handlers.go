@@ -61,6 +61,15 @@ func (h *Handlers) ExecuteCommand(c *gin.Context) {
 		h.APIResponse(c, false, "", nil, "Agent is offline")
 		return
 	}
+	// Team server: enforce agent claim ownership
+	sessionID := c.GetHeader("X-Session-ID")
+	if !h.server.TeamHub.CanWrite(req.AgentID, sessionID) {
+		_, claimant, _ := h.server.TeamHub.AgentClaim(req.AgentID)
+		c.Status(http.StatusConflict)
+		h.APIResponse(c, false, "", nil,
+			fmt.Sprintf("agent %s is claimed by %s — release it first or use their session", req.AgentID[:8], claimant))
+		return
+	}
 
 	if req.Timeout < 0 || req.Timeout > 3600 {
 		req.Timeout = 300

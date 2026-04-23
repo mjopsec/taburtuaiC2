@@ -2,249 +2,280 @@
 
 ## Konsep Agent
 
-Setiap mesin yang menjalankan implant taburtuai terdaftar sebagai **agent**. Agent diidentifikasi
-dengan UUID deterministik yang dibuat dari kombinasi `hostname + username + serverURL`.
+Setiap mesin yang menjalankan implant Taburtuai terdaftar sebagai **agent**. Agent diidentifikasi
+oleh UUID deterministik yang di-derive dari `SHA256(hostname + username + c2_server_url)`.
 
-Ini berarti:
-- Agent yang sama di mesin yang sama selalu punya UUID yang sama
-- Rebuild dan deploy ulang tidak mengubah UUID
-- Operator bisa queue perintah untuk agent bahkan sebelum agent restart
+**Implikasi UUID deterministik:**
+- Agent yang restart di mesin yang sama → UUID tetap sama (tidak duplikat di list)
+- Tidak ada identifier random yang bisa di-fingerprint di binary
+- Operator bisa predict UUID sebelum agent connect (untuk pre-claim)
+
+**Siklus hidup agent:**
+```
+Stager dijalankan
+    │
+    ▼
+Agent download & start
+    │
+    ▼
+Registration (POST /beacon) → terdaftar di monitor
+    │
+    ▼
+Poll loop (GET /beacon setiap interval ± jitter)
+    │
+    ├── Agent aktif → status: online
+    └── Tidak beacon > 3x interval → status: offline
+```
 
 ---
 
-## Daftar Agent
+## List Semua Agent
 
-### `agents list`
-
-Tampilkan semua agent yang terdaftar.
+### Via Console
 
 ```
-taburtuai(IP:PORT) › agents list
+taburtuai(IP:8000) › agents list
 ```
 
+**Output (banyak agent):**
 ```
-AGENT ID                             HOSTNAME         USERNAME   STATUS   LAST SEEN
--------------------------------------------------------------------------------------
-2703886d-32fb-4a1c-8f2d-9b3e4c5d6e7f DESKTOP-QLPBF95  windows    online   12s ago
-6a3db720-880a-4b3c-9f1d-2e5c7a8b9c0d blackout          nurkh      offline  2h ago
+[+] Found 4 agent(s):
+
+AGENT ID         HOSTNAME           USERNAME        OS       ARCH   STATUS   LAST SEEN
+2703886d         DESKTOP-QLPBF95    john.doe        windows  x64    online   5s ago
+3a14f22b         CORP-WS-042        SYSTEM          windows  x64    online   12s ago
+9c821d77         FILESERVER-01      administrator   windows  x64    offline  4m 32s ago
+b71e9c34         UBUNTU-DEV         root            linux    x64    online   8s ago
 ```
 
-**Penjelasan kolom:**
+**Kolom yang ditampilkan:**
 
 | Kolom | Keterangan |
-|---|---|
-| AGENT ID | UUID unik agent (deterministik dari hostname+username) |
-| HOSTNAME | Nama komputer target |
+|-------|------------|
+| AGENT ID | 8 karakter pertama UUID (untuk prefix matching) |
+| HOSTNAME | Nama mesin target |
 | USERNAME | User yang menjalankan agent |
-| STATUS | `online` (beacon aktif) / `offline` (tidak ada beacon) |
-| LAST SEEN | Kapan terakhir agent check-in |
+| OS | `windows` / `linux` / `darwin` |
+| ARCH | `x64` / `x86` |
+| STATUS | `online` / `offline` |
+| LAST SEEN | Waktu beacon terakhir |
 
-**Status agent:**
-- `online` → beacon terakhir dalam 2× interval (agent masih aktif)
-- `offline` → tidak ada beacon, agent mati / jaringan terputus
-
-### Filter dengan Prefix ID
-
-Kamu tidak perlu mengetik UUID lengkap — cukup prefix yang unik:
+### Filter Status
 
 ```
-# Ini semua valid untuk agent ID 2703886d-32fb-...
-cmd 2703886d "whoami"
-cmd 2703886d-32fb "whoami"
-cmd 2703886d-32fb-4a1c-8f2d-9b3e4c5d6e7f "whoami"
+taburtuai(IP:8000) › agents list --status online
+```
+
+**Output:**
+```
+[+] Found 3 online agent(s):
+
+AGENT ID         HOSTNAME           USERNAME        STATUS   LAST SEEN
+2703886d         DESKTOP-QLPBF95    john.doe        online   5s ago
+3a14f22b         CORP-WS-042        SYSTEM          online   12s ago
+b71e9c34         UBUNTU-DEV         root            online   8s ago
+```
+
+### Via CLI (Non-Interactive)
+
+```bash
+./bin/operator agents list --server http://IP:8000
+./bin/operator agents list --server http://IP:8000 --status online
+./bin/operator agents list --server http://IP:8000 --format json
+```
+
+**Output JSON:**
+```json
+[
+  {
+    "id": "2703886d-32fb-4a1c-8f2d-9b3e4c5d6e7f",
+    "hostname": "DESKTOP-QLPBF95",
+    "username": "john.doe",
+    "os": "windows",
+    "arch": "amd64",
+    "status": "online",
+    "ip": "192.168.1.105",
+    "pid": 4512,
+    "last_seen": "2026-04-23T09:05:42Z",
+    "registered_at": "2026-04-23T08:00:00Z",
+    "beacon_interval": 30,
+    "version": "1.0"
+  }
+]
 ```
 
 ---
 
-## Detail Agent
-
-### `agents info <id>`
-
-Tampilkan informasi lengkap satu agent.
+## Info Detail Agent
 
 ```
-taburtuai(IP:PORT) › agents info 2703886d
+taburtuai(IP:8000) › agents info 2703886d
 ```
 
+**Output:**
 ```
-[+] Agent Information:
-    ID          : 2703886d-32fb-4a1c-8f2d-9b3e4c5d6e7f
-    Hostname    : DESKTOP-QLPBF95
-    Username    : windows
-    Domain      : WORKGROUP
-    OS          : windows
-    Arch        : amd64
-    IP          : 192.168.1.50
-    Status      : online
-    First Seen  : 2026-04-23 14:30:00
-    Last Seen   : 2026-04-23 16:55:12
-    Beacon Count: 84
-    Interval    : 30s ± 20% jitter
-    Exec Method : powershell
-    Evasion     : enabled
-    Kill Date   : 2026-12-31
+[+] Agent: 2703886d-32fb-4a1c-8f2d-9b3e4c5d6e7f
+
+  Hostname     : DESKTOP-QLPBF95
+  Username     : john.doe
+  OS           : windows (Microsoft Windows 11 Home, Build 22621)
+  Architecture : amd64
+  IP Address   : 192.168.1.105
+  Process ID   : 4512
+  Process Name : agent_windows_stealth.exe
+
+  Status       : online
+  Last Seen    : 5 seconds ago (2026-04-23T09:05:42Z)
+  Registered   : 2026-04-23T08:00:00Z (1h 5m ago)
+  Uptime       : 1h 5m 42s
+
+  Beacon       : interval=30s  jitter=20%
+  Transport    : http
+  Version      : 1.0
+
+  Commands     : 47 total  (42 completed, 2 failed, 3 pending)
+```
+
+---
+
+## Prefix Matching (Shorthand ID)
+
+Tidak perlu mengetik UUID penuh — cukup 8 karakter pertama yang unique:
+
+```
+taburtuai(IP:8000) › cmd 2703886d "whoami"
+# sama dengan
+taburtuai(IP:8000) › cmd 2703886d-32fb-4a1c-8f2d-9b3e4c5d6e7f "whoami"
+```
+
+Kalau prefix tidak unique (dua agent yang ID-nya mulai sama), console akan menampilkan error:
+```
+[!] Ambiguous agent ID '27': multiple matches found
+    2703886d DESKTOP-QLPBF95
+    2709ab12 CORP-WS-013
+[i] Provide more characters to disambiguate.
+```
+
+---
+
+## Stats Server
+
+```
+taburtuai(IP:8000) › stats
+```
+
+**Output:**
+```
+[+] Server Statistics
+
+  Server uptime  : 3h 42m 15s
+  Total agents   : 4   (3 online, 1 offline)
+  Commands       : 124 total  (118 completed, 6 failed)
+  Queue backlog  : 0 pending commands
+
+  Memory usage   : 48 MB
+  Goroutines     : 24
+  Go version     : go1.21.5
+  OS/Arch        : linux/amd64
+
+  Team operators : 2 connected
 ```
 
 ---
 
 ## Hapus Agent
 
-### `agents delete <id>`
-
-Hapus record agent dari database. **Agent yang berjalan di target tidak dihentikan** —
-hanya catatan di server yang dihapus. Kalau agent masih jalan dan beacon lagi, agent
-akan terdaftar kembali otomatis.
+Hapus agent dari daftar (tidak mematikan proses agent di target):
 
 ```
-taburtuai(IP:PORT) › agents delete 6a3db720
-[!] This will remove agent 6a3db720 from the database.
-[+] Agent 6a3db720 deleted successfully.
+taburtuai(IP:8000) › agents delete 2703886d
 ```
 
-**Kapan perlu delete:**
-- Membersihkan agent `offline` lama dari engagement sebelumnya
-- Mereset agent yang UUID-nya sudah tidak valid
-- Housekeeping database
+**Output:**
+```
+[*] Deleting agent 2703886d...
+[?] Are you sure? Agent and all command history will be removed. (y/N): y
+[+] Agent 2703886d deleted.
+[i] Note: Agent process may still be running on the target machine.
+```
+
+> **Perhatian:** Menghapus agent tidak mematikan proses di target. Agent yang masih hidup
+> akan re-register dengan UUID yang sama saat beacon berikutnya.
 
 ---
 
-## Command History
+## Monitor Real-Time
 
-### `history <id>`
-
-Lihat semua perintah yang pernah dikirim ke agent ini beserta statusnya.
+Pantau semua agent secara real-time (update setiap 5 detik):
 
 ```
-taburtuai(IP:PORT) › history 2703886d
+taburtuai(IP:8000) › monitor
 ```
 
+**Output (refresh otomatis):**
 ```
-CMD ID         TYPE           STATUS     CREATED              OUTPUT
------------------------------------------------------------------------
-a1b2c3d4-...   execute        completed  2026-04-23 16:30:00  DESKTOP-QLPBF95\windows
-e5f6g7h8-...   execute        completed  2026-04-23 16:31:00  10.0.0.1\n10.0.0.2\n...
-i9j0k1l2-...   upload         completed  2026-04-23 16:32:00  File uploaded successfully
-m3n4o5p6-...   persist_setup  completed  2026-04-23 16:35:00  Registry key added
-```
+[Live Monitor — Ctrl+C to exit]
+Last update: 09:10:42
 
-### `status <cmd-id>`
-
-Lihat status dan hasil satu perintah spesifik.
-
-```
-taburtuai(IP:PORT) › status a1b2c3d4-e5f6-7890-abcd-ef1234567890
-```
-
-```
-[+] Command Status:
-    ID         : a1b2c3d4-e5f6-7890-abcd-ef1234567890
-    Type       : execute
-    Status     : completed
-    Created    : 2026-04-23 16:30:00
-    Executed   : 2026-04-23 16:30:12
-    Exit Code  : 0
-    Output     :
-      DESKTOP-QLPBF95\windows
-```
-
-**Status yang mungkin:**
-
-| Status | Keterangan |
-|---|---|
-| `pending` | Menunggu agent poll berikutnya |
-| `executing` | Agent sedang mengeksekusi |
-| `completed` | Berhasil (exit code 0) |
-| `failed` | Gagal (exit code ≠ 0) |
-| `timeout` | Melewati batas waktu eksekusi |
-
----
-
-## Command Queue
-
-### `queue stats`
-
-Lihat ringkasan antrian perintah semua agent.
-
-```
-taburtuai(IP:PORT) › queue stats
-```
-
-```
-[+] Queue Statistics:
-    Total pending  : 3
-    Total executing: 0
-    Total completed: 127
-    Total failed   : 2
-    
-    Per agent:
-    2703886d: 2 pending, 125 completed
-    6a3db720: 1 pending, 2 completed
-```
-
-### `queue clear <id>`
-
-Hapus semua perintah pending untuk agent tertentu.
-
-```
-taburtuai(IP:PORT) › queue clear 2703886d
-[+] Cleared 2 pending commands for agent 2703886d.
-```
-
-**Kapan perlu clear queue:**
-- Agent crash dan ada perintah pending yang tidak relevan lagi
-- Terlanjur queue banyak perintah yang ingin dibatalkan
-- Sebelum restart agent untuk memulai sesi bersih
-
----
-
-## Server Stats
-
-### `stats`
-
-Lihat statistik server secara keseluruhan.
-
-```
-taburtuai(IP:PORT) › stats
-```
-
-```
-[+] Server Statistics:
-    Uptime       : 2h 34m 12s
-    Total agents : 2 (1 online, 1 offline)
-    Commands     : 129 total (127 completed, 2 failed)
-    Stages       : 3 active
-    DB size      : 24.5 MB
+AGENT ID         HOSTNAME           STATUS   LAST SEEN   PENDING   COMPLETED
+2703886d         DESKTOP-QLPBF95    online   2s ago      0         47
+3a14f22b         CORP-WS-042        online   8s ago      1         23
+9c821d77         FILESERVER-01      offline  5m ago      0         12
+b71e9c34         UBUNTU-DEV         online   4s ago      0         8
 ```
 
 ---
 
-## Tips Manajemen Agent
+## Update Beacon Interval (Runtime)
 
-### Identifikasi Agent Berdasarkan Hostname
-
-Kalau ada banyak agent dan lupa UUID-nya:
+Ubah interval beacon tanpa rebuild agent:
 
 ```
-taburtuai(IP:PORT) › agents list
-# Cari hostname yang kamu mau, ambil prefix ID-nya
-# Misalnya: 2703886d → agents dengan hostname DESKTOP-QLPBF95
+taburtuai(IP:8000) › cmd 2703886d "sleep 60 20"
 ```
 
-### Cek Agent Masih Hidup Sebelum Kirim Perintah
+Perintah ini menginstruksikan agent mengubah interval ke 60 detik dengan jitter 20%
+untuk sesi saat ini (reset ke default setelah restart).
+
+---
+
+## Beacon Interval dan Deteksi
+
+Interval default dan cara kerjanya:
 
 ```
-taburtuai(IP:PORT) › agents info 2703886d
-# Lihat kolom Status dan Last Seen
-# Kalau Last Seen > 5 menit dan status offline → agent kemungkinan sudah mati
+Interval = 30 detik
+Jitter   = 20%
+
+Waktu aktual antar beacon:
+  Minimum = 30 × (1 - 0.20) = 24 detik
+  Maximum = 30 × (1 + 0.20) = 36 detik
+  Random antara 24-36 detik setiap poll
 ```
 
-### Bersihkan Agent Lama
+**Rekomendasi per skenario:**
 
-```
-taburtuai(IP:PORT) › agents list
-# Identifikasi agent offline dari engagement lama
-taburtuai(IP:PORT) › agents delete <id-lama>
-```
+| Skenario | Interval | Jitter | Alasan |
+|----------|----------|--------|--------|
+| Lab/testing | 10s | 10% | Cepat, tidak perlu stealth |
+| Engagement aktif | 30s | 20% | Balance antara responsif dan stealth |
+| Reconnaissance diam-diam | 120s | 30% | Susah dideteksi pola-nya |
+| Long-haul persistence | 300s | 40% | Minimal network noise |
+
+---
+
+## Offline Agent
+
+Agent dengan status `offline` sudah tidak beacon dalam waktu `3 × interval`.
+Bisa karena:
+1. Mesin target dimatikan/reboot
+2. Proses agent di-kill
+3. Network connectivity problem
+4. Kill date tercapai
+5. Working hours di luar jam aktif
+
+Agent offline **tidak dihapus otomatis** — tetap ada di list sampai operator menghapusnya.
+Jika agent aktif kembali, status otomatis berubah ke `online`.
 
 ---
 

