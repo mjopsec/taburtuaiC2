@@ -20,6 +20,9 @@ func (h *Handlers) NetScan(c *gin.Context) {
 	if !h.agentOnline(c, agentID) {
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	var req struct {
 		Targets     []string `json:"targets"      binding:"required"`
@@ -73,6 +76,9 @@ func (h *Handlers) ARPScan(c *gin.Context) {
 	if !h.agentOnline(c, agentID) {
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	cmd := &types.Command{
 		ID:            uuid.New().String(),
@@ -97,6 +103,9 @@ func (h *Handlers) ARPScan(c *gin.Context) {
 func (h *Handlers) RegRead(c *gin.Context) {
 	agentID := c.Param("id")
 	if !h.agentOnline(c, agentID) {
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 
@@ -136,6 +145,9 @@ func (h *Handlers) RegRead(c *gin.Context) {
 func (h *Handlers) RegWrite(c *gin.Context) {
 	agentID := c.Param("id")
 	if !h.agentOnline(c, agentID) {
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 
@@ -184,6 +196,9 @@ func (h *Handlers) RegDelete(c *gin.Context) {
 	if !h.agentOnline(c, agentID) {
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	var req struct {
 		Hive  string `json:"hive" binding:"required"`
@@ -226,6 +241,9 @@ func (h *Handlers) RegList(c *gin.Context) {
 	if !h.agentOnline(c, agentID) {
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	var req struct {
 		Hive string `json:"hive" binding:"required"`
@@ -265,6 +283,9 @@ func (h *Handlers) SOCKS5Start(c *gin.Context) {
 	if !h.agentOnline(c, agentID) {
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	var req struct {
 		Addr string `json:"addr"`
@@ -298,6 +319,9 @@ func (h *Handlers) SOCKS5Stop(c *gin.Context) {
 	if !h.agentOnline(c, agentID) {
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	cmd := &types.Command{
 		ID:            uuid.New().String(),
@@ -319,6 +343,9 @@ func (h *Handlers) SOCKS5Stop(c *gin.Context) {
 func (h *Handlers) SOCKS5Status(c *gin.Context) {
 	agentID := c.Param("id")
 	if !h.agentOnline(c, agentID) {
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 

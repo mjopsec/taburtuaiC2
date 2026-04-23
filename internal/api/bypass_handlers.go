@@ -27,6 +27,9 @@ func (h *Handlers) AMSIBypass(c *gin.Context) {
 		h.APIResponse(c, false, "", nil, "Agent is offline")
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	var req struct {
 		PID uint32 `json:"pid"`
@@ -69,6 +72,9 @@ func (h *Handlers) ETWBypass(c *gin.Context) {
 	if agent.Status == services.StatusOffline {
 		c.Status(http.StatusBadRequest)
 		h.APIResponse(c, false, "", nil, "Agent is offline")
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 
@@ -114,6 +120,9 @@ func (h *Handlers) TokenList(c *gin.Context) {
 		h.APIResponse(c, false, "", nil, "Agent is offline")
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	cmd := &types.Command{
 		ID:            uuid.New().String(),
@@ -142,6 +151,9 @@ func (h *Handlers) TokenSteal(c *gin.Context) {
 	if agent.Status == services.StatusOffline {
 		c.Status(http.StatusBadRequest)
 		h.APIResponse(c, false, "", nil, "Agent is offline")
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 
@@ -185,6 +197,9 @@ func (h *Handlers) TokenMake(c *gin.Context) {
 	if agent.Status == services.StatusOffline {
 		c.Status(http.StatusBadRequest)
 		h.APIResponse(c, false, "", nil, "Agent is offline")
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 
@@ -238,6 +253,9 @@ func (h *Handlers) TokenRevert(c *gin.Context) {
 		h.APIResponse(c, false, "", nil, "Agent is offline")
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	cmd := &types.Command{
 		ID:            uuid.New().String(),
@@ -267,6 +285,9 @@ func (h *Handlers) TokenRunAs(c *gin.Context) {
 	if agent.Status == services.StatusOffline {
 		c.Status(http.StatusBadRequest)
 		h.APIResponse(c, false, "", nil, "Agent is offline")
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 

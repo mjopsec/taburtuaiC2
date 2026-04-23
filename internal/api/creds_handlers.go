@@ -27,6 +27,9 @@ func (h *Handlers) LSASSDump(c *gin.Context) {
 		h.APIResponse(c, false, "", nil, "Agent is offline")
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	var req struct {
 		Output string `json:"output"` // path on target; blank = %TEMP%\lsass.dmp
@@ -65,6 +68,9 @@ func (h *Handlers) SAMDump(c *gin.Context) {
 	if agent.Status == services.StatusOffline {
 		c.Status(http.StatusBadRequest)
 		h.APIResponse(c, false, "", nil, "Agent is offline")
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 
@@ -106,6 +112,9 @@ func (h *Handlers) BrowserCreds(c *gin.Context) {
 		h.APIResponse(c, false, "", nil, "Agent is offline")
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	cmd := &types.Command{
 		ID:            uuid.New().String(),
@@ -136,6 +145,9 @@ func (h *Handlers) ClipboardRead(c *gin.Context) {
 	if agent.Status == services.StatusOffline {
 		c.Status(http.StatusBadRequest)
 		h.APIResponse(c, false, "", nil, "Agent is offline")
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 

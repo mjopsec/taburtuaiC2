@@ -1,8 +1,12 @@
 package api
 
 import (
+	"fmt"
+	"net/http"
 	"runtime"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // serverID returns a unique identifier for this server instance
@@ -100,6 +104,21 @@ func (h *Handlers) systemHealth() (string, []string) {
 	}
 
 	return status, issues
+}
+
+// enforceAgentWrite checks team-server claim ownership for any handler that
+// queues a command to an agent. Returns true (and writes a 409) if the caller
+// does not hold the write lock; returns false when the caller may proceed.
+func (h *Handlers) enforceAgentWrite(c *gin.Context, agentID string) bool {
+	sessionID := c.GetHeader("X-Session-ID")
+	if h.server.TeamHub.CanWrite(agentID, sessionID) {
+		return false
+	}
+	_, claimant, _ := h.server.TeamHub.AgentClaim(agentID)
+	c.Status(http.StatusConflict)
+	h.APIResponse(c, false, "", nil,
+		fmt.Sprintf("agent %s is claimed by %s — release it first or use their session", agentID[:8], claimant))
+	return true
 }
 
 // bToMb converts bytes to megabytes

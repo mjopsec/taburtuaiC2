@@ -28,6 +28,9 @@ func (h *Handlers) ADSExec(c *gin.Context) {
 		h.APIResponse(c, false, "", nil, "Agent is offline")
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	var req struct {
 		ADSPath string `json:"ads_path" binding:"required"`
@@ -77,6 +80,9 @@ func (h *Handlers) LOLBinFetch(c *gin.Context) {
 	if agent.Status == services.StatusOffline {
 		c.Status(http.StatusBadRequest)
 		h.APIResponse(c, false, "", nil, "Agent is offline")
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 

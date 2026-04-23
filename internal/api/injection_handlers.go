@@ -27,6 +27,9 @@ func (h *Handlers) Hollow(c *gin.Context) {
 		h.APIResponse(c, false, "", nil, "Agent is offline")
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	var req struct {
 		Exe           string `json:"exe"`
@@ -84,6 +87,9 @@ func (h *Handlers) Hijack(c *gin.Context) {
 		h.APIResponse(c, false, "", nil, "Agent is offline")
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	var req struct {
 		PID           uint32 `json:"pid" binding:"required"`
@@ -136,6 +142,9 @@ func (h *Handlers) Stomp(c *gin.Context) {
 	if agent.Status == services.StatusOffline {
 		c.Status(http.StatusBadRequest)
 		h.APIResponse(c, false, "", nil, "Agent is offline")
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 
@@ -193,6 +202,9 @@ func (h *Handlers) MapInject(c *gin.Context) {
 	if agent.Status == services.StatusOffline {
 		c.Status(http.StatusBadRequest)
 		h.APIResponse(c, false, "", nil, "Agent is offline")
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 

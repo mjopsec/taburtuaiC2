@@ -19,6 +19,9 @@ func (h *Handlers) SleepObf(c *gin.Context) {
 	if !h.agentOnline(c, agentID) {
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	var req struct {
 		Duration int `json:"duration"` // seconds; default 30
@@ -52,6 +55,9 @@ func (h *Handlers) UnhookNTDLL(c *gin.Context) {
 	if !h.agentOnline(c, agentID) {
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	cmd := &types.Command{
 		ID:            uuid.New().String(),
@@ -74,6 +80,9 @@ func (h *Handlers) UnhookNTDLL(c *gin.Context) {
 func (h *Handlers) HWBPSet(c *gin.Context) {
 	agentID := c.Param("id")
 	if !h.agentOnline(c, agentID) {
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 
@@ -120,6 +129,9 @@ func (h *Handlers) HWBPClear(c *gin.Context) {
 	if !h.agentOnline(c, agentID) {
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	var req struct {
 		Register uint8 `json:"register"` // 0-3
@@ -148,6 +160,9 @@ func (h *Handlers) HWBPClear(c *gin.Context) {
 func (h *Handlers) BOFExec(c *gin.Context) {
 	agentID := c.Param("id")
 	if !h.agentOnline(c, agentID) {
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 
@@ -186,6 +201,9 @@ func (h *Handlers) AntiDebug(c *gin.Context) {
 	if !h.agentOnline(c, agentID) {
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 	cmd := &types.Command{
 		ID:            uuid.New().String(),
 		AgentID:       agentID,
@@ -205,6 +223,9 @@ func (h *Handlers) AntiDebug(c *gin.Context) {
 func (h *Handlers) AntiVM(c *gin.Context) {
 	agentID := c.Param("id")
 	if !h.agentOnline(c, agentID) {
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 	cmd := &types.Command{
@@ -227,6 +248,9 @@ func (h *Handlers) AntiVM(c *gin.Context) {
 func (h *Handlers) TimeGateSet(c *gin.Context) {
 	agentID := c.Param("id")
 	if !h.agentOnline(c, agentID) {
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 

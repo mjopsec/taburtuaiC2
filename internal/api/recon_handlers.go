@@ -26,6 +26,9 @@ func (h *Handlers) Screenshot(c *gin.Context) {
 		h.APIResponse(c, false, "", nil, "Agent is offline")
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	cmd := &types.Command{
 		ID:            uuid.New().String(),
@@ -54,6 +57,9 @@ func (h *Handlers) KeylogStart(c *gin.Context) {
 	if agent.Status == services.StatusOffline {
 		c.Status(http.StatusBadRequest)
 		h.APIResponse(c, false, "", nil, "Agent is offline")
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 
@@ -95,6 +101,9 @@ func (h *Handlers) KeylogDump(c *gin.Context) {
 		h.APIResponse(c, false, "", nil, "Agent is offline")
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	cmd := &types.Command{
 		ID:            uuid.New().String(),
@@ -124,6 +133,9 @@ func (h *Handlers) KeylogStop(c *gin.Context) {
 		h.APIResponse(c, false, "", nil, "Agent is offline")
 		return
 	}
+	if h.enforceAgentWrite(c, agentID) {
+		return
+	}
 
 	cmd := &types.Command{
 		ID:            uuid.New().String(),
@@ -151,6 +163,9 @@ func (h *Handlers) KeylogClear(c *gin.Context) {
 	if agent.Status == services.StatusOffline {
 		c.Status(http.StatusBadRequest)
 		h.APIResponse(c, false, "", nil, "Agent is offline")
+		return
+	}
+	if h.enforceAgentWrite(c, agentID) {
 		return
 	}
 
