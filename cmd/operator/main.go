@@ -632,12 +632,16 @@ var queueStatsCmd = &cobra.Command{
 				if !ok {
 					continue
 				}
-				fmt.Printf("  %s%s%s:\n", ColorYellow, agentID[:8], ColorReset)
-				fmt.Printf("    Queued: %.0f, Active: %.0f, Completed (this agent): %.0f\n",
+				shortID := agentID
+				if len(shortID) > 8 {
+					shortID = shortID[:8]
+				}
+				fmt.Printf("  %s%s%s:\n", ColorYellow, shortID, ColorReset)
+				fmt.Printf("    Queued: %.0f, Active: %.0f\n",
 					getFloatFromMap(as, "queued"),
-					getFloatFromMap(as, "active"),
-					getFloatFromMap(as, "completed_for_agent"))
+					getFloatFromMap(as, "active"))
 			}
+			fmt.Printf("\n%s[*] Use 'history <agent-id>' for per-agent completed count.%s\n", ColorCyan, ColorReset)
 		}
 		fmt.Println()
 	},
@@ -648,12 +652,14 @@ var queueClearCmd = &cobra.Command{
 	Short: "Clear pending commands for an agent",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		// Try resolveAgentID first (online agents); fall back to raw ID for offline agents
 		agentID := args[0]
+		// Try online agents first, then queue stats keys (works for offline agents too)
 		if resolved, err := resolveAgentID(agentID); err == nil {
 			agentID = resolved
+		} else if resolved, err2 := resolveAgentIDFromQueue(agentID); err2 == nil {
+			agentID = resolved
 		} else if !(len(agentID) == 36 && strings.Count(agentID, "-") == 4) {
-			printError(fmt.Sprintf("Agent not found: %v — provide the full UUID if the agent is offline", err))
+			printError(fmt.Sprintf("Agent not found: %v", err))
 			os.Exit(1)
 		}
 		printWarning(fmt.Sprintf("Attempting to clear command queue for agent %s...", agentID))
@@ -1661,6 +1667,43 @@ func resolveCommandID(id string) (string, error) {
 		return matches[0], nil
 	default:
 		return "", fmt.Errorf("ambiguous prefix %q — %d commands match, be more specific", id, len(matches))
+	}
+}
+
+// resolveAgentIDFromQueue resolves a partial agent ID prefix using the queue
+// stats by_agent keys, which includes offline agents that have ever had commands.
+func resolveAgentIDFromQueue(id string) (string, error) {
+	body, err := makeAPIRequest("/api/v1/queue/stats")
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch queue stats: %w", err)
+	}
+	var resp APIResponse
+	if err := json.Unmarshal(body, &resp); err != nil || !resp.Success {
+		return "", fmt.Errorf("failed to parse queue stats")
+	}
+	stats, ok := resp.Data.(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid queue stats format")
+	}
+	byAgent, ok := stats["by_agent"].(map[string]interface{})
+	if !ok || len(byAgent) == 0 {
+		return "", fmt.Errorf("no agents in queue stats")
+	}
+
+	prefix := strings.ToLower(id)
+	var matches []string
+	for agentID := range byAgent {
+		if strings.HasPrefix(strings.ToLower(agentID), prefix) {
+			matches = append(matches, agentID)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("no agent matches prefix %q in queue stats", id)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("ambiguous prefix %q — %d agents match, be more specific", id, len(matches))
 	}
 }
 
