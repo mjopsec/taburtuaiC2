@@ -310,6 +310,8 @@ var cmdCmd = &cobra.Command{
 		timeout, _ := cmd.Flags().GetInt("timeout")
 		workDir, _ := cmd.Flags().GetString("workdir")
 		background, _ := cmd.Flags().GetBool("background")
+		noWait, _ := cmd.Flags().GetBool("no-wait")
+		background = background || noWait
 
 		printInfo(fmt.Sprintf("Executing command on agent %s", agentID))
 		printVerbose(fmt.Sprintf("Command: %s, Timeout: %ds, WorkDir: %s, Background: %v", commandStr, timeout, workDir, background))
@@ -404,10 +406,11 @@ var shellCmd = &cobra.Command{
 var statusCmd = &cobra.Command{
 	Use:   "status <command-id>",
 	Short: "Check command execution status",
-	Long:  "Check the status of a previously executed command.",
+	Long:  "Check the status of a previously executed command. Accepts full UUID or prefix.",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		commandID := args[0]
+		commandID, err := resolveCommandID(args[0])
+		if err != nil { printError(err.Error()); os.Exit(1) }
 		printInfo(fmt.Sprintf("Checking status for command: %s", commandID))
 
 		body, err := makeAPIRequest(fmt.Sprintf("/api/v1/command/%s/status", commandID))
@@ -529,9 +532,9 @@ var historyCmd = &cobra.Command{
 
 		printSuccess(fmt.Sprintf("Found %d command(s) in history.", len(commandsInterface)))
 		fmt.Println()
-		fmt.Printf("%s%-12s %-20s %-10s %-8s %-30s%s\n",
+		fmt.Printf("%s%-36s %-20s %-10s %-6s %-30s%s\n",
 			ColorBlue, "CMD ID", "TIMESTAMP", "STATUS", "EXIT", "COMMAND", ColorReset)
-		fmt.Println(strings.Repeat("-", 90))
+		fmt.Println(strings.Repeat("-", 110))
 
 		for _, item := range commandsInterface {
 			cmdMap, ok := item.(map[string]interface{})
@@ -540,9 +543,6 @@ var historyCmd = &cobra.Command{
 			}
 
 			cmdID := getStringFromMap(cmdMap, "id")
-			if len(cmdID) > 8 {
-				cmdID = cmdID[:8] + "..."
-			}
 
 			timestamp := "N/A"
 			if tsStr := getStringFromMap(cmdMap, "executed_at"); tsStr != "" {
@@ -578,7 +578,7 @@ var historyCmd = &cobra.Command{
 				commandStr = commandStr[:25] + "..."
 			}
 
-			fmt.Printf("%-12s %-20s %s%-10s%s %-8s %-30s\n",
+			fmt.Printf("%-36s %-20s %s%-10s%s %-6s %-30s\n",
 				cmdID, timestamp, statusColor, status, ColorReset, exitCode, commandStr)
 		}
 		fmt.Println()
@@ -648,8 +648,14 @@ var queueClearCmd = &cobra.Command{
 	Short: "Clear pending commands for an agent",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		agentID, err := resolveAgentID(args[0])
-		if err != nil { printError(err.Error()); os.Exit(1) }
+		// Try resolveAgentID first (online agents); fall back to raw ID for offline agents
+		agentID := args[0]
+		if resolved, err := resolveAgentID(agentID); err == nil {
+			agentID = resolved
+		} else if !(len(agentID) == 36 && strings.Count(agentID, "-") == 4) {
+			printError(fmt.Sprintf("Agent not found: %v — provide the full UUID if the agent is offline", err))
+			os.Exit(1)
+		}
 		printWarning(fmt.Sprintf("Attempting to clear command queue for agent %s...", agentID))
 		serverRespBytes, err := makeAPIRequestWithMethod("DELETE", "/api/v1/agent/"+agentID+"/queue", nil, "")
 		if err != nil {
@@ -1592,6 +1598,72 @@ var persistenceRemoveCmd = &cobra.Command{
 }
 
 // --- HELPER FUNCTIONS ---
+
+// resolveCommandID resolves a partial command ID prefix to the full UUID by
+// searching the history of all online agents. Accepts exact UUIDs directly.
+func resolveCommandID(id string) (string, error) {
+	if len(id) == 36 && strings.Count(id, "-") == 4 {
+		return id, nil
+	}
+
+	// Fetch all agents to search across their histories
+	agentBody, err := makeAPIRequest("/api/v1/agents")
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch agents: %w", err)
+	}
+	var agentResp APIResponse
+	if err := json.Unmarshal(agentBody, &agentResp); err != nil || !agentResp.Success {
+		return "", fmt.Errorf("failed to list agents")
+	}
+	data, _ := agentResp.Data.(map[string]interface{})
+	var agentList []interface{}
+	if r, ok := data["result"].(map[string]interface{}); ok {
+		agentList, _ = r["agents"].([]interface{})
+	} else {
+		agentList, _ = data["agents"].([]interface{})
+	}
+
+	prefix := strings.ToLower(id)
+	var matches []string
+	for _, a := range agentList {
+		agent, ok := a.(map[string]interface{})
+		if !ok { continue }
+		agentID := getStringFromMap(agent, "id")
+		if agentID == "" { continue }
+
+		endpoint := fmt.Sprintf("/api/v1/agent/%s/commands?limit=200", agentID)
+		body, err := makeAPIRequest(endpoint)
+		if err != nil { continue }
+		var resp APIResponse
+		if err := json.Unmarshal(body, &resp); err != nil || !resp.Success { continue }
+
+		var commandsInterface []interface{}
+		if dataMap, ok := resp.Data.(map[string]interface{}); ok {
+			if result, hasResult := dataMap["result"].(map[string]interface{}); hasResult {
+				commandsInterface, _ = result["commands"].([]interface{})
+			} else {
+				commandsInterface, _ = dataMap["commands"].([]interface{})
+			}
+		}
+		for _, item := range commandsInterface {
+			cmdMap, ok := item.(map[string]interface{})
+			if !ok { continue }
+			if full := getStringFromMap(cmdMap, "id"); strings.HasPrefix(strings.ToLower(full), prefix) {
+				matches = append(matches, full)
+			}
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("no command matches prefix %q", id)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("ambiguous prefix %q — %d commands match, be more specific", id, len(matches))
+	}
+}
+
 // resolveAgentID resolves a full or partial agent ID prefix to the full UUID.
 // If the input is already a full UUID it is returned unchanged.
 func resolveAgentID(id string) (string, error) {
@@ -1673,6 +1745,9 @@ func makeAPIRequestWithMethod(method, endpoint string, body io.Reader, contentTy
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such host") || strings.Contains(err.Error(), "dial") {
+			return nil, fmt.Errorf("C2 server not reachable at %s — is the server running?", config.ServerURL)
+		}
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -1688,6 +1763,11 @@ func makeAPIRequestWithMethod(method, endpoint string, body io.Reader, contentTy
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Detect HTML response — likely not a C2 server (e.g., Apache/nginx default page)
+		bodyStr := strings.TrimSpace(string(respBody))
+		if strings.HasPrefix(bodyStr, "<!") || strings.HasPrefix(strings.ToLower(bodyStr), "<html") {
+			return nil, fmt.Errorf("C2 server not reachable at %s — is the server running?", config.ServerURL)
+		}
 		// Coba parse sebagai APIResponse untuk mendapatkan pesan error server
 		var apiErr APIResponse
 		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Error != "" {
@@ -2018,7 +2098,9 @@ func init() {
 	// Command flags
 	cmdCmd.Flags().Int("timeout", 300, "Command timeout in seconds (server default if 0)")
 	cmdCmd.Flags().StringP("workdir", "w", "", "Working directory for command")
-	cmdCmd.Flags().BoolP("background", "b", false, "Run command in background")
+	cmdCmd.Flags().BoolP("background", "b", false, "Run command in background (don't wait for result)")
+	cmdCmd.Flags().Bool("no-wait", false, "Alias for --background")
+	cmdCmd.Flags().MarkHidden("no-wait")
 
 	historyCmd.Flags().IntP("limit", "l", 50, "Number of commands to show")
 	historyCmd.Flags().StringP("status", "", "", "Filter by status (completed, failed, etc)")
