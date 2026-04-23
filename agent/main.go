@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"strconv"
@@ -97,10 +98,30 @@ func pauseIfDebug() {
 	}
 }
 
+// generateUUID returns a stable v4-format UUID derived from host properties.
+// Using hostname+username+os means the same machine always registers with the
+// same agent ID, so the operator can queue commands without worrying about
+// UUID churn on agent restarts or rebuilds.
 func generateUUID() string {
+	hostname, _ := os.Hostname()
+	username := os.Getenv("USERNAME")
+	if username == "" {
+		username = os.Getenv("USER")
+	}
+	seed := hostname + "|" + username + "|" + serverURL // serverURL baked in at build time
+	h := sha256.Sum256([]byte(seed))
+	b := h[:16]
+
+	// Force UUID v4 version and RFC-4122 variant bits
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// randomUUID is kept for cases where a non-deterministic ID is explicitly needed.
+func randomUUID() string {
 	b := make([]byte, 16)
-	_, err := rand.Read(b)
-	if err != nil {
+	if _, err := rand.Read(b); err != nil {
 		now := time.Now().UnixNano()
 		for i := range b {
 			b[i] = byte((now >> (i * 8)) & 0xFF)

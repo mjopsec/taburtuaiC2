@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -45,7 +46,22 @@ func New(dbPath string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
+	// Reset commands left in 'executing' state from a previous server session.
+	// Without this, GetNext blocks new commands behind a stale executing command.
+	s.resetStaleExecuting()
 	return s, nil
+}
+
+// resetStaleExecuting marks any 'executing' commands as 'timeout' on startup.
+// This prevents stale commands from a crashed session from blocking the queue.
+func (s *Store) resetStaleExecuting() {
+	now := time.Now().Unix()
+	_, _ = s.db.Exec(`
+		UPDATE commands SET
+			status      = 'timeout',
+			error       = 'server restarted — command was interrupted',
+			completed_at = ?
+		WHERE status = 'executing'`, now)
 }
 
 // Close closes the database connection
