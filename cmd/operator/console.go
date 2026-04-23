@@ -217,6 +217,13 @@ func printConsoleHelp() {
 			{"registry delete <id> HKLM\\SOFTWARE\\key -V value", "delete value (or key)"},
 			{"registry list <id> HKLM\\SOFTWARE\\key", "list subkeys and values"},
 		}},
+		{"Team Server (Multi-Operator)", []entry{
+			{"team subscribe <name>", "join live event stream (agent checkins, results)"},
+			{"team operators", "list connected operators"},
+			{"team claim <id> --session <sid>", "claim exclusive write access to agent"},
+			{"team release <id> --session <sid>", "release agent claim"},
+			{"team broadcast --session <sid> --message \"note\"", "send note to all operators"},
+		}},
 		{"Queue & Server", []entry{
 			{"queue stats", "pending command overview"},
 			{"queue clear <id>", "flush pending queue"},

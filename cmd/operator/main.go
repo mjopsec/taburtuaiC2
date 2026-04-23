@@ -2418,6 +2418,18 @@ func init() {
 	socks5Cmd.AddCommand(socks5StatusCmd)
 
 	initPivotFlags()
+
+	// Phase 11.7 — Multi-operator team server
+	rootCmd.AddCommand(teamCmd)
+	teamCmd.AddCommand(teamSubscribeCmd)
+	teamCmd.AddCommand(teamOperatorsCmd)
+	teamCmd.AddCommand(teamClaimCmd)
+	teamCmd.AddCommand(teamReleaseCmd)
+	teamCmd.AddCommand(teamBroadcastCmd)
+	teamClaimCmd.Flags().String("session", "", "Operator session ID (from 'team subscribe')")
+	teamReleaseCmd.Flags().String("session", "", "Operator session ID")
+	teamBroadcastCmd.Flags().String("session", "", "Operator session ID")
+	teamBroadcastCmd.Flags().String("message", "", "Message to broadcast to all operators (required)")
 }
 
 func main() {

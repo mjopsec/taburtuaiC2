@@ -215,6 +215,14 @@ func (h *Handlers) SubmitCommandResult(c *gin.Context) {
 	duration := cmd.CompletedAt.Sub(cmd.ExecutedAt)
 	h.server.Monitor.RecordCommand(cmd.AgentID, cmd.Command, success, duration)
 
+	// Notify all connected operators
+	h.server.TeamHub.Broadcast(services.TeamEvent{
+		Type:    "result_ready",
+		AgentID: cmd.AgentID,
+		Payload: fmt.Sprintf("cmd=%s status=%s duration=%s", cmd.OperationType, cmd.Status, duration.Truncate(time.Millisecond)),
+		Time:    time.Now().Format(time.RFC3339),
+	})
+
 	h.APIResponse(c, true, "Result processed", map[string]interface{}{
 		"command_id": cmd.ID,
 		"status":     cmd.Status,

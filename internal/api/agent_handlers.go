@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mjopsec/taburtuaiC2/internal/services"
@@ -111,7 +112,16 @@ func (h *Handlers) AgentCheckin(c *gin.Context) {
 	}
 
 	agentID, _ := checkinData["id"].(string)
+	hostname, _ := checkinData["hostname"].(string)
 	h.server.Logger.LogAgentConnection(agentID, "checkin", c.ClientIP())
+
+	// Broadcast checkin event to all connected operators
+	h.server.TeamHub.Broadcast(services.TeamEvent{
+		Type:    "agent_checkin",
+		AgentID: agentID,
+		Payload: fmt.Sprintf("%s checked in from %s", hostname, c.ClientIP()),
+		Time:    time.Now().Format(time.RFC3339),
+	})
 
 	response := map[string]any{
 		"status": "ok",

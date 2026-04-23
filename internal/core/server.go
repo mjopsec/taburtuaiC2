@@ -18,6 +18,7 @@ type Server struct {
 	Monitor      *services.AgentMonitor
 	Logger       *services.Logger
 	Store        *storage.Store
+	TeamHub      *services.TeamHub
 }
 
 // NewServer creates a new server instance
@@ -45,6 +46,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	)
 
 	cmdQueue := NewCommandQueue(store)
+	teamHub := services.NewTeamHub()
 
 	return &Server{
 		Config:       cfg,
@@ -53,12 +55,14 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		Monitor:      monitor,
 		Logger:       logger,
 		Store:        store,
+		TeamHub:      teamHub,
 	}, nil
 }
 
 // Start starts the server
 func (s *Server) Start() {
 	s.Monitor.Start()
+	s.TeamHub.Start()
 	s.Logger.Info(services.SYSTEM, "Server started", "", "", nil)
 }
 

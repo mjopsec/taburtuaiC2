@@ -29,6 +29,8 @@
 | 16 | [Red Team Scenarios](16-scenarios.md) | Skenario engagement end-to-end |
 | 17 | [Malleable HTTP Profiles](17-profiles.md) | Camouflage traffic C2 — office365, cdn, jquery, slack, ocsp |
 | 18 | [OPSEC Hardening](18-opsec-hardening.md) | String encryption + Authenticode self-signing |
+| 19 | [Advanced Transports](19-advanced-transports.md) | DoH beacon, ICMP C2, SMB named pipe |
+| 20 | [Multi-Operator Team Server](20-teamserver.md) | Real-time session sharing antar operator |
 
 ---
 

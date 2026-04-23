@@ -157,7 +157,18 @@ func (r *Router) Setup() *gin.Engine {
 		v1.GET("/health", r.handlers.HealthCheck)
 		v1.GET("/logs", r.handlers.GetLogs)
 		v1.GET("/queue/stats", r.handlers.GetQueueStats)
+
+		// Phase 11.7 — Multi-operator team server
+		v1.POST("/team/register", r.handlers.RegisterOperator)
+		v1.GET("/team/operators", r.handlers.ListOperators)
+		v1.POST("/team/agent/:id/claim", r.handlers.ClaimAgent)
+		v1.POST("/team/agent/:id/release", r.handlers.ReleaseAgent)
+		v1.GET("/team/agent/:id/claim", r.handlers.AgentClaimStatus)
+		v1.POST("/team/broadcast", r.handlers.BroadcastEvent)
 	}
+
+	// SSE stream — must be outside the 10 MB body-limit group
+	router.GET("/api/v1/team/events", r.handlers.EventStream)
 
 	// ── Routes that manage their own (large) body limits ─────────────────────
 	// These are on a separate group so the 10 MB group middleware above does
