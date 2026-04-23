@@ -40,6 +40,11 @@ var (
 )
 
 func main() {
+	// Pre-initialise the Windows console subsystem so the very first subprocess
+	// spawn (cmd.exe / powershell.exe) does not cause a one-time visible flash.
+	// This is a no-op on non-Windows platforms.
+	preinitConsole()
+
 	interval, _ := strconv.Atoi(defaultInterval)
 	if interval < 1 {
 		interval = 30
