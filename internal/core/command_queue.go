@@ -125,7 +125,11 @@ func (cq *CommandQueue) CompleteCommand(commandID string, result *types.CommandR
 		row.Error = result.Error
 	}
 
-	if result.ExitCode == 0 && row.Error == "" {
+	// Use exit code as the authoritative success indicator.
+	// Stderr may contain non-fatal warnings (e.g. PowerShell CLIXML progress
+	// records) even on a successful run, so we do not treat non-empty Error
+	// alone as a failure.
+	if result.ExitCode == 0 {
 		row.Status = "completed"
 	} else {
 		row.Status = "failed"

