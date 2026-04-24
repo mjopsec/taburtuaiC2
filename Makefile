@@ -197,7 +197,7 @@ agent-win-encrypted: strenc ## Build Windows stealth agent with XOR-encrypted bu
 	@printf "  $(CB)$(CC) TABURTUAI C2$(C0)  $(CD)·$(C0)  implant compiler\n"
 	@printf "  $(SEP)\n\n"
 	@printf "    $(CD)%-12s$(C0) %s\n" "target"   "Windows x64  ·  XOR-encrypted strings"
-	@printf "    $(CD)%-12s$(C0) %s\n" "server"   "$(C2_SERVER)  $(CD)(encrypted in binary)$(C0)"
+	@printf "    $(CD)%-12s$(C0) %s  $(CD)(encrypted in binary)$(C0)\n" "server" "$(C2_SERVER)"
 	@printf "    $(CD)%-12s$(C0) %ss  ±%s%% jitter\n" "interval" "$(INTERVAL)" "$(JITTER)"
 	@printf "    $(CD)%-12s$(C0) %s\n" "evasion"  "on  ·  sleep-masking on"
 	@[ -n "$(KILL_DATE)" ] && printf "    $(CD)%-12s$(C0) %s\n" "kill date" "$(KILL_DATE)" || true
