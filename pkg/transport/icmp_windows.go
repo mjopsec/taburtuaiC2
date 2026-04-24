@@ -52,7 +52,7 @@ type icmpEchoReply struct {
 	RoundTripTime uint32
 	DataSize      uint16
 	Reserved      uint16
-	Data          uintptr
+	Data          unsafe.Pointer // Win32 PVOID — not GC-managed
 	Options       [8]byte
 }
 
@@ -200,7 +200,7 @@ func (c *ICMPClient) sendEchoRecv(destAddr uint32, payload []byte) ([]byte, erro
 	}
 	// Copy reply data into a Go slice
 	data := make([]byte, reply.DataSize)
-	src := unsafe.Slice((*byte)(unsafe.Pointer(reply.Data)), reply.DataSize)
+	src := unsafe.Slice((*byte)(reply.Data), reply.DataSize)
 	copy(data, src)
 	return data, nil
 }

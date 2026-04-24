@@ -73,8 +73,9 @@ const (
 
 // comVtCall calls vtable[index](this, args...).
 func comVtCall(this uintptr, idx int, args ...uintptr) (uintptr, error) {
-	vtbl := *(*uintptr)(unsafe.Pointer(this))
-	fn := *(*uintptr)(unsafe.Pointer(vtbl + uintptr(idx)*8))
+	thisPtr := unsafe.Pointer(this) //nolint:unsafeptr -- COM interface pointer, not GC-managed
+	vtbl := *(*uintptr)(thisPtr)
+	fn := *(*uintptr)(unsafe.Add(unsafe.Pointer(vtbl), uintptr(idx)*8)) //nolint:unsafeptr
 	r, _, _ := syscallNVarargs(fn, append([]uintptr{this}, args...)...)
 	if r != 0 && r != 1 { // S_OK=0, S_FALSE=1 are success
 		return r, fmt.Errorf("COM call vtable[%d] HRESULT 0x%08X", idx, uint32(r))
@@ -180,8 +181,10 @@ func clrGetLatestVersion(metaHost uintptr) (string, error) {
 	var elem uintptr
 	var fetched uint32
 	for {
+		enumVtbl := *(*uintptr)(unsafe.Pointer(enumPtr)) //nolint:unsafeptr -- COM ptr
+		enumNext := *(*uintptr)(unsafe.Add(unsafe.Pointer(enumVtbl), 3*8)) //nolint:unsafeptr
 		r, _, _ := syscall.Syscall15(
-			*(*uintptr)(unsafe.Pointer(*(*uintptr)(unsafe.Pointer(enumPtr))+3*8)),
+			enumNext,
 			5,
 			enumPtr, 1, uintptr(unsafe.Pointer(&elem)), uintptr(unsafe.Pointer(&fetched)), 0,
 			0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -189,10 +192,12 @@ func clrGetLatestVersion(metaHost uintptr) (string, error) {
 		if r != 0 || fetched == 0 {
 			break
 		}
-		// ICLRRuntimeInfo::GetVersionString (vtable 3), buf size via buf=nil first.
+		// ICLRRuntimeInfo::GetVersionString (vtable 3).
 		var bufLen uint32 = 32
+		elemVtbl := *(*uintptr)(unsafe.Pointer(elem)) //nolint:unsafeptr -- COM ptr
+		getVer := *(*uintptr)(unsafe.Add(unsafe.Pointer(elemVtbl), 3*8)) //nolint:unsafeptr
 		syscall.Syscall15( //nolint:errcheck
-			*(*uintptr)(unsafe.Pointer(*(*uintptr)(unsafe.Pointer(elem))+3*8)),
+			getVer,
 			3,
 			elem, uintptr(unsafe.Pointer(&latest[0])), uintptr(unsafe.Pointer(&bufLen)), 0,
 			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,

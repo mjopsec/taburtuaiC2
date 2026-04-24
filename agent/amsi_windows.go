@@ -86,8 +86,9 @@ func patchBytes(addr uintptr, patch []byte) error {
 	if r == 0 {
 		return fmt.Errorf("VirtualProtect(RWX): %v", e)
 	}
+	p := unsafe.Pointer(addr) //nolint:unsafeptr -- addr is Win32 executable memory, not GC-managed
 	for i, b := range patch {
-		*(*byte)(unsafe.Pointer(addr + uintptr(i))) = b
+		*(*byte)(unsafe.Add(p, i)) = b
 	}
 	procVirtualProtect.Call(addr, size, uintptr(old), uintptr(unsafe.Pointer(&old)))
 	return nil

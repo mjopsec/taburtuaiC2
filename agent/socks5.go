@@ -149,7 +149,7 @@ func handleSOCKS5Conn(client net.Conn) {
 	portBuf := make([]byte, 2)
 	io.ReadFull(client, portBuf)
 	port := binary.BigEndian.Uint16(portBuf)
-	dialAddr := fmt.Sprintf("%s:%d", target, port)
+	dialAddr := net.JoinHostPort(target, fmt.Sprintf("%d", port))
 
 	client.SetDeadline(time.Time{}) // clear deadline before dialing
 

