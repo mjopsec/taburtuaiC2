@@ -9,16 +9,26 @@ in-process oleh agent tanpa spawn proses baru. Format sama dengan yang dipakai C
 - Tidak ada proses baru di process list
 - Bisa akses Win32 API dan syscall langsung
 - Tidak perlu tulis file ke disk
-- Compatible dengan ekosistem BOF yang sudah ada
+- Compatible dengan ekosistem BOF komunitas yang sudah ada
+- Eksekusi di OS thread terdedikasi (`LockOSThread`) — BOF stack-heavy aman
+
+---
 
 ### Kompilasi BOF
 
 ```bash
 # Di mesin Linux dengan MinGW
 x86_64-w64-mingw32-gcc -c dir.c -o dir.o -masm=intel
+
+# Atau dari Windows dengan MSVC
+cl /c /GS- dir.c /Fo:dir.o
 ```
 
-### Upload dan Eksekusi BOF
+Entrypoint yang dicari agent (secara berurutan): `go`, `beacon_main`, `_go`, `_beacon_main`.
+
+---
+
+### Eksekusi BOF Tanpa Argumen
 
 ```
 taburtuai(IP:8000) › files upload 2703886d ./dir.o "C:\Temp\dir.o" --wait
@@ -28,10 +38,12 @@ taburtuai(IP:8000) › bof 2703886d --file "C:\Temp\dir.o" --wait
 
 **Output:**
 ```
-[*] Loading BOF: C:\Temp\dir.o...
-[*] Resolving imports...
-[*] Executing in-process (no new thread)...
-[+] BOF execution completed (0.4s):
+[*] Loading BOF: C:\Temp\dir.o (12,288 bytes)
+[*] Sections allocated (RWX): .text .data .rdata
+[*] Relocations applied: 14 entries
+[*] Imports resolved: BeaconPrintf, BeaconDataParse, GetProcAddress, ...
+[*] Executing go() on dedicated OS thread...
+[+] BOF completed (0.4s):
 
 [BOF output]
 Listing C:\:
@@ -43,22 +55,132 @@ Listing C:\:
   Windows           <DIR>
 ```
 
+---
+
 ### Eksekusi dengan Arguments
 
-BOF bisa menerima argumen yang di-pack dalam format binary Cobalt Strike:
+BOF menerima argumen dalam **format binary packed** (kompatibel Cobalt Strike).
+Gunakan script berikut di mesin operator untuk packing:
+
+**`pack_bof_args.py`** — script helper:
+
+```python
+#!/usr/bin/env python3
+"""
+Pack BOF arguments ke format binary Cobalt Strike / Taburtuai C2.
+
+Format per argument:
+  short (2 bytes) = type tag
+  data            = payload
+
+Type tags:
+  b = 1 (binary blob)  : length(4) + data
+  i = 2 (int32)        : 4 bytes LE
+  s = 3 (short/int16)  : 2 bytes LE
+  z = 4 (string ANSI)  : length(4) + str + NUL
+  Z = 5 (string UTF-16): length(4) + wstr + NUL NUL
+"""
+import struct, sys
+
+def pack_int(v):
+    return struct.pack('<HI', 2, v & 0xFFFFFFFF)
+
+def pack_short(v):
+    return struct.pack('<Hh', 3, v)
+
+def pack_str(s: str):
+    b = s.encode('utf-8') + b'\x00'
+    return struct.pack('<HI', 4, len(b)) + b
+
+def pack_wstr(s: str):
+    b = s.encode('utf-16-le') + b'\x00\x00'
+    return struct.pack('<HI', 5, len(b)) + b
+
+def pack_blob(data: bytes):
+    return struct.pack('<HI', 1, len(data)) + data
+
+if __name__ == '__main__':
+    import argparse, base64
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--int',   dest='args', action='append', type=lambda x: pack_int(int(x,0)), default=[])
+    ap.add_argument('--short', dest='args', action='append', type=lambda x: pack_short(int(x,0)))
+    ap.add_argument('--str',   dest='args', action='append', type=pack_str)
+    ap.add_argument('--wstr',  dest='args', action='append', type=pack_wstr)
+    ap.add_argument('--b64',   help='output as base64', action='store_true')
+    args = ap.parse_args()
+    out = b''.join(a for a in args.args if a)
+    if args.b64:
+        print(base64.b64encode(out).decode())
+    else:
+        sys.stdout.buffer.write(out)
+```
+
+**Contoh penggunaan:**
 
 ```bash
-# Pack arguments (di mesin operator)
-python3 pack_bof_args.py --string "C:\Users" > args.bin
-base64 args.bin > args.b64
+# BOF dir.o — argumen: path string
+python3 pack_bof_args.py --str "C:\Users\john.doe\Documents" --b64
+# Output: BAAAAB...base64...
+
+# BOF yang menerima integer + string
+python3 pack_bof_args.py --int 3389 --str "192.168.1.0/24" --b64
 ```
 
 ```
+# Kirim ke agent
 taburtuai(IP:8000) › bof 2703886d \
   --file "C:\Temp\dir.o" \
-  --args-b64 "$(cat args.b64)" \
+  --args-b64 "BAAAAB..." \
   --wait
 ```
+
+---
+
+### Beacon Data API
+
+Saat menulis BOF, gunakan API berikut untuk membaca argumen:
+
+```c
+// Include dari Cobalt Strike atau buat manual
+#include "beacon.h"
+
+// Entrypoint
+void go(char *args, int len) {
+    datap parser;
+    BeaconDataParse(&parser, args, len);
+    
+    // Baca argumen sesuai urutan packing
+    char *path  = BeaconDataExtract(&parser, NULL);  // --str
+    int   port  = BeaconDataInt(&parser);             // --int
+    short flags = BeaconDataShort(&parser);           // --short
+    
+    BeaconPrintf(CALLBACK_OUTPUT, "Path: %s, Port: %d\n", path, port);
+}
+```
+
+**Fungsi BeaconData yang didukung:**
+
+| Fungsi | Deskripsi |
+|--------|-----------|
+| `BeaconDataParse(parser, buf, len)` | Inisialisasi cursor dari buffer args |
+| `BeaconDataInt(parser)` | Baca int32 (4 bytes) |
+| `BeaconDataShort(parser)` | Baca int16 (2 bytes) |
+| `BeaconDataLength(parser)` | Sisa bytes di buffer |
+| `BeaconDataExtract(parser, &size)` | Baca length-prefixed blob, kembalikan pointer |
+
+**Format specifier `BeaconPrintf` yang didukung:**
+
+| Specifier | Tipe | Contoh output |
+|-----------|------|---------------|
+| `%s` | string (pointer ke C-string) | `hello` |
+| `%d` / `%i` | int32 (signed) | `-42` |
+| `%u` | uint32 (unsigned) | `4294967295` |
+| `%x` / `%X` | hex lower/upper | `deadbeef` / `DEADBEEF` |
+| `%p` | pointer (hex dengan prefix) | `0x7FFE0000` |
+| `%ld` / `%lu` / `%lx` | 64-bit int/uint/hex | `123456789012` |
+| `%%` | literal % | `%` |
+
+---
 
 ### BOF yang Umum Dipakai
 
@@ -71,6 +193,18 @@ taburtuai(IP:8000) › bof 2703886d \
 | `ldapsearch.o` | LDAP query langsung | trustedsec/CS-Situational-Awareness-BOF |
 | `nanodump.o` | LSASS dump (PPL bypass) | helpsystems |
 | `unhook.o` | EDR unhooking BOF | rad98/bof-collection |
+
+---
+
+### Troubleshooting BOF
+
+| Error | Penyebab | Solusi |
+|-------|----------|--------|
+| `no 'go' or 'beacon_main' entrypoint` | Nama entrypoint salah | Pastikan fungsi bernama `go` atau `beacon_main` |
+| `unresolved external: FooBarW` | API tidak ada di DLL common | Tambahkan `resolveExternalSym` atau load DLL manual di BOF |
+| `COFF machine 0x014C` | BOF 32-bit | Compile ulang dengan `-m64` / x64 target |
+| `BOF panic: ...` | Stack overflow atau access violation | BOF ada bug — debug dulu di debugger |
+| Output kosong | BOF tidak memanggil BeaconPrintf | Cek kode BOF; BeaconOutput juga ditangkap |
 
 ---
 
