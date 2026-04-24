@@ -30,6 +30,7 @@
 | [18](18-opsec-hardening.md) | OPSEC Hardening | String encryption, Authenticode signing |
 | [19](19-advanced-transports.md) | Advanced Transports | DoH beacon, ICMP C2, SMB named pipe |
 | [20](20-teamserver.md) | Team Server | Multi-operator, claiming, SSE event stream |
+| [21](21-opsec-playbook.md) | OPSEC Playbook | Operator playbook: initial intrusion → exfiltration |
 
 ---
 
