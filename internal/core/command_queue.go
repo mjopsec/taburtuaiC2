@@ -290,6 +290,20 @@ type cmdPayload struct {
 	WorkingHoursStart int    `json:"working_hours_start,omitempty"`
 	WorkingHoursEnd   int    `json:"working_hours_end,omitempty"`
 	KillDate          string `json:"kill_date,omitempty"`
+	// Phase 11 — Network recon
+	ScanTargets     []string `json:"scan_targets,omitempty"`
+	ScanPorts       []int    `json:"scan_ports,omitempty"`
+	ScanTimeout     int      `json:"scan_timeout,omitempty"`
+	ScanWorkers     int      `json:"scan_workers,omitempty"`
+	ScanGrabBanners bool     `json:"scan_grab_banners,omitempty"`
+	// Phase 11 — Registry
+	RegHive  string `json:"reg_hive,omitempty"`
+	RegKey   string `json:"reg_key,omitempty"`
+	RegValue string `json:"reg_value,omitempty"`
+	RegData  string `json:"reg_data,omitempty"`
+	RegType  string `json:"reg_type,omitempty"`
+	// Phase 11 — SOCKS5
+	Socks5Addr string `json:"socks5_addr,omitempty"`
 }
 
 func cmdToRow(cmd *types.Command) (storage.CommandRow, error) {
@@ -342,6 +356,18 @@ func cmdToRow(cmd *types.Command) (storage.CommandRow, error) {
 		WorkingHoursStart: cmd.WorkingHoursStart,
 		WorkingHoursEnd:   cmd.WorkingHoursEnd,
 		KillDate:          cmd.KillDate,
+		// Phase 11
+		ScanTargets:     cmd.ScanTargets,
+		ScanPorts:       cmd.ScanPorts,
+		ScanTimeout:     cmd.ScanTimeout,
+		ScanWorkers:     cmd.ScanWorkers,
+		ScanGrabBanners: cmd.ScanGrabBanners,
+		RegHive:         cmd.RegHive,
+		RegKey:          cmd.RegKey,
+		RegValue:        cmd.RegValue,
+		RegData:         cmd.RegData,
+		RegType:         cmd.RegType,
+		Socks5Addr:      cmd.Socks5Addr,
 	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -442,6 +468,18 @@ func rowToCmd(r storage.CommandRow) *types.Command {
 			cmd.WorkingHoursStart = p.WorkingHoursStart
 			cmd.WorkingHoursEnd = p.WorkingHoursEnd
 			cmd.KillDate = p.KillDate
+			// Phase 11
+			cmd.ScanTargets = p.ScanTargets
+			cmd.ScanPorts = p.ScanPorts
+			cmd.ScanTimeout = p.ScanTimeout
+			cmd.ScanWorkers = p.ScanWorkers
+			cmd.ScanGrabBanners = p.ScanGrabBanners
+			cmd.RegHive = p.RegHive
+			cmd.RegKey = p.RegKey
+			cmd.RegValue = p.RegValue
+			cmd.RegData = p.RegData
+			cmd.RegType = p.RegType
+			cmd.Socks5Addr = p.Socks5Addr
 		}
 	}
 	return cmd
@@ -491,6 +529,11 @@ func validateCommandForQueue(cmd *types.Command) error {
 		"net_scan": true, "arp_scan": true,
 		"reg_read": true, "reg_write": true, "reg_delete": true, "reg_list": true,
 		"socks5_start": true, "socks5_stop": true, "socks5_status": true,
+		// extended techniques
+		"lsass_dump_dup": true, "lsass_dump_wer": true,
+		"amsi_hwbp": true, "etw_hwbp": true,
+		"threadless_inject": true, "pe_load": true,
+		"dotnet_exec": true, "ps_runspace": true, "stego_extract": true,
 	}
 	if !validOps[cmd.OperationType] {
 		return fmt.Errorf("invalid operation type: %s", cmd.OperationType)
