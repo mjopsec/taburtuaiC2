@@ -10,12 +10,9 @@ import (
 )
 
 const (
-	secCommit    uintptr = 0x8000000
-	secNoChange  uintptr = 0x0400000
-	pageReadWrite uintptr = 0x04
-	pageExecRead  uintptr = 0x20
-
-	viewShare uintptr = 1
+	secCommit   uintptr = 0x8000000
+	secNoChange uintptr = 0x0400000
+	viewShare   uintptr = 1
 
 	// NtCreateSection / NtMapViewOfSection NTSTATUS success
 	statusSuccess uintptr = 0

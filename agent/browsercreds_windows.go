@@ -236,7 +236,7 @@ func BrowserCredsAll() ([]BrowserCred, error) {
 	}
 
 	if len(errs) > 0 && len(all) == 0 {
-		return nil, fmt.Errorf(strings.Join(errs, "; "))
+		return nil, fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
 	return all, nil
 }
