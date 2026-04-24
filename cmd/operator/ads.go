@@ -120,9 +120,9 @@ Examples:
 	},
 }
 
-// ads exec <agent-id> <path:stream.js>
+// ads exec <agent-id> <path:stream.js>   OR   ads exec <agent-id> --ads-path <path:stream.ext>
 var adsExecCmd = &cobra.Command{
-	Use:   "exec <agent-id> <path:stream.ext>",
+	Use:   "exec <agent-id> [<path:stream.ext>]",
 	Short: "Execute a script stored in an NTFS ADS",
 	Long: `Execute a script stored inside an NTFS Alternate Data Stream via LOLBin.
 
@@ -133,15 +133,24 @@ Supported extensions (determines which LOLBin is used):
 
 Examples:
   ads exec 7d019eb7 "C:\Users\Public\readme.txt:update.js"
-  ads exec 7d019eb7 "C:\ProgramData\log.dat:svc.ps1"`,
-	Args: cobra.ExactArgs(2),
+  ads exec 7d019eb7 --ads-path "C:\ProgramData\log.dat:svc.ps1"`,
+	Args: cobra.RangeArgs(1, 2),
 	Run: func(cmd *cobra.Command, args []string) {
 		agentID, err := resolveAgentID(args[0])
 		if err != nil {
 			printError(err.Error())
 			os.Exit(1)
 		}
-		adsPath := args[1]
+
+		// Accept path as positional arg OR --ads-path flag
+		adsPath, _ := cmd.Flags().GetString("ads-path")
+		if adsPath == "" && len(args) >= 2 {
+			adsPath = args[1]
+		}
+		if adsPath == "" {
+			printError("ADS path required: provide as positional arg or --ads-path")
+			os.Exit(1)
+		}
 
 		wait, _ := cmd.Flags().GetBool("wait")
 		timeout, _ := cmd.Flags().GetInt("timeout")

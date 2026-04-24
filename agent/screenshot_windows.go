@@ -30,21 +30,39 @@ type BITMAPINFO struct {
 	BmiColors [1]uint32
 }
 
+// acquireDesktopDC tries GetDC(0) first, then falls back to GetWindowDC(GetDesktopWindow()).
+// Returns (hDC, releaseFunc, error). Caller must call releaseFunc() to free the DC.
+func acquireDesktopDC() (uintptr, func(), error) {
+	hDC, _, _ := procGetDC.Call(0)
+	if hDC != 0 {
+		return hDC, func() { procReleaseDC.Call(0, hDC) }, nil
+	}
+	// Fallback: GetWindowDC on the desktop window (works in some RDP/headless sessions)
+	hwndDesktop, _, _ := procGetDesktopWindow.Call()
+	if hwndDesktop != 0 {
+		hDC, _, _ = procGetWindowDC.Call(hwndDesktop)
+		if hDC != 0 {
+			return hDC, func() { procReleaseDC.Call(hwndDesktop, hDC) }, nil
+		}
+	}
+	return 0, func() {}, fmt.Errorf("cannot acquire desktop DC (headless/service session?)")
+}
+
 // captureScreen captures the full desktop and returns PNG bytes.
 func captureScreen() ([]byte, error) {
 	width, _, _ := procGetSystemMetrics.Call(uintptr(smCxscreen))
 	height, _, _ := procGetSystemMetrics.Call(uintptr(smCyscreen))
 	w, h := int(int32(width)), int(int32(height))
 	if w <= 0 || h <= 0 {
-		return nil, fmt.Errorf("invalid screen dimensions: %dx%d", w, h)
+		return nil, fmt.Errorf("invalid screen dimensions: %dx%d (no display attached?)", w, h)
 	}
 
-	// Get desktop DC
-	hDC, _, _ := procGetDC.Call(0)
-	if hDC == 0 {
-		return nil, fmt.Errorf("GetDC failed")
+	// Get desktop DC with fallback for RDP/headless sessions
+	hDC, releaseHDC, err := acquireDesktopDC()
+	if err != nil {
+		return nil, err
 	}
-	defer procReleaseDC.Call(0, hDC)
+	defer releaseHDC()
 
 	// Create memory DC
 	memDC, _, _ := procCreateCompatibleDC.Call(hDC)
@@ -66,7 +84,7 @@ func captureScreen() ([]byte, error) {
 	// Copy screen content
 	r, _, e := procBitBlt.Call(memDC, 0, 0, uintptr(w), uintptr(h), hDC, 0, 0, uintptr(srccopy))
 	if r == 0 {
-		return nil, fmt.Errorf("BitBlt: %v", e)
+		return nil, fmt.Errorf("BitBlt: %v (session may be headless or locked)", e)
 	}
 
 	// Prepare BITMAPINFO for DIB extraction (32-bit BGRA)

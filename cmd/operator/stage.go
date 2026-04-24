@@ -26,7 +26,7 @@ func stagePost(endpoint string, payload interface{}) (map[string]interface{}, er
 		if msg == "" {
 			msg = "unknown error"
 		}
-		return nil, fmt.Errorf(msg)
+		return nil, fmt.Errorf("%s", msg)
 	}
 	m, _ := resp.Data.(map[string]interface{})
 	return m, nil

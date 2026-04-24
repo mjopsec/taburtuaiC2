@@ -224,8 +224,8 @@ var opsecTimegateCmd = &cobra.Command{
 			printError(err.Error())
 			os.Exit(1)
 		}
-		start, _ := cmd.Flags().GetInt("start")
-		end, _ := cmd.Flags().GetInt("end")
+		start, _ := cmd.Flags().GetInt("work-start")
+		end, _ := cmd.Flags().GetInt("work-end")
 		kill, _ := cmd.Flags().GetString("kill-date")
 		wait, _ := cmd.Flags().GetBool("wait")
 		timeout, _ := cmd.Flags().GetInt("timeout")

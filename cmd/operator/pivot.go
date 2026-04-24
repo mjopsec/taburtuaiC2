@@ -336,7 +336,7 @@ func initPivotFlags() {
 		c.Flags().StringP("hive", "H", "", "Registry hive (HKLM, HKCU, HKCR, HKU, HKCC)")
 		c.Flags().StringP("key", "K", "", "Registry key path")
 		c.Flags().Bool("wait", false, "Wait for result")
-		c.Flags().Int("timeout", 30, "Wait timeout (seconds)")
+		c.Flags().Int("timeout", 60, "Wait timeout (seconds)")
 	}
 	regReadCmd.Flags().StringP("value", "V", "", "Value name to read")
 	regWriteCmd.Flags().StringP("value", "V", "", "Value name to write")
