@@ -397,6 +397,14 @@ var shellCmd = &cobra.Command{
 			if commandStr == "exit" || commandStr == "quit" {
 				break
 			}
+			if isC2Command(commandStr) {
+				first := strings.Fields(commandStr)[0]
+				fmt.Printf("  %s[!]%s '%s' adalah perintah operator C2, bukan perintah Windows shell.\n",
+					ColorYellow, ColorReset, first)
+				fmt.Printf("       ketik %sexit%s lalu jalankan dari prompt utama: %s%s%s\n\n",
+					ColorCyan, ColorReset, ColorCyan, commandStr, ColorReset)
+				continue
+			}
 			executeShellCommand(agentID, commandStr, shellTimeout)
 		}
 	},
@@ -1821,6 +1829,28 @@ func makeAPIRequestWithMethod(method, endpoint string, body io.Reader, contentTy
 	return respBody, nil
 }
 
+// c2TopLevel is the set of top-level operator commands that are NOT valid
+// Windows shell commands.  Used to warn users who accidentally type C2
+// commands inside a shell session.
+var c2TopLevel = map[string]bool{
+	"token": true, "inject": true, "hollow": true, "hijack": true,
+	"stomp": true, "mapinject": true, "bypass": true, "evasion": true,
+	"creds": true, "keylog": true, "screenshot": true, "bof": true,
+	"opsec": true, "netscan": true, "arpscan": true, "socks5": true,
+	"registry": true, "persist": true, "persistence": true, "staged": true,
+	"timestomp": true, "fetch": true, "ads": true, "process": true,
+	"agents": true, "history": true, "queue": true, "stats": true,
+	"logs": true, "team": true, "files": true,
+}
+
+func isC2Command(input string) bool {
+	fields := strings.Fields(input)
+	if len(fields) == 0 {
+		return false
+	}
+	return c2TopLevel[strings.ToLower(fields[0])]
+}
+
 func executeShellCommand(agentID, commandStr string, timeout int) {
 	printVerbose(fmt.Sprintf("Shell command for %s: %s", agentID, commandStr))
 	reqBody := map[string]interface{}{
@@ -2005,13 +2035,9 @@ func displayFinalCommandStatus(cmdData map[string]interface{}, commandID string)
 
 	if output != "" {
 		fmt.Println()
-		if len(output) > 4096 {
-			fmt.Printf("%s... (%d bytes, truncated)\n", output[:4000], len(output))
-		} else {
-			fmt.Print(output)
-			if !strings.HasSuffix(output, "\n") {
-				fmt.Println()
-			}
+		fmt.Print(output)
+		if !strings.HasSuffix(output, "\n") {
+			fmt.Println()
 		}
 	}
 	if errorMsg != "" {
