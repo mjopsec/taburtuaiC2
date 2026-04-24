@@ -23,6 +23,24 @@ type Config struct {
 	// Malleable HTTP profile — registers alias routes matching the agent's profile.
 	// Values: default | office365 | cdn | jquery | slack | ocsp
 	Profile string
+
+	// TLS / HTTPS
+	TLSEnabled  bool   // enable HTTPS listener
+	TLSCertFile string // path to PEM certificate (empty = auto-generate)
+	TLSKeyFile  string // path to PEM private key  (empty = auto-generate)
+	TLSPort     string // HTTPS listen port (default: 8443)
+
+	// WebSocket listener
+	WSEnabled bool   // enable WebSocket listener
+	WSPort    string // WebSocket listen port (default: 8081)
+
+	// RBAC — team server roles
+	AdminKey string // secret key to register as admin role (empty = no admin promotion)
+
+	// DNS authoritative listener
+	DNSEnabled bool   // enable DNS listener
+	DNSPort    string // UDP port (default: 5353)
+	DNSDomain  string // authoritative zone, e.g. "c2.example.com"
 }
 
 // Load loads configuration from environment
@@ -39,6 +57,16 @@ func Load() *Config {
 		APIKey:        getEnvOrDefault("API_KEY", "your-api-key-here"),
 		MaxAgents:     100,
 		AgentTimeout:  5 * time.Minute,
+		TLSEnabled:    getEnvOrDefault("TLS_ENABLED", "false") == "true",
+		TLSCertFile:   getEnvOrDefault("TLS_CERT", ""),
+		TLSKeyFile:    getEnvOrDefault("TLS_KEY", ""),
+		TLSPort:       getEnvOrDefault("TLS_PORT", "8443"),
+		WSEnabled:     getEnvOrDefault("WS_ENABLED", "false") == "true",
+		WSPort:        getEnvOrDefault("WS_PORT", "8081"),
+		AdminKey:      getEnvOrDefault("ADMIN_KEY", ""),
+		DNSEnabled:    getEnvOrDefault("DNS_ENABLED", "false") == "true",
+		DNSPort:       getEnvOrDefault("DNS_PORT", "5353"),
+		DNSDomain:     getEnvOrDefault("DNS_DOMAIN", ""),
 	}
 
 	// Parse log level from environment

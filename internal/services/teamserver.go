@@ -27,10 +27,34 @@ type TeamEvent struct {
 	Time    string `json:"time"`
 }
 
+// Role represents an operator's permission level.
+type Role string
+
+const (
+	RoleAdmin    Role = "admin"    // full access — manage operators, all agents
+	RoleOperator Role = "operator" // queue commands, claim agents
+	RoleViewer   Role = "viewer"   // read-only — list agents, view results, SSE
+)
+
+// RoleWeight returns a numeric weight for role comparison (higher = more access).
+func RoleWeight(r Role) int {
+	switch r {
+	case RoleAdmin:
+		return 3
+	case RoleOperator:
+		return 2
+	case RoleViewer:
+		return 1
+	default:
+		return 0
+	}
+}
+
 // OperatorSession represents a connected operator.
 type OperatorSession struct {
 	ID       string
 	Name     string
+	Role     Role
 	JoinedAt time.Time
 	// Events is the channel the SSE handler drains. Closed when the HTTP
 	// connection drops (detected by ctx.Done in the handler).
@@ -42,13 +66,17 @@ type TeamHub struct {
 	mu        sync.RWMutex
 	operators map[string]*OperatorSession // session ID → session
 	claims    map[string]string           // agent ID → operator session ID
+	adminKey  string                      // secret required to register as admin
 }
 
 // NewTeamHub creates an idle hub.  Call Start() to enable periodic pings.
-func NewTeamHub() *TeamHub {
+// adminKey is the secret operators must supply to register with role=admin.
+// An empty adminKey disables admin-role promotion (all register as operator).
+func NewTeamHub(adminKey string) *TeamHub {
 	return &TeamHub{
 		operators: make(map[string]*OperatorSession),
 		claims:    make(map[string]string),
+		adminKey:  adminKey,
 	}
 }
 
@@ -58,10 +86,26 @@ func (h *TeamHub) Start() {
 }
 
 // RegisterOperator adds a new operator session and returns its ID.
-func (h *TeamHub) RegisterOperator(name string) *OperatorSession {
+// role defaults to RoleOperator unless the supplied adminKey matches the hub's
+// configured admin key, in which case RoleAdmin is granted.
+// Pass role=RoleViewer explicitly to create a read-only session.
+func (h *TeamHub) RegisterOperator(name string, role Role, adminKey string) *OperatorSession {
+	// Validate requested role.
+	switch role {
+	case RoleAdmin:
+		if h.adminKey == "" || adminKey != h.adminKey {
+			role = RoleOperator // downgrade — key mismatch
+		}
+	case RoleViewer:
+		// Always allowed.
+	default:
+		role = RoleOperator // unknown role → default
+	}
+
 	sess := &OperatorSession{
 		ID:       uuid.New().String(),
 		Name:     name,
+		Role:     role,
 		JoinedAt: time.Now(),
 		Events:   make(chan TeamEvent, 64),
 	}
@@ -195,11 +239,50 @@ func (h *TeamHub) ListOperators() []OperatorInfo {
 		out = append(out, OperatorInfo{
 			ID:            sess.ID,
 			Name:          sess.Name,
+			Role:          sess.Role,
 			JoinedAt:      sess.JoinedAt,
 			ClaimedAgents: claimed,
 		})
 	}
 	return out
+}
+
+// GetRole returns the role of the operator identified by sessionID.
+// Returns RoleViewer and false if the session does not exist.
+func (h *TeamHub) GetRole(sessionID string) (Role, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	sess, ok := h.operators[sessionID]
+	if !ok {
+		return RoleViewer, false
+	}
+	return sess.Role, true
+}
+
+// HasRole returns true when the session's role is at least minRole.
+func (h *TeamHub) HasRole(sessionID string, minRole Role) bool {
+	role, ok := h.GetRole(sessionID)
+	if !ok {
+		return false
+	}
+	return RoleWeight(role) >= RoleWeight(minRole)
+}
+
+// PromoteOperator changes an operator's role.  Only admin sessions may call this.
+func (h *TeamHub) PromoteOperator(callerSessionID, targetSessionID string, newRole Role) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	caller, ok := h.operators[callerSessionID]
+	if !ok || caller.Role != RoleAdmin {
+		return fmt.Errorf("only admins may change operator roles")
+	}
+	target, ok := h.operators[targetSessionID]
+	if !ok {
+		return fmt.Errorf("target operator session not found")
+	}
+	target.Role = newRole
+	return nil
 }
 
 // AgentClaim returns who (if anyone) has claimed agentID.
@@ -221,6 +304,7 @@ func (h *TeamHub) AgentClaim(agentID string) (sessionID, opName string, claimed 
 type OperatorInfo struct {
 	ID            string    `json:"id"`
 	Name          string    `json:"name"`
+	Role          Role      `json:"role"`
 	JoinedAt      time.Time `json:"joined_at"`
 	ClaimedAgents []string  `json:"claimed_agents,omitempty"`
 }

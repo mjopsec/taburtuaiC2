@@ -164,6 +164,20 @@ func (r *Router) Setup() *gin.Engine {
 		v1.POST("/agent/:id/pivot/socks5/stop", r.handlers.SOCKS5Stop)
 		v1.POST("/agent/:id/pivot/socks5/status", r.handlers.SOCKS5Status)
 
+		// Lateral movement — agent executes command on a remote host
+		v1.POST("/agent/:id/lateral/wmi", r.handlers.LateralWMI)
+		v1.POST("/agent/:id/lateral/winrm", r.handlers.LateralWinRM)
+		v1.POST("/agent/:id/lateral/schtask", r.handlers.LateralSchtask)
+		v1.POST("/agent/:id/lateral/service", r.handlers.LateralService)
+
+		// Port forwarding — operator creates a tunnel, agent relays to internal target
+		v1.POST("/agent/:id/portfwd", r.handlers.PortFwdCreate)
+		v1.GET("/portfwd", r.handlers.PortFwdList)
+		v1.DELETE("/portfwd/:sess", r.handlers.PortFwdDelete)
+		// Relay endpoints — called by the agent, no auth (token guards access)
+		v1.GET("/portfwd/:sess/pull", r.handlers.PortFwdPull)
+		v1.POST("/portfwd/:sess/push", r.handlers.PortFwdPush)
+
 		// Stage management (list + delete are tiny)
 		v1.GET("/stages", r.handlers.ListStages)
 		v1.DELETE("/stage/:token", r.handlers.DeleteStage)
@@ -174,9 +188,10 @@ func (r *Router) Setup() *gin.Engine {
 		v1.GET("/logs", r.handlers.GetLogs)
 		v1.GET("/queue/stats", r.handlers.GetQueueStats)
 
-		// Phase 11.7 — Multi-operator team server
+		// Phase 11.7 — Multi-operator team server (RBAC)
 		v1.POST("/team/register", r.handlers.RegisterOperator)
 		v1.GET("/team/operators", r.handlers.ListOperators)
+		v1.POST("/team/operator/:sid/role", r.handlers.PromoteOperator)
 		v1.POST("/team/agent/:id/claim", r.handlers.ClaimAgent)
 		v1.POST("/team/agent/:id/release", r.handlers.ReleaseAgent)
 		v1.GET("/team/agent/:id/claim", r.handlers.AgentClaimStatus)

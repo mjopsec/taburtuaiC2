@@ -19,6 +19,7 @@ type Server struct {
 	Logger       *services.Logger
 	Store        *storage.Store
 	TeamHub      *services.TeamHub
+	PortFwd      *PortFwdManager
 }
 
 // NewServer creates a new server instance
@@ -46,7 +47,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	)
 
 	cmdQueue := NewCommandQueue(store)
-	teamHub := services.NewTeamHub()
+	teamHub := services.NewTeamHub(cfg.AdminKey)
 
 	return &Server{
 		Config:       cfg,
@@ -56,6 +57,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		Logger:       logger,
 		Store:        store,
 		TeamHub:      teamHub,
+		PortFwd:      NewPortFwdManager(),
 	}, nil
 }
 

@@ -243,7 +243,125 @@ sudo iptables-save > /etc/iptables/rules.v4
 
 ---
 
-## 5. HTTPS dengan Caddy (Rekomendasi Production)
+## 5. HTTPS / TLS
+
+Ada dua opsi untuk menjalankan C2 lewat HTTPS: **built-in TLS** (cert otomatis) atau **Caddy reverse proxy** (Let's Encrypt gratis).
+
+---
+
+### 5a. Built-in TLS (Self-signed, paling mudah)
+
+Server sudah punya TLS engine bawaan. Cukup tambahkan flag `--tls`:
+
+```bash
+# Self-signed cert di-generate otomatis di memori
+ENCRYPTION_KEY=K3yRah4sia ./bin/server --tls --port 8080 --tls-port 8443
+
+# Output startup:
+#   [✓]  ready  ·  HTTPS on 0.0.0.0:8443  (cert: auto-generated)
+#        HTTP  :8080 → redirect to HTTPS
+```
+
+**Output banner:**
+```
+  ▀█▀ ▄▀█ █▄▄ █ █ █▀█
+  ░█░ █▀█ █▄█ █▄█ █▀▄
+  ▀█▀ █ █ ▄▀█ █  █▀▀ ▀▀█
+  ░█░ █▄█ █▀█ █  █▄▄ ▄▄▀
+
+   bind       0.0.0.0:8080
+   auth       disabled
+   tls        enabled
+   profile    default
+   ...
+
+  [✓]  ready  ·  HTTPS on 0.0.0.0:8443  (cert: auto-generated)
+       HTTP  :8080 → redirect to HTTPS
+```
+
+Plain HTTP di port 8080 otomatis redirect ke HTTPS:8443.
+
+#### Dengan cert custom (untuk domain nyata)
+
+```bash
+# Siapkan cert dan key dalam format PEM
+./bin/server --tls \
+  --tls-cert /etc/ssl/c2.crt \
+  --tls-key  /etc/ssl/c2.key \
+  --tls-port 443
+```
+
+#### Via environment variables
+
+```bash
+TLS_ENABLED=true \
+TLS_CERT=/etc/ssl/c2.crt \
+TLS_KEY=/etc/ssl/c2.key \
+TLS_PORT=443 \
+ENCRYPTION_KEY=K3yRah4sia \
+./bin/server
+```
+
+#### Semua flag TLS
+
+| Flag | Env | Default | Fungsi |
+|------|-----|---------|--------|
+| `--tls` | `TLS_ENABLED=true` | false | Aktifkan HTTPS |
+| `--tls-port` | `TLS_PORT` | `8443` | Port HTTPS |
+| `--tls-cert` | `TLS_CERT` | auto-gen | Path file cert PEM |
+| `--tls-key` | `TLS_KEY` | auto-gen | Path file key PEM |
+
+> **Catatan:** Cert self-signed akan menyebabkan browser/curl warning.
+> Untuk production engagement, pakai cert valid (opsi 5b) atau generate
+> cert dengan SAN yang tepat.
+
+#### Generate cert sendiri dengan OpenSSL
+
+```bash
+# Self-signed dengan SAN untuk IP/domain tertentu
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+  -x509 -days 365 -nodes \
+  -subj "/O=taburtuaiC2" \
+  -addext "subjectAltName=IP:10.10.5.2,DNS:c2.corp.local" \
+  -out server.crt -keyout server.key
+
+./bin/server --tls --tls-cert server.crt --tls-key server.key
+```
+
+#### Systemd dengan TLS bawaan
+
+```bash
+cat > /etc/systemd/system/taburtuai-c2.service << 'EOF'
+[Unit]
+Description=Taburtuai C2 Server
+After=network.target
+
+[Service]
+Type=simple
+User=taburtuai
+WorkingDirectory=/opt/taburtuaiC2
+Environment=ENCRYPTION_KEY=K3yRah4siaP4nj4ng
+Environment=TLS_ENABLED=true
+Environment=TLS_CERT=/opt/taburtuaiC2/certs/server.crt
+Environment=TLS_KEY=/opt/taburtuaiC2/certs/server.key
+Environment=TLS_PORT=8443
+ExecStart=/opt/taburtuaiC2/bin/server --port 8080
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now taburtuai-c2
+```
+
+---
+
+### 5b. HTTPS dengan Caddy (Let's Encrypt, untuk domain publik)
+
+Caddy otomatis mengurus sertifikat Let's Encrypt — cocok untuk domain dengan DNS publik.
 
 ```bash
 # Install Caddy
@@ -256,14 +374,25 @@ sudo apt update && sudo apt install caddy
 # Konfigurasi reverse proxy dengan auto-TLS
 cat > /etc/caddy/Caddyfile << 'EOF'
 c2.yourdomain.com {
-    reverse_proxy localhost:8000
+    reverse_proxy localhost:8080
 }
 EOF
 
 sudo systemctl enable --now caddy
 ```
 
-**Setelah HTTPS aktif, build agent dengan URL HTTPS:**
+Caddy di depan: domain publik → Let's Encrypt cert → Caddy → server (localhost:8080 HTTP).
+
+**Kapan pakai opsi mana:**
+
+| Skenario | Opsi |
+|----------|------|
+| Internal lab / engagement tanpa domain publik | 5a built-in TLS |
+| Domain publik, cert valid Let's Encrypt | 5b Caddy |
+| Domain publik, cert custom (organisasi) | 5a dengan `--tls-cert` |
+| Port 443 langsung tanpa reverse proxy | 5a dengan `--tls-port 443` |
+
+**Build agent setelah HTTPS aktif:**
 ```bash
 make agent-win-stealth \
   C2_SERVER=https://c2.yourdomain.com \

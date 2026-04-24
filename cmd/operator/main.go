@@ -1841,6 +1841,7 @@ var c2TopLevel = map[string]bool{
 	"timestomp": true, "fetch": true, "ads": true, "process": true,
 	"agents": true, "history": true, "queue": true, "stats": true,
 	"logs": true, "team": true, "files": true,
+	"portfwd": true, "lateral": true,
 }
 
 func isC2Command(input string) bool {
@@ -2446,7 +2447,19 @@ func init() {
 	socks5Cmd.AddCommand(socks5StopCmd)
 	socks5Cmd.AddCommand(socks5StatusCmd)
 
+	rootCmd.AddCommand(portfwdCmd)
+	portfwdCmd.AddCommand(portfwdStartCmd)
+	portfwdCmd.AddCommand(portfwdListCmd)
+	portfwdCmd.AddCommand(portfwdStopCmd)
+
+	rootCmd.AddCommand(lateralCmd)
+	lateralCmd.AddCommand(lateralWMICmd)
+	lateralCmd.AddCommand(lateralWinRMCmd)
+	lateralCmd.AddCommand(lateralSchtaskCmd)
+	lateralCmd.AddCommand(lateralServiceCmd)
+
 	initPivotFlags()
+	initLateralFlags()
 
 	// Phase 11.7 — Multi-operator team server
 	rootCmd.AddCommand(teamCmd)

