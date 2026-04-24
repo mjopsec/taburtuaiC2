@@ -1,12 +1,14 @@
 package api
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"runtime"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mjopsec/taburtuaiC2/pkg/crypto"
 )
 
 // serverID returns a unique identifier for this server instance
@@ -119,6 +121,32 @@ func (h *Handlers) enforceAgentWrite(c *gin.Context, agentID string) bool {
 	h.APIResponse(c, false, "", nil,
 		fmt.Sprintf("agent %s is claimed by %s — release it first or use their session", agentID[:8], claimant))
 	return true
+}
+
+// agentSessionMgr returns a crypto.Manager initialised with the ECDH-derived
+// session key stored in the agent's metadata during checkin.
+// Returns nil when no session key exists (pre-ECDH agents or unknown agent).
+func (h *Handlers) agentSessionMgr(agentID string) *crypto.Manager {
+	if agentID == "" {
+		return nil
+	}
+	agent, exists := h.server.Monitor.GetAgent(agentID)
+	if !exists {
+		return nil
+	}
+	keyB64, ok := agent.Metadata["_session_key"].(string)
+	if !ok || keyB64 == "" {
+		return nil
+	}
+	keyBytes, err := base64.StdEncoding.DecodeString(keyB64)
+	if err != nil {
+		return nil
+	}
+	mgr, err := crypto.NewManagerFromRawKey(keyBytes)
+	if err != nil {
+		return nil
+	}
+	return mgr
 }
 
 // bToMb converts bytes to megabytes
