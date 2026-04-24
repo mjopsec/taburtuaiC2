@@ -15,10 +15,11 @@
         <div v-if="!collapsed" class="nav-label">Operations</div>
         <RouterLink v-for="item in navItems" :key="item.to"
           :to="item.to" custom v-slot="{ isActive, navigate }">
-          <div :class="['nav-item', isActive && 'active']" @click="navigate">
+          <div :class="['nav-item', isActive && 'active']" @click="navigate"
+               :title="collapsed ? item.label : ''">
             <svg class="nav-icon" viewBox="0 0 16 16" fill="currentColor" v-html="item.icon" />
             <span v-if="!collapsed">{{ item.label }}</span>
-            <span v-if="!collapsed && item.badge" class="nav-badge" :class="item.badgeClass">
+            <span v-if="!collapsed && item.badge != null" class="nav-badge" :class="item.badgeClass">
               {{ item.badge }}
             </span>
           </div>
@@ -69,6 +70,10 @@ const navItems = computed(() => [
   {
     to: '/stages', label: 'Stages',
     icon: '<path d="M10.5 2.5a2.5 2.5 0 113.164 2.389 1 1 0 01-.164.111v4.25a.75.75 0 01-.75.75H2.5v1.25a.75.75 0 01-1.5 0v-3.5a.75.75 0 011.5 0V9H12V4.911a1 1 0 01-.164-.111A2.5 2.5 0 0110.5 2.5zM3.25 12.5a.75.75 0 01.75.75v.25h7.5v-.25a.75.75 0 011.5 0v1a.75.75 0 01-.75.75H3.25a.75.75 0 01-.75-.75v-1a.75.75 0 01.75-.75z"/>',
+  },
+  {
+    to: '/team', label: 'Team',
+    icon: '<path d="M2 5.5a3.5 3.5 0 115.898 2.549 5.508 5.508 0 013.034 4.084.75.75 0 11-1.482.235 4.001 4.001 0 00-7.9 0 .75.75 0 01-1.482-.236A5.507 5.507 0 013.102 8.05 3.49 3.49 0 012 5.5zM11 4a3.001 3.001 0 012.22 5.018 5.01 5.01 0 012.56 3.012.749.749 0 01-.885.954.75.75 0 01-.549-.514 3.507 3.507 0 00-2.522-2.372.75.75 0 01-.574-.73v-.352a.75.75 0 01.416-.672A1.5 1.5 0 0011 5.5.75.75 0 0111 4zm-5.5-.5a2 2 0 100 4 2 2 0 000-4z"/>',
   },
 ])
 </script>

@@ -4,6 +4,7 @@
 :root {
   /* Backgrounds */
   --bg-base:     #0d1117;
+  --bg-deep:     #010409;
   --bg-surface:  #161b22;
   --bg-elevated: #1c2128;
   --bg-overlay:  #22272e;
@@ -45,6 +46,7 @@
 
   /* Radius */
   --r-sm: 4px; --r-md: 6px; --r-lg: 8px; --r-xl: 12px; --r-full: 9999px;
+  --radius: 6px;
 
   /* Shadows */
   --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
@@ -203,7 +205,7 @@ body {
   overflow-y: auto;
   background: var(--bg-base);
 }
-.page { padding: 28px 32px; max-width: 1400px; margin: 0 auto; animation: fadeIn .15s ease; }
+.page { padding: 24px 28px; width: 100%; animation: fadeIn .15s ease; }
 .page-header { margin-bottom: 24px; }
 .page-title { font-size: 20px; font-weight: 600; color: var(--text-primary); }
 .page-desc  { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
@@ -291,6 +293,21 @@ tbody tr { transition: background var(--t-fast); cursor: pointer; }
 tbody tr:hover { background: var(--bg-hover); }
 .td-mono { font-family: var(--font-mono); font-size: 12px; }
 .td-muted { color: var(--text-muted); }
+
+/* ─── Status Badges (inline pill with dot) ─────────────────────────────────── */
+.status-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 500;
+  padding: 2px 8px; border-radius: var(--r-full);
+  white-space: nowrap;
+}
+.status-badge.online   { background: var(--green-bg);  color: var(--green);  }
+.status-badge.offline  { background: var(--red-bg);    color: var(--red);    }
+.status-badge.dormant  { background: var(--orange-bg); color: var(--orange); }
+.status-badge.pending  { background: var(--orange-bg); color: var(--orange); }
+.status-badge.executing{ background: var(--cyan-bg);   color: var(--cyan);   }
+.status-badge.completed{ background: var(--green-bg);  color: var(--green);  }
+.status-badge.failed   { background: var(--red-bg);    color: var(--red);    }
 
 /* ─── Badges / Chips ───────────────────────────────────────────────────────── */
 .badge {
@@ -435,6 +452,35 @@ tbody tr:hover { background: var(--bg-hover); }
 }
 .tab:hover  { color: var(--text-primary); }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Tab bar variant (card-style) */
+.tab-bar {
+  display: flex; gap: 2px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--r-lg);
+  padding: 4px;
+}
+.tab-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: var(--r-md);
+  font-size: 12px; font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent; border: none;
+  cursor: pointer; transition: all var(--t-fast);
+  white-space: nowrap;
+}
+.tab-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+.tab-btn.active {
+  background: var(--bg-surface); color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+.tab-badge {
+  background: var(--red); color: #fff;
+  font-size: 10px; font-weight: 600;
+  padding: 1px 5px; border-radius: var(--r-full);
+  min-width: 16px; text-align: center;
+}
 
 /* ─── Modals ───────────────────────────────────────────────────────────────── */
 .modal-overlay {

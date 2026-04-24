@@ -84,6 +84,7 @@ const routeTitles: Record<string, string> = {
   commands:  'Command History',
   logs:      'Server Logs',
   stages:    'Payload Stages',
+  team:      'Team Server',
 }
 const routeTitle = computed(() => routeTitles[route.name as string] ?? 'Taburtuai C2')
 

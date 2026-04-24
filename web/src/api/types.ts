@@ -1,18 +1,19 @@
-export type AgentStatus  = 'online' | 'offline' | 'dormant'
+export type AgentStatus   = 'online' | 'offline' | 'dormant'
 export type CommandStatus = 'pending' | 'executing' | 'completed' | 'failed' | 'timeout' | 'cancelled'
 
 export interface Agent {
-  id:                 string
-  hostname:           string
-  username:           string
-  os:                 string
-  arch:               string
-  ip:                 string
-  pid:                number
-  status:             AgentStatus
-  last_seen:          string
-  first_seen:         string
-  check_in_interval:  number
+  id:                string
+  hostname:          string
+  username:          string
+  os:                string
+  arch:              string
+  ip:                string
+  pid:               number
+  privileges:        string   // "admin" | "user"
+  status:            AgentStatus
+  last_seen:         string
+  first_seen:        string
+  check_in_interval: number
 }
 
 export interface Command {
@@ -44,12 +45,17 @@ export interface Stats {
 }
 
 export interface Stage {
-  id:          string
-  name:        string
-  type:        string
+  token:       string
+  format:      string
+  arch:        string
+  os_target:   string
   description: string
-  downloads:   number
+  size?:       number
   created_at:  string
+  expires_at?: string
+  used:        boolean
+  used_at?:    string
+  used_by_ip?: string
 }
 
 export interface LogEntry {

@@ -9,6 +9,7 @@ export default createRouter({
     { path: '/commands',   name: 'commands',  component: () => import('@/views/CommandHistory.vue') },
     { path: '/logs',       name: 'logs',      component: () => import('@/views/Logs.vue') },
     { path: '/stages',     name: 'stages',    component: () => import('@/views/Stages.vue') },
+    { path: '/team',       name: 'team',      component: () => import('@/views/Team.vue') },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
