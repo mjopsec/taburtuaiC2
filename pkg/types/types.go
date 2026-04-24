@@ -124,12 +124,13 @@ type Command struct {
 	FwdSessID string `json:"fwd_sess_id,omitempty"` // session ID assigned by server
 	FwdTarget string `json:"fwd_target,omitempty"`  // rhost:rport agent should dial
 
-	// Lateral movement (operation_type: lateral_wmi | lateral_winrm | lateral_schtask | lateral_service)
-	LateralTarget  string `json:"lateral_target,omitempty"`  // remote hostname or IP
-	LateralUser    string `json:"lateral_user,omitempty"`    // username (empty = current token)
-	LateralDomain  string `json:"lateral_domain,omitempty"`  // domain (empty = local)
-	LateralPass    string `json:"lateral_pass,omitempty"`    // password
-	LateralCommand string `json:"lateral_command,omitempty"` // command to run on remote host
+	// Lateral movement (operation_type: lateral_wmi | lateral_winrm | lateral_schtask | lateral_service | lateral_dcom)
+	LateralTarget     string `json:"lateral_target,omitempty"`      // remote hostname or IP
+	LateralUser       string `json:"lateral_user,omitempty"`        // username (empty = current token)
+	LateralDomain     string `json:"lateral_domain,omitempty"`      // domain (empty = local)
+	LateralPass       string `json:"lateral_pass,omitempty"`        // password
+	LateralCommand    string `json:"lateral_command,omitempty"`     // command to run on remote host
+	LateralDCOMMethod string `json:"lateral_dcom_method,omitempty"` // mmc20 | shellwindows | shellbrowser
 }
 
 // CommandResult represents the result of a command execution

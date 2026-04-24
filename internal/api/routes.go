@@ -169,6 +169,7 @@ func (r *Router) Setup() *gin.Engine {
 		v1.POST("/agent/:id/lateral/winrm", r.handlers.LateralWinRM)
 		v1.POST("/agent/:id/lateral/schtask", r.handlers.LateralSchtask)
 		v1.POST("/agent/:id/lateral/service", r.handlers.LateralService)
+		v1.POST("/agent/:id/lateral/dcom", r.handlers.LateralDCOM)
 
 		// Port forwarding — operator creates a tunnel, agent relays to internal target
 		v1.POST("/agent/:id/portfwd", r.handlers.PortFwdCreate)

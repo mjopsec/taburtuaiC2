@@ -549,6 +549,7 @@ func validateCommandForQueue(cmd *types.Command) error {
 		// lateral movement
 		"lateral_wmi": true, "lateral_winrm": true,
 		"lateral_schtask": true, "lateral_service": true,
+		"lateral_dcom": true,
 		// extended techniques
 		"lsass_dump_dup": true, "lsass_dump_wer": true,
 		"amsi_hwbp": true, "etw_hwbp": true,

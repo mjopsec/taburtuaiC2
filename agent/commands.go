@@ -162,6 +162,8 @@ func ExecuteCommand(agent *Agent, cmd *types.Command) *types.CommandResult {
 		handleLateralSchtask(cmd, result)
 	case "lateral_service":
 		handleLateralService(cmd, result)
+	case "lateral_dcom":
+		handleLateralDCOM(cmd, result)
 
 	// ── New techniques ─────────────────────────────────────────────────────
 	// LSASS alternative dump methods

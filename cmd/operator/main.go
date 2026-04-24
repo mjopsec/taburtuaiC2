@@ -2457,6 +2457,7 @@ func init() {
 	lateralCmd.AddCommand(lateralWinRMCmd)
 	lateralCmd.AddCommand(lateralSchtaskCmd)
 	lateralCmd.AddCommand(lateralServiceCmd)
+	lateralCmd.AddCommand(lateralDCOMCmd)
 
 	initPivotFlags()
 	initLateralFlags()
