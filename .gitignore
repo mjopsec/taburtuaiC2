@@ -62,3 +62,9 @@ desktop.ini
 # ── Test artifacts ────────────────────────────────────────────
 coverage.out
 *.test
+
+# ── Web UI (Vue/Vite) ─────────────────────────────────────────
+web/node_modules/
+web/dist/
+web/.vite/
+web/*.local

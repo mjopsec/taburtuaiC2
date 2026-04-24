@@ -329,6 +329,39 @@ func (h *Handlers) GetAgentCommands(c *gin.Context) {
 	}, "")
 }
 
+// ListAllCommands returns recent commands across all agents
+func (h *Handlers) ListAllCommands(c *gin.Context) {
+	status := c.Query("status")
+	limit := 100
+	if l, err := strconv.Atoi(c.Query("limit")); err == nil && l > 0 {
+		if l > 1000 {
+			limit = 1000
+		} else {
+			limit = l
+		}
+	}
+
+	commands := h.server.CommandQueue.GetAllCommands(status, limit)
+
+	var clean []*types.Command
+	for _, cmd := range commands {
+		cp := *cmd
+		cp.FileContent = nil
+		if len(cp.Output) > 512 {
+			cp.Output = cp.Output[:509] + "..."
+		}
+		if len(cp.Error) > 256 {
+			cp.Error = cp.Error[:253] + "..."
+		}
+		clean = append(clean, &cp)
+	}
+
+	h.APIResponse(c, true, "", map[string]interface{}{
+		"commands": clean,
+		"count":    len(clean),
+	}, "")
+}
+
 // ClearAgentQueue removes all pending commands for an agent
 func (h *Handlers) ClearAgentQueue(c *gin.Context) {
 	agentID := c.Param("id")

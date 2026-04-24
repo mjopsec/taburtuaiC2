@@ -106,6 +106,14 @@ func (s *Store) GetAgentCommands(agentID, status string, limit int) ([]CommandRo
 	return s.queryCommands(cmdSelectSQL+` WHERE agent_id=? AND status=? ORDER BY created_at DESC LIMIT ?`, agentID, status, limit)
 }
 
+// GetAllCommands returns recent commands across all agents, optionally filtered by status
+func (s *Store) GetAllCommands(status string, limit int) ([]CommandRow, error) {
+	if status == "" {
+		return s.queryCommands(cmdSelectSQL+` ORDER BY created_at DESC LIMIT ?`, limit)
+	}
+	return s.queryCommands(cmdSelectSQL+` WHERE status=? ORDER BY created_at DESC LIMIT ?`, status, limit)
+}
+
 // GetAgentQueueSize returns the count of pending commands for an agent
 func (s *Store) GetAgentQueueSize(agentID string) (int, error) {
 	var count int

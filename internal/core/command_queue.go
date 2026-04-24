@@ -172,6 +172,22 @@ func (cq *CommandQueue) GetAgentCommands(agentID string, status string, limit in
 	return cmds
 }
 
+// GetAllCommands returns recent commands across all agents
+func (cq *CommandQueue) GetAllCommands(status string, limit int) []*types.Command {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	rows, err := cq.store.GetAllCommands(status, limit)
+	if err != nil {
+		return []*types.Command{}
+	}
+	cmds := make([]*types.Command, 0, len(rows))
+	for _, r := range rows {
+		cmds = append(cmds, rowToCmd(r))
+	}
+	return cmds
+}
+
 // ClearQueue cancels all pending commands for an agent and returns how many were cleared
 func (cq *CommandQueue) ClearQueue(agentID string) int {
 	if agentID == "" {

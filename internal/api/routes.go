@@ -2,6 +2,8 @@ package api
 
 import (
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mjopsec/taburtuaiC2/internal/core"
@@ -38,10 +40,21 @@ func (r *Router) Setup() *gin.Engine {
 	router.Use(r.middleware.RateLimit())
 	router.Use(r.middleware.Auth())
 
-	// Static files
-	router.Static("/static", "./web/static")
-	router.LoadHTMLGlob("web/templates/*")
-	router.GET("/", r.handlers.Dashboard)
+	// Vue SPA — serve dist/ if built, otherwise a minimal placeholder
+	spaRoot := "./web/dist"
+	if _, err := os.Stat(spaRoot); err == nil {
+		router.Static("/assets", spaRoot+"/assets")
+		router.StaticFile("/favicon.ico", spaRoot+"/favicon.ico")
+		// Catch-all: serve index.html for any non-API, non-stage path
+		router.NoRoute(func(c *gin.Context) {
+			p := c.Request.URL.Path
+			if strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/stage/") {
+				c.Status(http.StatusNotFound)
+				return
+			}
+			c.File(spaRoot + "/index.html")
+		})
+	}
 
 	// ── Routes with 10 MB body limit ─────────────────────────────────────────
 	// All standard API routes. The limit is applied at the group level so it
@@ -60,6 +73,9 @@ func (r *Router) Setup() *gin.Engine {
 		v1.GET("/command/:id/next", r.handlers.GetNextCommand)
 		v1.POST("/command/result", r.handlers.SubmitCommandResult)
 		v1.GET("/command/:id/status", r.handlers.GetCommandStatus)
+
+		// Command listing
+		v1.GET("/commands", r.handlers.ListAllCommands)
 
 		// Agent commands
 		v1.GET("/agent/:id/commands", r.handlers.GetAgentCommands)
