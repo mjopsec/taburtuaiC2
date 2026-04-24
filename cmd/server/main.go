@@ -4,11 +4,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/mjopsec/taburtuaiC2/internal/api"
 	"github.com/mjopsec/taburtuaiC2/internal/config"
 	"github.com/mjopsec/taburtuaiC2/internal/core"
@@ -16,7 +18,22 @@ import (
 
 const version = "2.0.0"
 
+// ANSI helpers
+const (
+	ansiReset  = "\033[0m"
+	ansiBold   = "\033[1m"
+	ansiDim    = "\033[2m"
+	ansiCyan   = "\033[36m"
+	ansiRed    = "\033[31m"
+	ansiYellow = "\033[33m"
+	ansiWhite  = "\033[97m"
+	ansiGreen  = "\033[32m"
+)
+
 func main() {
+	// Suppress all Gin debug output — must be set before any gin code runs.
+	gin.SetMode(gin.ReleaseMode)
+
 	// ── CLI flags (override env vars) ────────────────────────────────────────
 	port     := flag.String("port",      "", "listening port (default: 8080 / $PORT)")
 	host     := flag.String("host",      "", "bind address (default: 0.0.0.0 / $HOST)")
@@ -42,22 +59,17 @@ func main() {
 	if *profile  != "" { cfg.Profile  = *profile  }
 
 	// ── Banner ────────────────────────────────────────────────────────────────
-	c   := "\033[36m"  // cyan
-	r   := "\033[31m"  // red
-	y   := "\033[33m"  // yellow
-	w   := "\033[97m"  // white
-	d   := "\033[2m"   // dim
-	b   := "\033[1m"   // bold
-	rst := "\033[0m"
-
 	fmt.Println()
-	fmt.Println(b + c + "  ▀█▀ ▄▀█ █▄▄ █ █ █▀█" + rst)
-	fmt.Println(b + c + "  ░█░ █▀█ █▄█ █▄█ █▀▄" + rst)
-	fmt.Println(b + r + "  ▀█▀ █ █ ▄▀█ █  █▀▀ ▀▀█" + rst)
-	fmt.Println(b + r + "  ░█░ █▄█ █▀█ █  █▄▄ ▄▄▀" + rst)
+	fmt.Println(ansiBold + ansiCyan  + "  ▀█▀ ▄▀█ █▄▄ █ █ █▀█" + ansiReset)
+	fmt.Println(ansiBold + ansiCyan  + "  ░█░ █▀█ █▄█ █▄█ █▀▄" + ansiReset)
+	fmt.Println(ansiBold + ansiRed   + "  ▀█▀ █ █ ▄▀█ █  █▀▀ ▀▀█" + ansiReset)
+	fmt.Println(ansiBold + ansiRed   + "  ░█░ █▄█ █▀█ █  █▄▄ ▄▄▀" + ansiReset)
 	fmt.Println()
-	fmt.Println("  " + d + "author" + rst + "  " + w + b + "mjopsec" + rst +
-		"   " + d + "version" + rst + "  " + y + b + version + rst)
+	fmt.Printf("  %sauthor%s  %s%smjopsec%s   %sversion%s  %s%s%s\n",
+		ansiDim, ansiReset,
+		ansiWhite, ansiBold, ansiReset,
+		ansiDim, ansiReset,
+		ansiYellow, ansiBold+version, ansiReset)
 	fmt.Println()
 
 	// ── Create & start server ─────────────────────────────────────────────────
@@ -85,28 +97,51 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		fmt.Println("\nShutting down...")
+		fmt.Println()
+		fmt.Println("  " + ansiDim + "shutting down …" + ansiReset)
 		server.Stop()
 		os.Exit(0)
 	}()
 
-	// ── Print config summary ──────────────────────────────────────────────────
+	// ── Config summary box ────────────────────────────────────────────────────
 	bind := cfg.Host
 	if bind == "" { bind = "0.0.0.0" }
 	profileName := cfg.Profile
 	if profileName == "" { profileName = "default" }
-	fmt.Printf("  %saddr%s    %s%s:%s%s\n",  d, rst, w+b, bind, cfg.Port, rst)
-	fmt.Printf("  %sauth%s    %v\n",          d, rst, cfg.AuthEnabled)
-	fmt.Printf("  %sprofile%s  %s\n",         d, rst, profileName)
-	fmt.Printf("  %slogs%s    %s\n",          d, rst, cfg.LogDir)
-	fmt.Printf("  %sdb%s      %s\n",          d, rst, cfg.DBPath)
+	authStatus := ansiDim + "disabled" + ansiReset
+	if cfg.AuthEnabled {
+		authStatus = ansiGreen + ansiBold + "enabled" + ansiReset
+	}
+
+	sep := "  " + ansiDim + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" + ansiReset
+	row := func(label, value string) {
+		fmt.Printf("   %s%-10s%s %s\n", ansiDim, label, ansiReset, value)
+	}
+
+	fmt.Println(sep)
+	row("bind",    ansiWhite+ansiBold+bind+":"+cfg.Port+ansiReset)
+	row("auth",    authStatus)
+	row("profile", profileName)
+	row("logs",    cfg.LogDir)
+	row("db",      cfg.DBPath)
+	fmt.Println(sep)
 	fmt.Println()
 
 	addr := ":" + cfg.Port
 	if cfg.Host != "" {
 		addr = cfg.Host + ":" + cfg.Port
 	}
-	if err := ginRouter.Run(addr); err != nil {
-		log.Fatalf("Server failed to start: %v", err)
+
+	fmt.Printf("  %s%s[✓]%s  ready  ·  listening on %s%s%s:%s%s\n\n",
+		ansiGreen, ansiBold, ansiReset,
+		ansiWhite, ansiBold, bind, cfg.Port, ansiReset)
+
+	// Use http.ListenAndServe directly so Gin doesn't print its own listen line.
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: ginRouter,
+	}
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("server error: %v", err)
 	}
 }
