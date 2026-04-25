@@ -48,3 +48,7 @@
 
 /* Debug mode — "1" emits debug output and skips pre-beacon delay */
 #define CFG_DEBUG            @@DEBUG@@
+
+/* TLS certificate pin — lowercase SHA-256 hex of DER-encoded server cert.
+ * Empty string disables pinning (default for lab use). */
+#define CFG_CERT_PIN         "@@CERT_PIN@@"

