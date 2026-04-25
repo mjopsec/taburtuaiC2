@@ -119,6 +119,25 @@ func (h *Handlers) AgentBeacon(c *gin.Context) {
 		if resultBytes, err := json.Marshal(rawResult); err == nil {
 			var result types.CommandResult
 			if err := json.Unmarshal(resultBytes, &result); err == nil && isValidUUID(result.CommandID) {
+				if result.Encrypted {
+					decMgr := h.agentSessionMgr(agentID)
+					if decMgr == nil {
+						decMgr = h.server.CryptoMgr
+					}
+					if decMgr != nil {
+						if result.Output != "" {
+							if dec, decErr := decMgr.DecryptData(result.Output); decErr == nil {
+								result.Output = string(dec)
+							}
+						}
+						if result.Error != "" {
+							if dec, decErr := decMgr.DecryptData(result.Error); decErr == nil {
+								result.Error = string(dec)
+							}
+						}
+						result.Encrypted = false
+					}
+				}
 				h.server.CommandQueue.CompleteCommand(result.CommandID, &result) //nolint:errcheck
 			}
 		}
