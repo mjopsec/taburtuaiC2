@@ -221,8 +221,8 @@ func (r *Router) Setup() *gin.Engine {
 		})
 	}
 
-	// Public stage delivery endpoint — no auth, token is the credential
-	router.GET("/stage/:token", r.handlers.ServeStage)
+	// Public stage delivery endpoint — no auth, token is in X-Stage-Token header
+	router.GET("/stage/payload", r.handlers.ServeStage)
 
 	return router
 }

@@ -167,9 +167,7 @@ func (em *EvasionManager) checkSuspiciousProcesses(processes []string) []string 
 }
 
 func (em *EvasionManager) checkWindowsProcesses(processes []string) []string {
-	// Implementation for Windows process checking
-	// This would use Windows APIs or command execution
-	return []string{}
+	return nativeCheckProcesses(processes)
 }
 
 func (em *EvasionManager) checkUnixProcesses(processes []string) []string {
@@ -196,8 +194,8 @@ func (em *EvasionManager) performTimingAttacks() bool {
 
 	elapsed := time.Since(start)
 
-	// If operation takes too long, might be in a sandbox
-	return elapsed > 100*time.Millisecond
+	// Too fast = time acceleration (common sandbox trick); too slow = full emulation.
+	return elapsed < 2*time.Millisecond || elapsed > 2000*time.Millisecond
 }
 
 func (em *EvasionManager) checkMouseMovement() bool {
@@ -257,9 +255,7 @@ func (em *EvasionManager) detectVirtualMachine() bool {
 }
 
 func (em *EvasionManager) detectVMWindows() bool {
-	// Check for VM-specific hardware/drivers
-	// This would use Windows APIs like GetSystemInfo, etc.
-	return false
+	return nativeDetectVM()
 }
 
 func (em *EvasionManager) detectVMLinux() bool {
@@ -300,9 +296,7 @@ func (em *EvasionManager) detectDebugger() bool {
 }
 
 func (em *EvasionManager) detectDebuggerWindows() bool {
-	// Check for debugger using various Windows APIs
-	// For cross-platform compatibility, we'll skip Windows-specific syscalls here
-	return false
+	return nativeDetectDebugger()
 }
 
 func (em *EvasionManager) detectDebuggerUnix() bool {
@@ -324,12 +318,18 @@ func (em *EvasionManager) detectDebuggerUnix() bool {
 // Network evasion techniques
 func (em *EvasionManager) GetRandomUserAgent() string {
 	userAgents := []string{
-		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-		"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-		"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
-		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/121.0",
-		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/121.0.0.0",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:137.0) Gecko/20100101 Firefox/137.0",
+		"Mozilla/5.0 (X11; Linux x86_64; rv:137.0) Gecko/20100101 Firefox/137.0",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36 Edg/136.0.0.0",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 Edg/135.0.0.0",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15",
 	}
 
 	n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(userAgents))))

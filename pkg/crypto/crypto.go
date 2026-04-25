@@ -133,6 +133,12 @@ func (m *Manager) compressData(data []byte) ([]byte, error) {
 }
 
 func (m *Manager) decompressData(data []byte) ([]byte, error) {
+	// C implant sends uncompressed plaintext — detect by absence of gzip magic.
+	if len(data) < 2 || data[0] != 0x1F || data[1] != 0x8B {
+		out := make([]byte, len(data))
+		copy(out, data)
+		return out, nil
+	}
 	reader, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, err

