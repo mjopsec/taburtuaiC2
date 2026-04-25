@@ -11,12 +11,30 @@
 
 /* ── Memory helpers ──────────────────────────────────────────────────────── */
 
+HeapTrackEntry g_heap_track[HEAP_TRACK_MAX];
+int            g_heap_track_n = 0;
+
 void *ImplantAlloc(SIZE_T n) {
-    return HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, n);
+    void *p = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, n);
+    if (p && g_heap_track_n < HEAP_TRACK_MAX) {
+        g_heap_track[g_heap_track_n].ptr  = p;
+        g_heap_track[g_heap_track_n].size = n;
+        g_heap_track_n++;
+    }
+    return p;
 }
 
 void ImplantFree(void *p) {
-    if (p) HeapFree(GetProcessHeap(), 0, p);
+    if (!p) return;
+    for (int i = 0; i < g_heap_track_n; i++) {
+        if (g_heap_track[i].ptr == p) {
+            g_heap_track[i] = g_heap_track[--g_heap_track_n];
+            g_heap_track[g_heap_track_n].ptr  = NULL;
+            g_heap_track[g_heap_track_n].size = 0;
+            break;
+        }
+    }
+    HeapFree(GetProcessHeap(), 0, p);
 }
 
 char *ImplantStrDup(const char *s) {

