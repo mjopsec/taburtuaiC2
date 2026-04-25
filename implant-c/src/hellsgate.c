@@ -308,6 +308,9 @@ BOOL HellsGateInit(void) {
             return FALSE;
     }
 
+    /* Pre-resolve NtProtectVirtualMemory SSN for SlpNtProtect (.slpmsk stub) */
+    g_protect_ssn = HellsGateSSN("NtProtectVirtualMemory");
+
     return TRUE;
 }
 

