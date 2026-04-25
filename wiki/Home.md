@@ -13,6 +13,7 @@
 
 ### Payload Generation
 - [Building Payloads](04-building-payloads.md) — formats, OPSEC profiles, masquerading
+- [Stager & Staged Delivery](21-stager.md) — staged workflow, delivery formats, ClickFix, one-shot tokens
 
 ### Operator Console
 - [Operator Console](05-operator-console.md) — interactive console and full command reference

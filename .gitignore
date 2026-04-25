@@ -8,9 +8,16 @@ bin/
 
 # ── Built agents / payloads ───────────────────────────────────
 builder/output/
+output/
+builds/
+loot/
+backups/
 *.bin
 *.shellcode
 *.payload
+*.hta
+*.vba
+*.lnk
 
 # ── Tools output ──────────────────────────────────────────────
 tools/*.docx
@@ -36,6 +43,7 @@ security.log
 *.p12
 *.pfx
 taburtuai.json
+certs/
 
 # ── Config overrides (keep template, ignore local overrides) ──
 config/local*.yaml
@@ -43,6 +51,11 @@ config/*.local.yaml
 
 # ── Go toolchain ──────────────────────────────────────────────
 vendor/
+
+# ── Python artifacts ──────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
 
 # ── OS junk ───────────────────────────────────────────────────
 .DS_Store
@@ -55,6 +68,10 @@ desktop.ini
 *.swp
 *.swo
 *~
+
+# ── Temp / runtime artifacts ──────────────────────────────────
+*.tmp
+modules/
 
 # ── Test artifacts ────────────────────────────────────────────
 coverage.out

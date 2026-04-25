@@ -4,15 +4,15 @@
 
 A modular, OPSEC-minded Command & Control framework written in Go, built exclusively for authorized red team engagements and penetration testing exercises.
 
----
+
 
 ## What It Is
 
-Taburtuai C2 is a full-stack command and control framework — server, operator CLI, implant builder, and agent — designed around realistic adversary tradecraft. It prioritizes operational security at every layer: encrypted traffic that blends into normal web activity, agents that hide during sleep, and techniques that evade modern endpoint detection.
+Taburtuai C2 is a full-stack command and control framework server, operator CLI, implant builder, and agent designed around realistic adversary tradecraft. It prioritizes operational security at every layer: encrypted traffic that blends into normal web activity, agents that hide during sleep, and techniques that evade modern endpoint detection.
 
 The framework supports the full lifecycle of a red team engagement: initial access delivery, persistence, lateral movement, credential access, and exfiltration — all coordinated from a single team server with multi-operator support.
 
----
+
 
 ## Core Capabilities
 
@@ -53,7 +53,7 @@ The framework supports the full lifecycle of a red team engagement: initial acce
 - Optional Garble-based code obfuscation and binary compression
 - Alternative transports: DNS-over-HTTPS, ICMP echo, SMB named pipe
 
----
+
 
 ## Architecture Overview
 
@@ -75,16 +75,16 @@ Web Dashboard ──────────────────┐         
                               (AES-256-GCM)
                                          │
                          ┌───────────────▼─────────────────────┐
-                         │               Agent                  │
-                         │  ┌──────────────────────────────┐    │
-                         │  │  Beacon Loop (configurable)  │    │
-                         │  │  Sleep Mask  │  Evasion      │    │
-                         │  │  60+ commands dispatched     │    │
-                         │  └──────────────────────────────┘    │
+                         │               Agent                 │
+                         │  ┌──────────────────────────────┐   │
+                         │  │  Beacon Loop (configurable)  │   │
+                         │  │  Sleep Mask  │  Evasion      │   │
+                         │  │  60+ commands dispatched     │   │
+                         │  └──────────────────────────────┘   │
                          └─────────────────────────────────────┘
 ```
 
----
+
 
 ## Documentation
 
@@ -113,7 +113,7 @@ Full operator documentation is available in the [wiki](wiki/Home.md):
 | [OPSEC Guide](wiki/19-opsec-guide.md) | Operational security practices for engagements |
 | [Engagement Scenarios](wiki/20-engagement-scenarios.md) | Full attack chain examples end to end |
 
----
+
 
 ## Legal
 
