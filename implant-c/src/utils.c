@@ -39,9 +39,9 @@ void RandBytes(BYTE *buf, DWORD len) {
     typedef NTSTATUS (WINAPI *pfnBCryptGenRandom)(BCRYPT_ALG_HANDLE, PUCHAR, ULONG, ULONG);
     static pfnBCryptGenRandom pFn = NULL;
     if (!pFn) {
-        HMODULE h = GetModuleHandleA(OBFSTR("bcrypt.dll"));
-        if (!h) h = LoadLibraryA(OBFSTR("bcrypt.dll"));
-        if (h) pFn = (pfnBCryptGenRandom)(FARPROC)GetProcAddress(h, OBFSTR("BCryptGenRandom"));
+        HMODULE h = g_GetModuleHandleA(OBFSTR("bcrypt.dll"));
+        if (!h) h = g_LoadLibraryA(OBFSTR("bcrypt.dll"));
+        if (h) pFn = (pfnBCryptGenRandom)(FARPROC)g_GetProcAddress(h, OBFSTR("BCryptGenRandom"));
     }
     if (pFn && pFn(NULL, buf, len, 2 /* BCRYPT_USE_SYSTEM_PREFERRED_RNG */) == 0)
         return;

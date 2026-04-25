@@ -163,11 +163,11 @@ int Base64Decode(const char *in, int inLen, BYTE *out, int outCap) {
 
 /* ── BCrypt init ──────────────────────────────────────────────────────────── */
 BOOL CryptoInit(void) {
-    HMODULE hB = LoadLibraryA(OBFSTR("bcrypt.dll"));
+    HMODULE hB = g_LoadLibraryA(OBFSTR("bcrypt.dll"));
     if (!hB) return FALSE;
 
 #define RESOLVE(var, name) \
-    var = (pfn##name)GetProcAddress(hB, #name); \
+    var = (pfn##name)g_GetProcAddress(hB, #name); \
     if (!var) return FALSE
 
     RESOLVE(pBCryptOpenAlgorithmProvider,  BCryptOpenAlgorithmProvider);

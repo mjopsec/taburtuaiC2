@@ -23,7 +23,8 @@
 #define PEB_OFFSET_LDR             0x18
 #define LDR_OFFSET_INLOAD_LIST     0x10
 #define LDR_ENTRY_OFFSET_DLLBASE   0x30
-#define LDR_ENTRY_OFFSET_BASENAME  0x58   /* UNICODE_STRING: Length(2)+MaxLen(2)+pad(4)+Buffer(8) */
+#define LDR_ENTRY_OFFSET_FULLNAME  0x48   /* UNICODE_STRING FullDllName  (full path) */
+#define LDR_ENTRY_OFFSET_BASENAME  0x58   /* UNICODE_STRING BaseDllName  (filename only) */
 #define USTR_OFFSET_LENGTH         0x00
 #define USTR_OFFSET_BUFFER         0x08
 

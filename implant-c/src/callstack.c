@@ -108,7 +108,7 @@ void InitCallstackGadgets(PVOID ntdllBase) {
     }
 
     /* BaseThreadInitThunk — kernel32, find first-call return site */
-    HMODULE k32 = GetModuleHandleA(OBFSTR("kernel32.dll"));
+    HMODULE k32 = g_GetModuleHandleA(OBFSTR("kernel32.dll"));
     if (k32) {
         PVOID btt = FindExportInDll((PVOID)k32, OBFSTR("BaseThreadInitThunk"));
         if (btt) {

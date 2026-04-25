@@ -43,7 +43,7 @@ OBJS := $(patsubst $(SRCDIR)/%.c, $(OUTDIR)/%.o, $(SRCS)) $(ASM_OBJ) $(RC_OBJ)
 # Generate a random key unless OBF_KEY is set by the caller (generator_c.go
 # passes --obf-key=XX when invoking make).
 ifndef OBF_KEY
-OBF_KEY := $(shell python3 -c "import random; print('%02x' % random.randint(1,254))")
+OBF_KEY := $(shell python3 -c "import random; print(''.join('%02x' % random.randint(0,255) for _ in range(16)))")
 endif
 
 # ── Flags ──────────────────────────────────────────────────────────────────

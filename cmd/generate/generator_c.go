@@ -226,13 +226,10 @@ func BuildC(cfg *CConfig) (*Result, error) {
 		return nil, fmt.Errorf("create build dir: %w", err)
 	}
 
-	// Generate per-build string obfuscation XOR key
-	obfKeyByte := make([]byte, 1)
-	rand.Read(obfKeyByte) //nolint:errcheck
-	if obfKeyByte[0] == 0 {
-		obfKeyByte[0] = 0x5A // never use 0 as key
-	}
-	obfKey := fmt.Sprintf("%02x", obfKeyByte[0])
+	// Generate per-build string obfuscation XOR key (16 bytes → 32-char hex)
+	obfKeyBytes := make([]byte, 16)
+	rand.Read(obfKeyBytes) //nolint:errcheck
+	obfKey := hex.EncodeToString(obfKeyBytes)
 
 	// Run make
 	makeArgs := []string{fmt.Sprintf("OBF_KEY=%s", obfKey)}
@@ -241,7 +238,7 @@ func BuildC(cfg *CConfig) (*Result, error) {
 	}
 
 	makeCmd := exec.Command("make", makeArgs...)
-	fmt.Printf("[*] String obfuscation key: 0x%s\n", obfKey)
+	fmt.Printf("[*] String obfuscation key: %s\n", obfKey)
 	makeCmd.Dir = tmpDir
 
 	var makeBuf bytes.Buffer
