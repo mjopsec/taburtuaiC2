@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -47,6 +48,7 @@ type CLIConfig struct {
 	ServerURL string
 	APIKey    string
 	Timeout   int
+	Insecure  bool
 }
 
 // APIResponse represents standard API response
@@ -99,6 +101,11 @@ This CLI provides full control over the Taburtuai C2 server, allowing you to:
 		}
 		// Perbarui timeout http client dari config.Timeout yang mungkin diubah oleh flag
 		httpClient.Timeout = time.Duration(config.Timeout) * time.Second
+		if config.Insecure {
+			httpClient.Transport = &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			}
+		}
 	},
 }
 
@@ -2130,6 +2137,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&config.APIKey, "api-key", "k", os.Getenv("TABURTUAI_API_KEY"), "API key for authentication")
 	rootCmd.PersistentFlags().IntVarP(&config.Timeout, "timeout", "t", 30, "Request timeout in seconds")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
+	rootCmd.PersistentFlags().BoolVar(&config.Insecure, "insecure", false, "Skip TLS certificate verification (for self-signed certs)")
 
 	// Add commands to root
 	rootCmd.AddCommand(agentsCmd)
