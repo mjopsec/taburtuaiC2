@@ -88,7 +88,7 @@ Web Dashboard ──────────────────┐         
 
 ## Documentation
 
-Full operator documentation is available in the [wiki](wiki/Home.md):
+Full operator documentation is available in the [wiki](wiki/README.md):
 
 | Page | Description |
 |------|-------------|

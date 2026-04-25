@@ -2,8 +2,6 @@
 
 > Full documentation for operators running authorized red team engagements with Taburtuai C2 v2.0.0.
 
----
-
 ## Contents
 
 ### Getting Started
