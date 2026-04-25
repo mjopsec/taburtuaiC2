@@ -34,7 +34,7 @@ func runConsole() {
 
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt: fmt.Sprintf(
-			"\033[36mtaburtuai\033[0m(\033[33m%s\033[0m) \033[2m›\033[0m ", display),
+			"\033[2m[\033[0m%s\033[2m]\033[0m ❯ ", display),
 		HistoryFile:            "/tmp/.taburtuai_history",
 		HistoryLimit:           500,
 		DisableAutoSaveHistory: false,
@@ -47,9 +47,9 @@ func runConsole() {
 	}
 	defer rl.Close()
 
-	fmt.Printf("  %s[*]%s Connected to %s%s%s\n", ColorBlue, ColorReset, ColorGreen, config.ServerURL, ColorReset)
+	fmt.Printf("  %s[*]%s Connected to %s%s%s\n", ColorDim, ColorReset, ColorGreen, config.ServerURL, ColorReset)
 	fmt.Printf("  %s[*]%s Type %shelp%s for commands, %sexit%s to quit.\n\n",
-		ColorBlue, ColorReset, ColorCyan, ColorReset, ColorCyan, ColorReset)
+		ColorDim, ColorReset, ColorBold, ColorReset, ColorBold, ColorReset)
 
 	// Silence cobra's own error output — we handle it ourselves
 	rootCmd.SilenceErrors = true
@@ -237,7 +237,7 @@ func printConsoleHelp() {
 		fmt.Printf("  \033[2m%s\033[0m\n", strings.ToUpper(g.title))
 		for _, e := range g.entries {
 			fmt.Printf("    %s%-48s%s %s%s%s\n",
-				ColorCyan, e.cmd, ColorReset,
+				ColorBold, e.cmd, ColorReset,
 				"\033[2m", e.desc, "\033[0m")
 		}
 		fmt.Println()
@@ -269,7 +269,7 @@ func consoleError(errMsg string, tokens []string) {
 			cmd = tokens[0]
 		}
 		fmt.Printf("%s[!]%s unknown command %s'%s'%s  —  type %shelp%s to list commands\n",
-			ColorYellow, ColorReset, ColorRed, cmd, ColorReset, ColorCyan, ColorReset)
+			ColorYellow, ColorReset, ColorRed, cmd, ColorReset, ColorBold, ColorReset)
 
 	case strings.Contains(errMsg, "unknown flag") || strings.Contains(errMsg, "unknown shorthand"):
 		fmt.Printf("%s[!]%s %s", ColorYellow, ColorReset, errMsg)

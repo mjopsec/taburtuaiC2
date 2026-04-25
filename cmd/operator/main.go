@@ -22,10 +22,13 @@ const (
 	ColorRed    = "\033[31m"
 	ColorGreen  = "\033[32m"
 	ColorYellow = "\033[33m"
-	ColorBlue   = "\033[34m"
-	ColorPurple = "\033[35m"
-	ColorCyan   = "\033[36m"
-	ColorWhite  = "\033[37m"
+	ColorBold   = "\033[1m"
+	ColorDim    = "\033[2m"
+
+	// retained for banner.go / team.go — not used in operator output
+	ColorBlue  = "\033[34m"
+	ColorCyan  = "\033[36m"
+	ColorWhite = "\033[37m"
 )
 
 // Global variables
@@ -56,7 +59,7 @@ type APIResponse struct {
 
 // Root command
 var rootCmd = &cobra.Command{
-	Use:   "taburtuai-cli",
+	Use:   "taburtuai",
 	Short: "Taburtuai C2 Command Line Interface",
 	Long: `Taburtuai C2 CLI - Enhanced Command & Control Interface
 	
@@ -173,7 +176,7 @@ var agentsListCmd = &cobra.Command{
 		fmt.Println()
 
 		fmt.Printf("%s%-36s %-20s %-15s %-10s %-20s%s\n",
-			ColorBlue, "AGENT ID", "HOSTNAME", "USERNAME", "STATUS", "LAST SEEN", ColorReset)
+			ColorBold, "AGENT ID", "HOSTNAME", "USERNAME", "STATUS", "LAST SEEN", ColorReset)
 		fmt.Println(strings.Repeat("-", 100))
 
 		for _, agent := range agentsInterface {
@@ -200,7 +203,7 @@ var agentsListCmd = &cobra.Command{
 			case "dormant":
 				statusColor = ColorYellow
 			default:
-				statusColor = ColorWhite
+				statusColor = ColorReset
 			}
 
 			lastSeen := "Unknown"
@@ -256,26 +259,25 @@ var agentsInfoCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		fmt.Printf("\n%sAgent Information:%s\n", ColorBlue, ColorReset)
-		fmt.Println(strings.Repeat("=", 50))
+		fmt.Printf("\n%sAgent Information%s\n", ColorBold, ColorReset)
+		fmt.Println(strings.Repeat("-", 50))
 
-		fmt.Printf("%sID:%s %s\n", ColorCyan, ColorReset, getStringFromMap(agent, "id"))
-		fmt.Printf("%sHostname:%s %s\n", ColorCyan, ColorReset, getStringFromMap(agent, "hostname"))
-		fmt.Printf("%sUsername:%s %s\n", ColorCyan, ColorReset, getStringFromMap(agent, "username"))
-		fmt.Printf("%sOS:%s %s\n", ColorCyan, ColorReset, getStringFromMap(agent, "os"))
-		fmt.Printf("%sArchitecture:%s %s\n", ColorCyan, ColorReset, getStringFromMap(agent, "architecture"))
-		fmt.Printf("%sStatus:%s %s\n", ColorCyan, ColorReset, getStringFromMap(agent, "status"))
+		fmt.Printf("%s%-18s%s %s\n", ColorDim, "ID", ColorReset, getStringFromMap(agent, "id"))
+		fmt.Printf("%s%-18s%s %s\n", ColorDim, "Hostname", ColorReset, getStringFromMap(agent, "hostname"))
+		fmt.Printf("%s%-18s%s %s\n", ColorDim, "Username", ColorReset, getStringFromMap(agent, "username"))
+		fmt.Printf("%s%-18s%s %s\n", ColorDim, "OS", ColorReset, getStringFromMap(agent, "os"))
+		fmt.Printf("%s%-18s%s %s\n", ColorDim, "Architecture", ColorReset, getStringFromMap(agent, "architecture"))
+		fmt.Printf("%s%-18s%s %s\n", ColorDim, "Status", ColorReset, getStringFromMap(agent, "status"))
 		if lastSeenStr := getStringFromMap(agent, "last_seen"); lastSeenStr != "" {
 			t, _ := time.Parse(time.RFC3339, lastSeenStr)
-			fmt.Printf("%sLast Seen:%s %s\n", ColorCyan, ColorReset, t.Format("2006-01-02 15:04:05"))
+			fmt.Printf("%s%-18s%s %s\n", ColorDim, "Last Seen", ColorReset, t.Format("2006-01-02 15:04:05"))
 		}
 		if firstContactStr := getStringFromMap(agent, "first_contact"); firstContactStr != "" {
 			t, _ := time.Parse(time.RFC3339, firstContactStr)
-			fmt.Printf("%sFirst Contact:%s %s\n", ColorCyan, ColorReset, t.Format("2006-01-02 15:04:05"))
+			fmt.Printf("%s%-18s%s %s\n", ColorDim, "First Contact", ColorReset, t.Format("2006-01-02 15:04:05"))
 		}
-		fmt.Printf("%sCommands Executed:%s %.0f\n", ColorCyan, ColorReset, getFloatFromMap(agent, "commands_executed"))
-		// Tambahkan field lain jika ada dari AgentHealth
-		fmt.Println(strings.Repeat("=", 50))
+		fmt.Printf("%s%-18s%s %.0f\n", ColorDim, "Commands Executed", ColorReset, getFloatFromMap(agent, "commands_executed"))
+		fmt.Println(strings.Repeat("-", 50))
 	},
 }
 
@@ -380,7 +382,7 @@ var shellCmd = &cobra.Command{
 		if err != nil { printError(err.Error()); os.Exit(1) }
 		shellTimeout, _ := cmd.Flags().GetInt("timeout")
 		fmt.Printf("  %sshell%s  %s%s%s  · exit to quit\n\n",
-			ColorCyan, ColorReset, ColorGreen, agentID[:8], ColorReset)
+			ColorBold, ColorReset, ColorGreen, agentID[:8], ColorReset)
 		reader := bufio.NewReader(os.Stdin)
 
 		for {
@@ -402,7 +404,7 @@ var shellCmd = &cobra.Command{
 				fmt.Printf("  %s[!]%s '%s' adalah perintah operator C2, bukan perintah Windows shell.\n",
 					ColorYellow, ColorReset, first)
 				fmt.Printf("       ketik %sexit%s lalu jalankan dari prompt utama: %s%s%s\n\n",
-					ColorCyan, ColorReset, ColorCyan, commandStr, ColorReset)
+					ColorBold, ColorReset, ColorBold, commandStr, ColorReset)
 				continue
 			}
 			executeShellCommand(agentID, commandStr, shellTimeout)
@@ -541,7 +543,7 @@ var historyCmd = &cobra.Command{
 		printSuccess(fmt.Sprintf("Found %d command(s) in history.", len(commandsInterface)))
 		fmt.Println()
 		fmt.Printf("%s%-36s %-20s %-10s %-6s %-30s%s\n",
-			ColorBlue, "CMD ID", "TIMESTAMP", "STATUS", "EXIT", "COMMAND", ColorReset)
+			ColorBold, "CMD ID", "TIMESTAMP", "STATUS", "EXIT", "COMMAND", ColorReset)
 		fmt.Println(strings.Repeat("-", 110))
 
 		for _, item := range commandsInterface {
@@ -569,11 +571,11 @@ var historyCmd = &cobra.Command{
 			case "failed", "timeout":
 				statusColor = ColorRed
 			case "executing":
-				statusColor = ColorBlue
+				statusColor = ColorBold
 			case "pending":
 				statusColor = ColorYellow
 			default:
-				statusColor = ColorWhite
+				statusColor = ColorReset
 			}
 
 			exitCode := "-"
@@ -590,7 +592,7 @@ var historyCmd = &cobra.Command{
 				cmdID, timestamp, statusColor, status, ColorReset, exitCode, commandStr)
 		}
 		fmt.Println()
-		printInfo("Use 'taburtuai-cli status <command-id>' for detailed information.")
+		printInfo("Use 'taburtuai status <command-id>' for detailed information.")
 	},
 }
 
@@ -626,14 +628,14 @@ var queueStatsCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		fmt.Printf("\n%sQueue Statistics:%s\n", ColorBlue, ColorReset)
-		fmt.Println(strings.Repeat("=", 50))
-		fmt.Printf("%sTotal Queued:%s %.0f\n", ColorCyan, ColorReset, getFloatFromMap(stats, "total_queued"))
-		fmt.Printf("%sTotal Active:%s %.0f\n", ColorCyan, ColorReset, getFloatFromMap(stats, "total_active"))
-		fmt.Printf("%sTotal Completed (in memory):%s %.0f\n", ColorCyan, ColorReset, getFloatFromMap(stats, "total_completed"))
+		fmt.Printf("\n%sQueue Statistics%s\n", ColorBold, ColorReset)
+		fmt.Println(strings.Repeat("-", 50))
+		fmt.Printf("%s%-28s%s %.0f\n", ColorDim, "Total Queued", ColorReset, getFloatFromMap(stats, "total_queued"))
+		fmt.Printf("%s%-28s%s %.0f\n", ColorDim, "Total Active", ColorReset, getFloatFromMap(stats, "total_active"))
+		fmt.Printf("%s%-28s%s %.0f\n", ColorDim, "Total Completed (in memory)", ColorReset, getFloatFromMap(stats, "total_completed"))
 
 		if byAgent, ok := stats["by_agent"].(map[string]interface{}); ok && len(byAgent) > 0 {
-			fmt.Printf("\n%sBy Agent:%s\n", ColorBlue, ColorReset)
+			fmt.Printf("\n%sBy Agent%s\n", ColorBold, ColorReset)
 			fmt.Println(strings.Repeat("-", 50))
 			for agentID, agentStatsIf := range byAgent {
 				as, ok := agentStatsIf.(map[string]interface{})
@@ -649,7 +651,7 @@ var queueStatsCmd = &cobra.Command{
 					getFloatFromMap(as, "queued"),
 					getFloatFromMap(as, "active"))
 			}
-			fmt.Printf("\n%s[*] Use 'history <agent-id>' for per-agent completed count.%s\n", ColorCyan, ColorReset)
+			fmt.Printf("\n%s[*] Use 'history <agent-id>' for per-agent completed count.%s\n", ColorDim, ColorReset)
 		}
 		fmt.Println()
 	},
@@ -797,7 +799,7 @@ The file is first sent to the C2 server, which then tasks the agent to store it.
 				}
 			}
 		} else {
-			printInfo(fmt.Sprintf("Check status with: taburtuai-cli status %s", commandID))
+			printInfo(fmt.Sprintf("Check status with: taburtuai status %s", commandID))
 		}
 	},
 }
@@ -888,7 +890,7 @@ To get the file to your CLI machine, further steps might be needed if CLI and Se
 				}
 			}
 		} else {
-			printInfo(fmt.Sprintf("Check status with: taburtuai-cli status %s", commandID))
+			printInfo(fmt.Sprintf("Check status with: taburtuai status %s", commandID))
 		}
 	},
 }
@@ -999,15 +1001,15 @@ var logsCmd = &cobra.Command{
 			var levelColor string
 			switch level {
 			case "INFO":
-				levelColor = ColorBlue
+				levelColor = ColorDim
 			case "WARN":
 				levelColor = ColorYellow
 			case "ERROR", "CRITICAL":
 				levelColor = ColorRed
 			case "DEBUG":
-				levelColor = ColorPurple
+				levelColor = ColorDim
 			default:
-				levelColor = ColorWhite
+				levelColor = ColorReset
 			}
 
 			logLine := fmt.Sprintf("%s[%s]%s [%s] [%s] %s",
@@ -1054,23 +1056,23 @@ var statsCmd = &cobra.Command{
 			printError("Invalid stats data format.")
 			os.Exit(1)
 		}
-		fmt.Printf("\n%sServer Statistics:%s\n", ColorBlue, ColorReset)
-		fmt.Println(strings.Repeat("=", 50))
+		fmt.Printf("\n%sServer Statistics%s\n", ColorBold, ColorReset)
+		fmt.Println(strings.Repeat("-", 50))
 		if agentStats, ok := stats["agents"].(map[string]interface{}); ok {
-			fmt.Printf("%sAgent Statistics:%s\n", ColorCyan, ColorReset)
-			fmt.Printf("  Total Agents: %.0f\n", getFloatFromMap(agentStats, "total_agents"))
-			fmt.Printf("  Online: %s%.0f%s\n", ColorGreen, getFloatFromMap(agentStats, "online_agents"), ColorReset)
-			fmt.Printf("  Offline: %s%.0f%s\n", ColorRed, getFloatFromMap(agentStats, "offline_agents"), ColorReset)
-			fmt.Printf("  Total Commands Executed (by agents): %.0f\n", getFloatFromMap(agentStats, "total_commands"))
+			fmt.Printf("%sAgents%s\n", ColorBold, ColorReset)
+			fmt.Printf("  Total:    %.0f\n", getFloatFromMap(agentStats, "total_agents"))
+			fmt.Printf("  Online:   %s%.0f%s\n", ColorGreen, getFloatFromMap(agentStats, "online_agents"), ColorReset)
+			fmt.Printf("  Offline:  %s%.0f%s\n", ColorRed, getFloatFromMap(agentStats, "offline_agents"), ColorReset)
+			fmt.Printf("  Commands: %.0f\n", getFloatFromMap(agentStats, "total_commands"))
 		}
 		if serverInfo, ok := stats["server"].(map[string]interface{}); ok {
-			fmt.Printf("\n%sServer Information:%s\n", ColorCyan, ColorReset)
+			fmt.Printf("\n%sServer%s\n", ColorBold, ColorReset)
 			fmt.Printf("  Version: %s\n", getStringFromMap(serverInfo, "version"))
-			fmt.Printf("  Uptime: %s\n", getStringFromMap(serverInfo, "uptime"))
+			fmt.Printf("  Uptime:  %s\n", getStringFromMap(serverInfo, "uptime"))
 		}
 		if logStats, ok := stats["logs"].(map[string]interface{}); ok {
-			fmt.Printf("\n%sLogging Statistics:%s\n", ColorCyan, ColorReset)
-			fmt.Printf("  Total Log Entries (in memory): %.0f\n", getFloatFromMap(logStats, "total_entries"))
+			fmt.Printf("\n%sLogs%s\n", ColorBold, ColorReset)
+			fmt.Printf("  Entries (in memory): %.0f\n", getFloatFromMap(logStats, "total_entries"))
 		}
 		fmt.Println()
 	},
@@ -1151,7 +1153,7 @@ var processListCmd = &cobra.Command{
 						if errJson := json.Unmarshal([]byte(output), &processesInfo); errJson == nil {
 							// Tampilkan dalam format tabel yang lebih bagus jika berhasil diparse
 							fmt.Printf("%s%-8s %-25s %-40s %-30s%s\n",
-								ColorBlue, "PID", "NAME", "PATH", "DESCRIPTION", ColorReset)
+								ColorBold, "PID", "NAME", "PATH", "DESCRIPTION", ColorReset)
 							fmt.Println(strings.Repeat("-", 110))
 							for _, p := range processesInfo {
 								id := getFloatFromMap(p, "Id")
@@ -1180,7 +1182,7 @@ var processListCmd = &cobra.Command{
 				}
 			}
 		} else {
-			printInfo(fmt.Sprintf("Use 'taburtuai-cli status %s' to check.", commandID))
+			printInfo(fmt.Sprintf("Use 'taburtuai status %s' to check.", commandID))
 		}
 	},
 }
@@ -1266,7 +1268,7 @@ var processKillCmd = &cobra.Command{
 				}
 			}
 		} else {
-			printInfo(fmt.Sprintf("Use 'taburtuai-cli status %s' to check.", commandID))
+			printInfo(fmt.Sprintf("Use 'taburtuai status %s' to check.", commandID))
 		}
 	},
 }
@@ -1341,7 +1343,7 @@ var processStartCmd = &cobra.Command{
 				}
 			}
 		} else {
-			printInfo(fmt.Sprintf("Use 'taburtuai-cli status %s' to check.", commandID))
+			printInfo(fmt.Sprintf("Use 'taburtuai status %s' to check.", commandID))
 		}
 	},
 }
@@ -1507,7 +1509,7 @@ Available methods:
 				}
 			}
 		} else {
-			printInfo(fmt.Sprintf("Check status with: taburtuai-cli status %s", commandID))
+			printInfo(fmt.Sprintf("Check status with: taburtuai status %s", commandID))
 			printInfo("Test persistence by rebooting the target machine and checking if agent reconnects.")
 		}
 	},
@@ -1606,7 +1608,7 @@ var persistenceRemoveCmd = &cobra.Command{
 				}
 			}
 		} else {
-			printInfo(fmt.Sprintf("Check status with: taburtuai-cli status %s", commandID))
+			printInfo(fmt.Sprintf("Check status with: taburtuai status %s", commandID))
 		}
 	},
 }
@@ -1908,7 +1910,7 @@ func executeShellCommand(agentID, commandStr string, timeout int) {
 }
 
 func waitForCommand(commandID string, timeoutSeconds int) interface{} {
-	spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	spinner := []string{"◐", "◓", "◑", "◒"}
 	spinIdx := 0
 	startTime := time.Now()
 	if timeoutSeconds == 0 {
@@ -1994,7 +1996,7 @@ func waitForCommand(commandID string, timeoutSeconds int) interface{} {
 		}
 
 		status, _ := cmdData["status"].(string)
-		fmt.Printf("\r  %s%s%s %s", ColorCyan, spinner[spinIdx], ColorReset, status)
+		fmt.Printf("\r  %s%s%s %s", ColorDim, spinner[spinIdx], ColorReset, status)
 		spinIdx = (spinIdx + 1) % len(spinner)
 
 		switch status {
@@ -2046,13 +2048,13 @@ func displayFinalCommandStatus(cmdData map[string]interface{}, commandID string)
 	}
 }
 
-func printInfo(msg string)    { fmt.Printf("%s[*]%s %s\n", ColorBlue, ColorReset, msg) }
+func printInfo(msg string)    { fmt.Printf("%s[*]%s %s\n", ColorDim, ColorReset, msg) }
 func printSuccess(msg string) { fmt.Printf("%s[+]%s %s\n", ColorGreen, ColorReset, msg) }
 func printWarning(msg string) { fmt.Printf("%s[!]%s %s\n", ColorYellow, ColorReset, msg) }
 func printError(msg string)   { fmt.Printf("%s[-]%s %s\n", ColorRed, ColorReset, msg) }
 func printVerbose(msg string) {
 	if verbose {
-		fmt.Printf("%s[~]%s %s\n", ColorPurple, ColorReset, msg)
+		fmt.Printf("%s[~]%s %s\n", ColorDim, ColorReset, msg)
 	}
 }
 
