@@ -182,6 +182,7 @@ stagelessCmd.Flags().Int("interval", 30, "Beacon interval (seconds)")
 	stagelessCmd.Flags().String("masq-orig", "", "PE version-resource OriginalFilename (e.g. RuntimeBroker.exe)")
 	stagelessCmd.Flags().String("masq-internal", "", "PE version-resource InternalName (default: masq-orig minus .exe)")
 	stagelessCmd.Flags().String("masq-ver", "", "PE version string, e.g. 10.0.19041.1")
+	stagelessCmd.Flags().Bool("insecure-tls", false, "Skip TLS cert verification in agent (for self-signed C2 certs)")
 	_ = stagelessCmd.MarkFlagRequired("c2")
 	_ = stagelessCmd.MarkFlagRequired("key")
 }
@@ -214,6 +215,7 @@ func runStageless(cmd *cobra.Command, _ []string) error {
 	masqOrig, _ := cmd.Flags().GetString("masq-orig")
 	masqInternal, _ := cmd.Flags().GetString("masq-internal")
 	masqVer, _ := cmd.Flags().GetString("masq-ver")
+	insecureTLS, _ := cmd.Flags().GetBool("insecure-tls")
 
 	var profile *OpsecProfile
 	if profilePath != "" {
@@ -369,6 +371,7 @@ func runStageless(cmd *cobra.Command, _ []string) error {
 		NoGUI:        noGUI,
 		Compress:     compress,
 		Profile:      profile,
+		InsecureTLS:  insecureTLS,
 	})
 	if err != nil {
 		return err

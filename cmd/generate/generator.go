@@ -75,7 +75,8 @@ type Config struct {
 	Compress   bool
 	NoGUI      bool
 
-	Profile *OpsecProfile
+	Profile     *OpsecProfile
+	InsecureTLS bool // bake InsecureSkipVerify=true into agent (for self-signed C2 certs)
 }
 
 // Result holds the outcome of a build.
@@ -147,6 +148,10 @@ func (g *Generator) Build(cfg *Config) (*Result, error) {
 			}
 			defer cleanup()
 		}
+	}
+
+	if cfg.InsecureTLS {
+		ldflags += " -X main.defaultInsecureTLS=true"
 	}
 
 	if cfg.StripSyms {

@@ -58,6 +58,10 @@ type AgentConfig struct {
 	// certificate.  Empty = no pinning.  Format: "aabbcc…" or "aa:bb:cc:…".
 	CertPin string
 
+	// InsecureTLS skips OS certificate chain verification.  Use for self-signed
+	// certs in lab/internal environments.  Can be combined with CertPin.
+	InsecureTLS bool
+
 	// Alternative transport.  "http" (default) uses standard HTTP beaconing.
 	// "ws"   — WebSocket persistent connection — server pushes commands, no polling.
 	// "doh"  — DNS-over-HTTPS via DoH resolver (pkg/transport/doh.go)
@@ -111,7 +115,7 @@ func NewAgent(cfg *AgentConfig) (*Agent, error) {
 		}
 	}
 
-	httpClient, err := newPinnedClient(cfg.CertPin)
+	httpClient, err := newPinnedClient(cfg.CertPin, cfg.InsecureTLS)
 	if err != nil {
 		return nil, fmt.Errorf("cert pin: %w", err)
 	}

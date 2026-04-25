@@ -11,41 +11,45 @@ import (
 	"time"
 )
 
-// newPinnedClient returns an *http.Client whose TLS stack verifies the server's
-// leaf certificate against the expected SHA-256 fingerprint.
+// newPinnedClient returns an *http.Client configured for the given TLS policy.
 //
-// fingerprint may be colon-separated ("aa:bb:cc:…") or plain hex ("aabbcc…").
-// An empty fingerprint means no pinning — returns the default client.
-func newPinnedClient(fingerprint string) (*http.Client, error) {
-	if fingerprint == "" {
+// fingerprint: SHA-256 hex of the expected leaf cert ("aa:bb:cc:…" or "aabbcc…").
+//   Empty = no pinning.
+// insecure: skip OS certificate chain verification (required for self-signed certs).
+//   When combined with a fingerprint, the pin is still enforced even though the
+//   chain check is skipped — this is the correct way to pin a self-signed cert.
+func newPinnedClient(fingerprint string, insecure bool) (*http.Client, error) {
+	if fingerprint == "" && !insecure {
 		return &http.Client{Timeout: 60 * time.Second}, nil
 	}
 
-	pin, err := parsePin(fingerprint)
-	if err != nil {
-		return nil, err
+	tlsCfg := &tls.Config{} //nolint:gosec
+	if insecure {
+		tlsCfg.InsecureSkipVerify = true //nolint:gosec
 	}
 
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			// VerifyPeerCertificate is called after normal TLS handshake
-			// (chain verification).  We add our own leaf-cert check on top.
-			VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-				if len(rawCerts) == 0 {
-					return fmt.Errorf("cert pin: server sent no certificate")
-				}
-				got := sha256.Sum256(rawCerts[0]) // leaf cert (index 0)
-				if got != pin {
-					return fmt.Errorf("cert pin: fingerprint mismatch — server cert not trusted")
-				}
-				return nil
-			},
-		},
+	if fingerprint != "" {
+		pin, err := parsePin(fingerprint)
+		if err != nil {
+			return nil, err
+		}
+		// VerifyPeerCertificate runs after the TLS handshake regardless of
+		// InsecureSkipVerify, so the pin is always checked.
+		tlsCfg.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 {
+				return fmt.Errorf("cert pin: server sent no certificate")
+			}
+			got := sha256.Sum256(rawCerts[0])
+			if got != pin {
+				return fmt.Errorf("cert pin: fingerprint mismatch — server cert not trusted")
+			}
+			return nil
+		}
 	}
 
 	return &http.Client{
 		Timeout:   60 * time.Second,
-		Transport: transport,
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}, nil
 }
 

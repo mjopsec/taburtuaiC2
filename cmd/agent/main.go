@@ -60,6 +60,9 @@ var (
 	// Certificate pinning — SHA-256 hex fingerprint of server TLS leaf cert.
 	defaultCertPin = ""
 
+	// InsecureTLS — skip OS cert chain check (for self-signed certs).
+	defaultInsecureTLS = "false"
+
 	// Fallback C2 URLs — comma-separated list tried in order when the primary
 	// serverURL is unreachable.  Empty = no failover.
 	defaultFallbackURLs = "" // -X main.defaultFallbackURLs=https://backup1.example.com,https://backup2.example.com
@@ -144,6 +147,7 @@ func main() {
 		Profile:           profiles.Get(defaultProfile),
 		FrontDomain:       defaultFrontDomain,
 		CertPin:           defaultCertPin,
+		InsecureTLS:       defaultInsecureTLS == "true",
 		Transport:         defaultTransport,
 		WSServerURL:       defaultWSServerURL,
 		DNSDomain:         defaultDNSDomain,
