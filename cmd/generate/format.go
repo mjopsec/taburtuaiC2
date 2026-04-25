@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -285,7 +286,7 @@ function copyCmd(el){
 
 // ── upload helper ─────────────────────────────────────────────────────────────
 
-func uploadStage(server, apiKey string, data []byte, format, arch string, ttl int, desc string) (token, stageURL string, err error) {
+func uploadStage(server, apiKey string, data []byte, format, arch string, ttl int, desc string, insecure bool) (token, stageURL string, err error) {
 	body := map[string]interface{}{
 		"payload_b64": base64.StdEncoding.EncodeToString(data),
 		"format":      format,
@@ -305,7 +306,11 @@ func uploadStage(server, apiKey string, data []byte, format, arch string, ttl in
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	transport := http.DefaultTransport
+	if insecure {
+		transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	}
+	client := &http.Client{Timeout: 60 * time.Second, Transport: transport}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", err

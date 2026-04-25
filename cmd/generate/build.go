@@ -401,6 +401,7 @@ func init() {
 	uploadCmd.Flags().String("arch", "amd64", "Payload arch")
 	uploadCmd.Flags().Int("ttl", 24, "TTL hours (0=no expiry)")
 	uploadCmd.Flags().String("desc", "", "Description")
+	uploadCmd.Flags().Bool("insecure", false, "Skip TLS certificate verification (for self-signed certs)")
 }
 
 func runUpload(cmd *cobra.Command, args []string) error {
@@ -411,13 +412,14 @@ func runUpload(cmd *cobra.Command, args []string) error {
 	arch, _ := cmd.Flags().GetString("arch")
 	ttl, _ := cmd.Flags().GetInt("ttl")
 	desc, _ := cmd.Flags().GetString("desc")
+	insecure, _ := cmd.Flags().GetBool("insecure")
 
 	data, err := os.ReadFile(payloadFile)
 	if err != nil {
 		return fmt.Errorf("read payload: %w", err)
 	}
 
-	token, stageURL, err := uploadStage(server, apiKey, data, format, arch, ttl, desc)
+	token, stageURL, err := uploadStage(server, apiKey, data, format, arch, ttl, desc, insecure)
 	if err != nil {
 		return fmt.Errorf("upload: %w", err)
 	}

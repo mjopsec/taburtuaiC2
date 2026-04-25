@@ -37,7 +37,6 @@ Configuration is read from environment variables first, then overridden by CLI f
 | `AUTH_ENABLED` | `--auth` | `false` | Require API key on all operator requests |
 | `API_KEY` | `--api-key` | *(required if auth on)* | Bearer token for operators |
 | `ADMIN_KEY` | `--admin-key` | *(optional)* | Secret for team server admin registration |
-| `SECONDARY_KEY` | — | *(optional)* | Secondary AES-256 key (reserved) |
 
 ### Storage & Logging
 
@@ -112,6 +111,126 @@ Profiles are YAML files in `cmd/generate/profiles/` loaded at generate time.
 | `paranoid` | 600s | 50% | 09:00–17:00 | on | on | SOC-monitored, EDR-heavy targets |
 
 **Important:** `stealth` and `paranoid` profiles use `working_hours_only: true`. The agent **will not beacon outside business hours** on the target system's local clock. Do not use these for testing unless you account for the timezone.
+
+---
+
+## Common Build Errors
+
+### `exec: "garble": executable file not found in $PATH`
+
+The `--garble` flag requires the [garble](https://github.com/burrowers/garble) obfuscator to be installed separately. It is **not** included in the project.
+
+```bash
+go install mvdan.cc/garble@latest
+```
+
+After install, verify it is in your PATH:
+
+```bash
+garble version
+```
+
+If you don't need obfuscation, simply omit `--garble` from your build command. The binary will compile normally without it.
+
+---
+
+### `load profile: read profile "X": open X: no such file or directory`
+
+The `--profile` flag accepts either a built-in profile name or a file path.
+
+Built-in names (no path needed):
+```
+default  aggressive  opsec  stealth  paranoid
+```
+
+Correct usage:
+```bash
+# Built-in name — works out of the box
+--profile stealth
+
+# Custom YAML file — must exist on disk
+--profile /path/to/custom.yaml
+```
+
+Do **not** pass a bare name that isn't one of the five built-ins — it will be treated as a file path.
+
+---
+
+### `Configuration error: ENCRYPTION_KEY env var is required but not set`
+
+The server requires `ENCRYPTION_KEY` to be set before starting. There is no default.
+
+```bash
+export ENCRYPTION_KEY=$(openssl rand -hex 32)
+go run ./cmd/server
+```
+
+---
+
+### `unknown flag: --file` (generate upload)
+
+The `upload` subcommand takes the payload file as a **positional argument**, not a flag. `--file` and `--name` do not exist.
+
+```bash
+# Wrong
+./bin/generate upload --server http://SERVER:8080 --file ./builds/agent.exe --name "label"
+
+# Correct — file path comes first, label uses --desc
+./bin/generate upload ./builds/agent.exe \
+  --server http://SERVER:8080 \
+  --desc "label" \
+  --format exe \
+  --ttl 24
+```
+
+Full flag reference:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--server <url>` | `http://127.0.0.1:8080` | C2 server URL |
+| `--api-key <key>` | *(none)* | API key (if auth enabled on server) |
+| `--format <type>` | `exe` | Payload type: `exe` / `shellcode` / `dll` |
+| `--arch <arch>` | `amd64` | Target architecture |
+| `--ttl <hours>` | `24` | Hours until the stage token expires (`0` = no expiry) |
+| `--desc <text>` | *(none)* | Free-text label shown in `stages list` |
+
+---
+
+### `x509: certificate is valid for 127.0.0.1, not <your-ip>`
+
+Terjadi ketika server auto-generate self-signed cert tapi kamu connect dari IP lain.
+
+**Solusi A — rebuild server (permanen):** Server sekarang otomatis include semua local IP di cert SANs saat bind ke `0.0.0.0`. Cukup hapus cert lama dan restart:
+
+```bash
+rm -f /etc/ssl/c2/cert.pem /etc/ssl/c2/key.pem
+# atau jika pakai auto-generate (tanpa TLS_CERT/TLS_KEY), tidak perlu hapus apa-apa
+# restart server saja — cert baru akan di-generate dengan semua IP
+```
+
+**Solusi B — `--insecure` flag (langsung jalan):** Untuk skip verifikasi cert di upload:
+
+```bash
+./bin/generate upload ./builds/agent.exe \
+  --server https://172.23.0.118:8443 \
+  --insecure \
+  --desc "RT Staged"
+```
+
+> `--insecure` hanya untuk operator CLI ke server sendiri (self-signed). Jangan dipakai ke server production dengan cert valid.
+
+---
+
+### Build succeeds but agent never checks in
+
+Most common causes:
+
+| Symptom | Likely cause |
+|---------|-------------|
+| No beacon after deploy | `--c2` URL unreachable from target (firewall, wrong IP) |
+| Agent exits immediately | `--kill-date` already passed, or sandbox/VM check triggered |
+| Beacon only during business hours | `stealth` or `paranoid` profile active — check target timezone |
+| Agent built but `--key` mismatch | Server and agent must share the same `ENCRYPTION_KEY` value |
 
 ---
 
