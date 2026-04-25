@@ -366,8 +366,8 @@ func uploadStage(server, apiKey string, data []byte, format, arch string, ttl in
 	var result struct {
 		Success bool `json:"success"`
 		Data    struct {
-			Token     string `json:"token"`
-			StageURL  string `json:"stage_url"`
+			Token    string `json:"token"`
+			StageURL string `json:"stage_endpoint"`
 		} `json:"data"`
 		Error string `json:"error"`
 	}
