@@ -16,7 +16,6 @@ type Config struct {
 	LogDir        string
 	DBPath        string
 	EncryptionKey string
-	SecondaryKey  string
 	AuthEnabled   bool
 	APIKey        string
 	MaxAgents     int
@@ -45,7 +44,7 @@ type Config struct {
 }
 
 // Load loads configuration from environment variables.
-// ENCRYPTION_KEY, SECONDARY_KEY, and API_KEY must be set explicitly —
+// ENCRYPTION_KEY and API_KEY must be set explicitly —
 // there are no built-in defaults so a misconfigured server fails at Validate().
 func Load() *Config {
 	config := &Config{
@@ -55,7 +54,6 @@ func Load() *Config {
 		LogDir:        getEnvOrDefault("LOG_DIR", "./logs"),
 		DBPath:        getEnvOrDefault("DB_PATH", "./data/taburtuai.db"),
 		EncryptionKey: os.Getenv("ENCRYPTION_KEY"),
-		SecondaryKey:  os.Getenv("SECONDARY_KEY"),
 		AuthEnabled:   getEnvOrDefault("AUTH_ENABLED", "false") == "true",
 		APIKey:        os.Getenv("API_KEY"),
 		MaxAgents:     100,
@@ -113,10 +111,7 @@ func (c *Config) Validate() error {
 	if c.EncryptionKey == "" {
 		return errors.New("ENCRYPTION_KEY env var is required but not set")
 	}
-	if c.SecondaryKey == "" {
-		return errors.New("SECONDARY_KEY env var is required but not set")
-	}
-	if c.AuthEnabled && c.APIKey == "" {
+if c.AuthEnabled && c.APIKey == "" {
 		return errors.New("API_KEY env var is required when AUTH_ENABLED=true")
 	}
 	return nil

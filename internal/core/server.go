@@ -24,7 +24,7 @@ type Server struct {
 
 // NewServer creates a new server instance
 func NewServer(cfg *config.Config) (*Server, error) {
-	cryptoMgr, err := crypto.NewManager(cfg.EncryptionKey, cfg.SecondaryKey)
+	cryptoMgr, err := crypto.NewManager(cfg.EncryptionKey, cfg.EncryptionKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize crypto: %v", err)
 	}
