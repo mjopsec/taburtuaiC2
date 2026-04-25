@@ -44,6 +44,14 @@ func (am *AgentMonitor) RegisterAgent(data map[string]interface{}) error {
 		LogInfo(AGENT_CONNECTION, fmt.Sprintf("Agent re-registered: %s", agentID), agentID)
 	}
 
+	// Persist ECDH session key from the beacon handler so subsequent beacons
+	// can be decrypted.  The key is encrypted by encryptSessionKey before being
+	// placed in the payload, so it is never stored in plain text.
+	if v, ok := data["_session_key"].(string); ok && v != "" {
+		agent.Metadata["_session_key"] = v
+		am.persistAgent(agent)
+	}
+
 	if v, ok := getString(data, "hostname"); ok {
 		agent.Hostname = v
 	}
