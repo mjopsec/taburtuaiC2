@@ -160,4 +160,5 @@ type APIResponse struct {
 	Message string      `json:"message,omitempty"`
 	Data    interface{} `json:"data,omitempty"`
 	Error   string      `json:"error,omitempty"`
+	Pad     string      `json:"_pad,omitempty"` // random traffic padding — ignored by receivers
 }

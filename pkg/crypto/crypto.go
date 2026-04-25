@@ -144,7 +144,12 @@ func (m *Manager) decompressData(data []byte) ([]byte, error) {
 func (m *Manager) addPadding(data []byte) []byte {
 	paddingSize := 1 + (len(data) % 16)
 	padding := make([]byte, paddingSize)
-	rand.Read(padding)
+	if _, err := io.ReadFull(rand.Reader, padding); err != nil {
+		// extremely unlikely; zero-fill rather than panic
+		for i := range padding {
+			padding[i] = 0
+		}
+	}
 
 	result := make([]byte, 1+paddingSize+len(data))
 	result[0] = byte(paddingSize)
@@ -164,15 +169,26 @@ func (m *Manager) removePadding(data []byte) []byte {
 	return data[1+paddingSize:]
 }
 
+// obfuscationMarkers is a large pool of plausible HTTP/web field prefixes.
+// Using a wide, varied pool makes static NIDS regex matching impractical.
+var obfuscationMarkers = []string{
+	"session_id=", "token=", "data=", "payload=", "content=", "response=",
+	"auth=", "sig=", "nonce=", "hash=", "checksum=", "digest=",
+	"state=", "code=", "ticket=", "ref=", "key=", "id=",
+	"value=", "body=", "msg=", "blob=", "raw=", "enc=",
+	"t=", "v=", "q=", "r=", "s=", "x=",
+	"client_id=", "request_id=", "trace_id=", "span_id=", "correlation_id=",
+	"access_token=", "refresh_token=", "bearer=", "api_key=", "csrf=",
+	"challenge=", "proof=", "assertion=", "grant=", "scope=",
+}
+
 func (m *Manager) addObfuscationMarkers(data string) string {
-	markers := []string{"session_id=", "token=", "data=", "payload=", "content=", "response="}
-	n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(markers))))
-	return markers[n.Int64()] + data
+	n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(obfuscationMarkers))))
+	return obfuscationMarkers[n.Int64()] + data
 }
 
 func (m *Manager) removeObfuscationMarkers(data string) string {
-	markers := []string{"session_id=", "token=", "data=", "payload=", "content=", "response="}
-	for _, marker := range markers {
+	for _, marker := range obfuscationMarkers {
 		if strings.HasPrefix(data, marker) {
 			return data[len(marker):]
 		}

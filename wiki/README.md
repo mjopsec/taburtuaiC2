@@ -32,6 +32,9 @@
 | [20](20-teamserver.md) | Team Server | Multi-operator, claiming, SSE event stream |
 | [21](21-opsec-playbook.md) | OPSEC Playbook | Operator playbook: initial intrusion → exfiltration |
 | [22](22-lateral-movement.md) | Lateral Movement | WMI, WinRM, Schtask, Service exec via agent pivot |
+| [23](23-delivery-guide.md) | Delivery Guide | Format stager, cara deliver ke target |
+| [24](24-staged-delivery.md) | Staged Delivery | Arsitektur staged delivery, langkah operasional |
+| [25](25-implant-guide.md) | Implant Guide | Staged & stageless initial access |
 
 ---
 

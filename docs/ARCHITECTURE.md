@@ -4,60 +4,64 @@
 
 ```
 taburtuaiC2/
-├── cmd/                        # Binary entry points
-│   ├── server/main.go          # Team server (start with: go run ./cmd/server)
-│   └── operator/main.go        # Operator CLI (start with: go run ./cmd/operator)
+├── cmd/                        # Binary entry points (Go convention)
+│   ├── server/                 # Team server binary
+│   ├── operator/               # Operator CLI binary
+│   ├── agent/                  # Implant binary (compiled per target)
+│   ├── generate/               # Implant builder & delivery tool
+│   ├── stager/                 # Stager binary
+│   ├── sign/                   # Authenticode signing helper
+│   ├── strenc/                 # String encryption helper
+│   └── listener/               # SMB named-pipe → HTTPS C2 relay binary
 │
-├── internal/                   # Private server packages (not importable externally)
-│   ├── api/                    # HTTP REST API (Gin handlers, middleware, routes)
-│   ├── config/                 # Server configuration (env-based)
-│   ├── core/                   # Core server struct, command queue
-│   ├── modules/                # Plugin module manager + built-in modules
-│   └── services/               # Logger, agent monitor, auth, group manager
+├── implant/                    # Implant technique packages (importable)
+│   ├── syscall/                # Hell's Gate, Win32 API procs, NT syscall wrappers
+│   ├── evasion/                # AMSI, ETW, HWBP, unhook, sleep masking
+│   ├── inject/                 # CRT, APC, hollow, hijack, stomp, mapinject, PPID
+│   ├── creds/                  # LSASS, SAM, browser creds, clipboard
+│   ├── lateral/                # WMI, WinRM, DCOM, schtask, service
+│   ├── persist/                # Registry, schtask, service, startup folder
+│   ├── recon/                  # Screenshot, keylog, netscan, ARP
+│   ├── pivot/                  # SOCKS5, port forwarding
+│   └── exec/                   # Execution, BOF, .NET, PS runspace, LOLBins
 │
-├── pkg/                        # Shared public packages (importable by agent + server)
-│   ├── crypto/                 # AES-256-GCM multi-layer encryption
-│   └── types/                  # Shared types: Command, AgentInfo, APIResponse
+├── internal/                   # Private server packages
+│   ├── api/                    # HTTP REST API handlers + routes
+│   ├── config/                 # Server configuration
+│   ├── core/                   # Server struct, command queue, port forward manager
+│   ├── services/               # Logger, monitor, auth, team server
+│   └── storage/                # SQLite persistence layer
 │
-├── agent/                      # Implant source (compiled separately per target)
-│   ├── agent.go                # Core loop: checkin, poll, execute
-│   ├── commands.go             # Command dispatch and execution
-│   ├── evasion.go              # Sandbox/VM/debugger detection
-│   ├── persistence.go          # Cross-platform persistence mechanisms
-│   └── main.go                 # Agent entry point
+├── pkg/                        # Shared public packages
+│   ├── crypto/                 # AES-256-GCM + ECDH session key
+│   ├── types/                  # Shared types: Command, AgentInfo, APIResponse
+│   ├── profiles/               # Malleable C2 HTTP profiles
+│   ├── tlsutil/                # TLS cert helpers
+│   ├── transport/              # Agent-side covert transports (DoH, ICMP, SMB, WS, DNS)
+│   └── strenc/                 # String encryption runtime
 │
-├── listener/                   # Modular listener framework
-│   ├── base.go                 # Listener interface + Config/Stats types
+├── listener/                   # Server-side protocol listeners
+│   ├── base.go                 # Listener interface + Config/Stats
 │   ├── manager.go              # Multi-listener orchestration
-│   └── http/
-│       └── http_listener.go    # HTTP transport implementation
+│   ├── http/                   # HTTP listener
+│   ├── https/                  # HTTPS listener
+│   ├── ws/                     # WebSocket listener
+│   └── dns/                    # DNS authoritative listener
 │
-├── builder/                    # Payload generation engine
-│   ├── generator.go            # Cross-compile agent with config baked in
-│   └── profiles/               # OPSEC profiles (default, stealth, aggressive)
-│       ├── default.yaml
-│       ├── stealth.yaml
-│       └── aggressive.yaml
+├── builder/                    # Payload generation engine (profile-based)
+│   ├── generator.go
+│   └── profiles/               # OPSEC YAML profiles
 │
 ├── config/
-│   └── taburtuai.yaml          # Server config file
+│   └── taburtuai.yaml          # Server config
 │
-├── scripts/
-│   └── build/
-│       ├── build_agent.sh      # Cross-compile agent binary
-│       ├── build_server.sh     # Build server binary
-│       └── build_all.sh        # Build everything
+├── web/                        # Web UI (Vue 3 + TypeScript)
+│   └── src/
 │
-├── web/
-│   ├── templates/              # HTML dashboard templates
-│   └── static/                 # CSS, JS, assets
-│
-├── docs/
-│   ├── ROADMAP.md              # Development phases
-│   └── ARCHITECTURE.md         # This file
-│
-├── go.mod                      # Module: github.com/mjopsec/taburtuaiC2
-└── go.sum
+├── wiki/                       # Operator documentation (25 pages)
+├── docs/                       # Architecture + Roadmap only
+├── tools/                      # Non-Go scripts and generated artifacts
+└── go.mod                      # Module: github.com/mjopsec/taburtuaiC2
 ```
 
 ---
@@ -72,20 +76,21 @@ Team Server (cmd/server)
         │
         ├── internal/api        ← HTTP routing + handlers
         │       │
-        │       ├── internal/core/server.go     ← Server struct
-        │       ├── internal/core/command_queue ← Per-agent queues
-        │       ├── internal/services/monitor   ← Agent health tracking
-        │       ├── internal/services/logger    ← Structured logging
-        │       └── pkg/crypto                  ← Encrypt/decrypt traffic
+        │       ├── internal/core/server.go       ← Server struct
+        │       ├── internal/core/command_queue   ← Per-agent queues (SQLite)
+        │       ├── internal/services/monitor     ← Agent health tracking
+        │       ├── internal/services/logger      ← Structured logging
+        │       └── pkg/crypto                    ← Encrypt/decrypt traffic
         │
-        └── listener/manager    ← (Phase 4+) multi-protocol listeners
+        └── listener/manager    ← multi-protocol listeners
                 │
                 ├── listener/http     ← HTTP transport
-                ├── listener/https    ← HTTPS (Phase 4)
-                ├── listener/dns      ← DNS tunneling (Phase 4)
-                └── listener/smb      ← Named pipe (Phase 4)
+                ├── listener/https    ← HTTPS + TLS
+                ├── listener/ws       ← WebSocket
+                └── listener/dns      ← DNS authoritative
 
-Agent (compiled from agent/)
+Agent (compiled from cmd/agent/)
+        │  imports implant/* packages for technique execution
         │  HTTP POST /checkin, GET /poll, POST /result
         ▼
 listener/http or listener/https
@@ -104,7 +109,7 @@ internal/api → internal/core/command_queue → Agent
 3. Queue adds:       CommandQueue.Add(agentID, cmd)
 4. Agent polls:      GET /api/v1/command/{agentID}/next
 5. Server returns:   encrypted Command JSON
-6. Agent executes:   runs command, captures output
+6. Agent executes:   runs command via implant/* package
 7. Agent submits:    POST /api/v1/command/result  {command_id, exit_code, output}
 8. Server stores:    CommandQueue.CompleteCommand(id, result)
 9. Operator polls:   GET /api/v1/command/{commandID}/status
@@ -112,88 +117,66 @@ internal/api → internal/core/command_queue → Agent
 
 ---
 
-## Encryption Model (Current)
+## Implant Package Dependency Graph
+
+```
+implant/syscall/          ← no implant dependencies (only x/sys/windows)
+        ↑
+implant/evasion/          ← depends on syscall
+implant/inject/           ← depends on syscall
+implant/creds/            ← depends on syscall
+        ↑
+implant/recon/            ← minimal syscall usage (GDI for screenshot)
+implant/lateral/          ← no syscall dependency (uses exec.Command)
+implant/persist/          ← no syscall dependency
+implant/exec/             ← mixed (BOF/peloader use syscall)
+implant/pivot/            ← no syscall dependency (network only)
+        ↑
+cmd/agent/                ← imports all implant/* packages
+```
+
+---
+
+## Encryption Model
 
 ```
 Agent → Server:
-  payload → gzip compress → random padding → AES-256-GCM(nonce+cipher) → base64 → obfuscation marker prefix
+  payload → gzip compress → random padding → AES-256-GCM(nonce+cipher) → base64 → marker
 
-Key derivation:
-  primary_key   = SHA256("SpookyOrcaC2AES1")       ← configured at build time
-  secondary_key = SHA256("TaburtuaiSecondary")     ← configured at build time
+ECDH session establishment:
+  1. Agent generates ephemeral X25519 keypair
+  2. Agent sends pubkey in checkin payload
+  3. Server responds with its pubkey
+  4. Both derive shared session key (X25519 DH + HKDF)
+  5. All subsequent traffic uses session key, not static key
 ```
-
-**Phase 3 upgrade:** Replace with ECDH (X25519) key exchange. Each session generates fresh keys. Server has no static symmetric key — only its X25519 keypair.
-
----
-
-## Module Interface
-
-Every post-exploitation module implements:
-
-```go
-type ModuleInterface interface {
-    Initialize(config map[string]interface{}) error
-    Execute(ctx context.Context, params *ModuleParams) (*ModuleResult, error)
-    Cleanup() error
-    GetInfo() *ModuleInfo
-    Validate(params *ModuleParams) error
-}
-```
-
-Built-in modules: `PortScanner`, `FileSystem`, `CredentialHarvester`
-
----
-
-## Listener Interface
-
-Every transport implements:
-
-```go
-type Listener interface {
-    Start(ctx context.Context) error
-    Stop() error
-    GetConfig() *Config
-    GetStatus() Status
-    GetStats() *Stats
-}
-```
-
-The `listener.Manager` runs multiple transports simultaneously. Agent can switch transports if primary is blocked.
-
----
-
-## OPSEC Profile System
-
-Profiles are baked into the agent at **build time** via `-ldflags -X`:
-
-```
-builder.Generator.Build(cfg) → go build -ldflags="-X main.serverURL=... -X main.encKey=..."
-```
-
-Per-profile settings:
-- Sleep interval + jitter
-- Working hours restriction
-- Kill date
-- Sandbox/VM/debug evasion toggles
-- User-Agent rotation pool
-- Sleep masking (Phase 3)
 
 ---
 
 ## Go Module Map
 
 ```
-github.com/mjopsec/taburtuaiC2/cmd/server     → binary: server
-github.com/mjopsec/taburtuaiC2/cmd/operator   → binary: operator CLI
-github.com/mjopsec/taburtuaiC2/internal/api   → package api
-github.com/mjopsec/taburtuaiC2/internal/core  → package core
-github.com/mjopsec/taburtuaiC2/internal/config → package config
-github.com/mjopsec/taburtuaiC2/internal/services → package services
-github.com/mjopsec/taburtuaiC2/internal/modules  → package modules
-github.com/mjopsec/taburtuaiC2/pkg/crypto     → package crypto
-github.com/mjopsec/taburtuaiC2/pkg/types      → package types
-github.com/mjopsec/taburtuaiC2/listener       → package listener
-github.com/mjopsec/taburtuaiC2/listener/http  → package httplistener
-github.com/mjopsec/taburtuaiC2/builder        → package builder
+github.com/mjopsec/taburtuaiC2/cmd/server       → binary: server
+github.com/mjopsec/taburtuaiC2/cmd/operator     → binary: operator CLI
+github.com/mjopsec/taburtuaiC2/cmd/agent        → binary: agent implant
+github.com/mjopsec/taburtuaiC2/cmd/generate     → binary: implant builder
+github.com/mjopsec/taburtuaiC2/cmd/stager       → binary: stager
+github.com/mjopsec/taburtuaiC2/cmd/sign         → binary: Authenticode signing helper
+github.com/mjopsec/taburtuaiC2/cmd/strenc       → binary: string encryption helper
+github.com/mjopsec/taburtuaiC2/cmd/listener     → binary: SMB relay (named pipe → HTTPS C2)
+github.com/mjopsec/taburtuaiC2/implant/syscall  → package winsyscall
+github.com/mjopsec/taburtuaiC2/implant/evasion  → package evasion
+github.com/mjopsec/taburtuaiC2/implant/inject   → package inject
+github.com/mjopsec/taburtuaiC2/implant/creds    → package creds
+github.com/mjopsec/taburtuaiC2/implant/lateral  → package lateral
+github.com/mjopsec/taburtuaiC2/implant/persist  → package persist
+github.com/mjopsec/taburtuaiC2/implant/recon    → package recon
+github.com/mjopsec/taburtuaiC2/implant/pivot    → package pivot
+github.com/mjopsec/taburtuaiC2/implant/exec     → package exec
+github.com/mjopsec/taburtuaiC2/internal/api     → package api
+github.com/mjopsec/taburtuaiC2/internal/core    → package core
+github.com/mjopsec/taburtuaiC2/internal/storage → package storage
+github.com/mjopsec/taburtuaiC2/pkg/crypto       → package crypto
+github.com/mjopsec/taburtuaiC2/pkg/types        → package types
+github.com/mjopsec/taburtuaiC2/listener         → package listener
 ```

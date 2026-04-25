@@ -123,6 +123,19 @@ func (h *Handlers) enforceAgentWrite(c *gin.Context, agentID string) bool {
 	return true
 }
 
+// encryptSessionKey encrypts raw ECDH session key bytes using the server's
+// static CryptoMgr so the session key is never stored in plaintext in the
+// agent metadata / SQLite database.  Falls back to plain base64 if CryptoMgr
+// is unavailable (non-prod mode without ENCRYPTION_KEY set).
+func encryptSessionKey(h *Handlers, key []byte) string {
+	if h.server.CryptoMgr != nil {
+		if enc, err := h.server.CryptoMgr.EncryptData(key); err == nil {
+			return "enc:" + enc
+		}
+	}
+	return base64.StdEncoding.EncodeToString(key)
+}
+
 // agentSessionMgr returns a crypto.Manager initialised with the ECDH-derived
 // session key stored in the agent's metadata during checkin.
 // Returns nil when no session key exists (pre-ECDH agents or unknown agent).
@@ -134,14 +147,27 @@ func (h *Handlers) agentSessionMgr(agentID string) *crypto.Manager {
 	if !exists {
 		return nil
 	}
-	keyB64, ok := agent.Metadata["_session_key"].(string)
-	if !ok || keyB64 == "" {
+	stored, ok := agent.Metadata["_session_key"].(string)
+	if !ok || stored == "" {
 		return nil
 	}
-	keyBytes, err := base64.StdEncoding.DecodeString(keyB64)
-	if err != nil {
-		return nil
+
+	// Decrypt if the stored value was encrypted by encryptSessionKey.
+	var keyBytes []byte
+	if len(stored) > 4 && stored[:4] == "enc:" && h.server.CryptoMgr != nil {
+		dec, err := h.server.CryptoMgr.DecryptData(stored[4:])
+		if err != nil {
+			return nil
+		}
+		keyBytes = dec
+	} else {
+		var err error
+		keyBytes, err = base64.StdEncoding.DecodeString(stored)
+		if err != nil {
+			return nil
+		}
 	}
+
 	mgr, err := crypto.NewManagerFromRawKey(keyBytes)
 	if err != nil {
 		return nil

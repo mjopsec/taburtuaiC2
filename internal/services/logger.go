@@ -26,13 +26,13 @@ type Logger struct {
 
 // NewLogger creates and initialises a Logger instance
 func NewLogger(level LogLevel, logDir string) (*Logger, error) {
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err := os.MkdirAll(logDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create log dir: %v", err)
 	}
 
 	open := func(name string) (*os.File, error) {
 		return os.OpenFile(filepath.Join(logDir, name),
-			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	}
 
 	lf, err := open("taburtuai.log")

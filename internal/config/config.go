@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"time"
 
@@ -43,7 +44,9 @@ type Config struct {
 	DNSDomain  string // authoritative zone, e.g. "c2.example.com"
 }
 
-// Load loads configuration from environment
+// Load loads configuration from environment variables.
+// ENCRYPTION_KEY, SECONDARY_KEY, and API_KEY must be set explicitly —
+// there are no built-in defaults so a misconfigured server fails at Validate().
 func Load() *Config {
 	config := &Config{
 		Host:          getEnvOrDefault("HOST", ""),
@@ -51,10 +54,10 @@ func Load() *Config {
 		LogLevel:      services.INFO,
 		LogDir:        getEnvOrDefault("LOG_DIR", "./logs"),
 		DBPath:        getEnvOrDefault("DB_PATH", "./data/taburtuai.db"),
-		EncryptionKey: getEnvOrDefault("ENCRYPTION_KEY", "SpookyOrcaC2AES1"),
-		SecondaryKey:  getEnvOrDefault("SECONDARY_KEY", "TaburtuaiSecondary"),
+		EncryptionKey: os.Getenv("ENCRYPTION_KEY"),
+		SecondaryKey:  os.Getenv("SECONDARY_KEY"),
 		AuthEnabled:   getEnvOrDefault("AUTH_ENABLED", "false") == "true",
-		APIKey:        getEnvOrDefault("API_KEY", "your-api-key-here"),
+		APIKey:        os.Getenv("API_KEY"),
 		MaxAgents:     100,
 		AgentTimeout:  5 * time.Minute,
 		TLSEnabled:    getEnvOrDefault("TLS_ENABLED", "false") == "true",
@@ -102,6 +105,21 @@ func (c *Config) SetLogLevel(s string) {
 	case "CRITICAL":
 		c.LogLevel = services.CRITICAL
 	}
+}
+
+// Validate returns an error when required secrets are missing or appear to be
+// placeholder values. Call this at server startup and abort if it fails.
+func (c *Config) Validate() error {
+	if c.EncryptionKey == "" {
+		return errors.New("ENCRYPTION_KEY env var is required but not set")
+	}
+	if c.SecondaryKey == "" {
+		return errors.New("SECONDARY_KEY env var is required but not set")
+	}
+	if c.AuthEnabled && c.APIKey == "" {
+		return errors.New("API_KEY env var is required when AUTH_ENABLED=true")
+	}
+	return nil
 }
 
 func getEnvOrDefault(key, defaultValue string) string {

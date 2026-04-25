@@ -17,9 +17,9 @@ import (
 	"github.com/mjopsec/taburtuaiC2/internal/api"
 	"github.com/mjopsec/taburtuaiC2/internal/config"
 	"github.com/mjopsec/taburtuaiC2/internal/core"
-	"github.com/mjopsec/taburtuaiC2/listener"
-	dnslistener "github.com/mjopsec/taburtuaiC2/listener/dns"
-	wslistener "github.com/mjopsec/taburtuaiC2/listener/ws"
+	"github.com/mjopsec/taburtuaiC2/internal/listener"
+	dnslistener "github.com/mjopsec/taburtuaiC2/internal/listener/dns"
+	wslistener "github.com/mjopsec/taburtuaiC2/internal/listener/ws"
 	"github.com/mjopsec/taburtuaiC2/pkg/tlsutil"
 )
 
@@ -84,6 +84,11 @@ func main() {
 	if *dnsOn             { cfg.DNSEnabled = true       }
 	if *dnsPort    != "" { cfg.DNSPort    = *dnsPort   }
 	if *dnsDomain  != "" { cfg.DNSDomain  = *dnsDomain }
+
+	// ── Validate required secrets ─────────────────────────────────────────────
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("[FATAL] Configuration error: %v\n  Set the required environment variables and restart.", err)
+	}
 
 	// ── Banner ────────────────────────────────────────────────────────────────
 	fmt.Println()

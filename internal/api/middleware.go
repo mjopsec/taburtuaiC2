@@ -59,10 +59,11 @@ func (m *Middleware) Auth() gin.HandlerFunc {
 		// Skip auth for specific endpoints
 		skipAuthPaths := []string{
 			"/api/v1/health",
-			"/api/v1/checkin", // Allow agent checkin without auth
-			"/",               // Dashboard
-			"/static/",        // Static files
-			"/stage/",         // Stage payload delivery (token is the credential)
+			"/api/v1/checkin",  // Allow agent checkin without auth
+			"/api/v1/beacon/",  // Allow beacon without auth (agent-facing)
+			"/",                // Dashboard
+			"/static/",         // Static files
+			"/stage/",          // Stage payload delivery (token is the credential)
 		}
 
 		path := c.Request.URL.Path
@@ -432,8 +433,11 @@ func (m *Middleware) ValidateContentType() gin.HandlerFunc {
 			return
 		}
 
-		// Skip for file upload endpoints
-		if strings.Contains(c.Request.URL.Path, "/upload") {
+		// Skip for file upload and agent-facing endpoints
+		p := c.Request.URL.Path
+		if strings.Contains(p, "/upload") ||
+			strings.HasSuffix(p, "/checkin") ||
+			strings.Contains(p, "/beacon/") {
 			c.Next()
 			return
 		}

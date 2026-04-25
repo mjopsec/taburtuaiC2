@@ -4,20 +4,17 @@
 *.so
 *.dylib
 *.out
-taburtuai-server
-taburtuai-server.exe
-taburtuai-cli
-taburtuai-cli.exe
-operator.exe
-server.exe
 bin/
 
 # ── Built agents / payloads ───────────────────────────────────
-agent/build/
 builder/output/
 *.bin
 *.shellcode
 *.payload
+
+# ── Tools output ──────────────────────────────────────────────
+tools/*.docx
+tools/*.pdf
 
 # ── Runtime data ──────────────────────────────────────────────
 data/

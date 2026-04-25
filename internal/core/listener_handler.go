@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/mjopsec/taburtuaiC2/listener"
+	"github.com/mjopsec/taburtuaiC2/internal/listener"
 	"github.com/mjopsec/taburtuaiC2/pkg/types"
 )
 
