@@ -73,7 +73,11 @@ func (h *Handlers) AgentBeacon(c *gin.Context) {
 		return
 	}
 
-	// Decrypt if payload is wrapped with a session key
+	// Decrypt beacon payload: try session key first, fall back to static key.
+	// The fallback handles agent restart — the new process has no ECDH session
+	// key and encrypts with the static key, but the server still holds the old
+	// session key for that agent ID.
+	var beaconDecrypted bool
 	if sessionMgr := h.agentSessionMgr(agentID); sessionMgr != nil {
 		var wrapper struct {
 			EncryptedPayload string `json:"encrypted_payload"`
@@ -81,9 +85,11 @@ func (h *Handlers) AgentBeacon(c *gin.Context) {
 		if json.Unmarshal(body, &wrapper) == nil && wrapper.EncryptedPayload != "" {
 			if dec, err := sessionMgr.DecryptData(wrapper.EncryptedPayload); err == nil {
 				body = dec
+				beaconDecrypted = true
 			}
 		}
-	} else if h.server.CryptoMgr != nil {
+	}
+	if !beaconDecrypted && h.server.CryptoMgr != nil {
 		var wrapper struct {
 			EncryptedPayload string `json:"encrypted_payload"`
 		}
