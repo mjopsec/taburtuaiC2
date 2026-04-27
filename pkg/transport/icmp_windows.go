@@ -2,6 +2,18 @@
 
 // ICMP C2 transport — Windows implementation.
 //
+// ⚠ STATUS: AGENT-SIDE ONLY. The matching server listener is NOT YET
+// IMPLEMENTED. See ROADMAP item 11.4. An agent built with
+// `--transport icmp` will emit echo requests carrying framed C2 data, but
+// will receive no command replies until cmd/listener/icmp_listener.go is
+// written. Use HTTP/HTTPS/WS for end-to-end testing in the meantime.
+//
+// TODO(roadmap-11.4): implement cmd/listener/icmp_listener.go (raw socket
+// listener that inspects incoming echo requests, demuxes by source IP,
+// queues commands, and responds via crafted echo replies). When it lands,
+// remove this notice and wire the build into cmd/server/main.go behind
+// a `--icmp` flag.
+//
 // Uses IcmpSendEcho2 (iphlpapi.dll) which does NOT require a raw socket or
 // elevated privileges when the destination is reachable, because Windows
 // provides a privileged ICMP handle via IcmpCreateFile.
@@ -15,9 +27,9 @@
 //     Same framing in the reply data field.
 //     C2 server must run a raw-socket listener that inspects echo requests
 //     and crafts echo replies with command payloads embedded.
-//     See cmd/listener/icmp_listener.go (separate server-side component).
+//     See cmd/listener/icmp_listener.go (planned — not yet implemented).
 //
-// Requires: Requires IcmpSendEcho2 available on Windows XP+ (no raw socket needed).
+// Requires: IcmpSendEcho2 available on Windows XP+ (no raw socket needed).
 package transport
 
 import (

