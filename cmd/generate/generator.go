@@ -76,6 +76,7 @@ type Config struct {
 	NoGUI      bool
 
 	Profile     *OpsecProfile
+	Debug       bool // skip pre-beacon delay and enable debug output (lab use only)
 	InsecureTLS bool // bake InsecureSkipVerify=true into agent (for self-signed C2 certs)
 	CertPin     string // SHA-256 hex fingerprint of expected server TLS leaf cert (HTTPS only)
 
@@ -168,6 +169,10 @@ func (g *Generator) Build(cfg *Config) (*Result, error) {
 			}
 			defer cleanup()
 		}
+	}
+
+	if cfg.Debug {
+		ldflags += " -X main.debugMode=true"
 	}
 
 	if cfg.InsecureTLS {

