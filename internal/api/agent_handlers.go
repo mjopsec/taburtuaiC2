@@ -16,7 +16,7 @@ import (
 func (h *Handlers) ListAgents(c *gin.Context) {
 	agents := h.server.Monitor.GetAllAgents()
 
-	var agentList []map[string]any
+	agentList := make([]map[string]any, 0, len(agents))
 	for _, agent := range agents {
 		agentList = append(agentList, map[string]any{
 			"id":        agent.ID,

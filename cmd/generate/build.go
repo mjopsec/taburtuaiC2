@@ -198,6 +198,7 @@ stagelessCmd.Flags().Int("interval", 30, "Beacon interval (seconds)")
 	stagelessCmd.Flags().String("masq-ver", "", "PE version string, e.g. 10.0.19041.1")
 	stagelessCmd.Flags().Bool("insecure-tls", false, "Skip TLS cert verification in agent (for self-signed C2 certs)")
 	stagelessCmd.Flags().String("cert-pin", "", "Pin server TLS leaf cert by SHA-256 hex fingerprint (HTTPS/WSS only)")
+	stagelessCmd.Flags().Bool("debug", false, "Debug build: skip pre-beacon delay, enable verbose output (lab use only)")
 	// ── Transport selection (Go implant only) ─────────────────────────────────
 	stagelessCmd.Flags().String("transport", "http", "Agent transport: http|https|ws|doh|dns|icmp|smb")
 	stagelessCmd.Flags().String("ws-url", "", "WebSocket URL (default: derived from --c2 with ws/wss scheme)")
@@ -241,6 +242,7 @@ func runStageless(cmd *cobra.Command, _ []string) error {
 	masqVer, _ := cmd.Flags().GetString("masq-ver")
 	insecureTLS, _ := cmd.Flags().GetBool("insecure-tls")
 	certPin, _ := cmd.Flags().GetString("cert-pin")
+	debugBuild, _ := cmd.Flags().GetBool("debug")
 	// Transport flags (Go implant only — C implant ignores these for now)
 	transport, _ := cmd.Flags().GetString("transport")
 	wsURL, _ := cmd.Flags().GetString("ws-url")
@@ -422,10 +424,11 @@ func runStageless(cmd *cobra.Command, _ []string) error {
 		Format:       FormatEXE,
 		OutputDir:    outDir,
 		OutputName:   outName,
-		StripSyms:    true,
-		NoGUI:        noGUI,
+		StripSyms:    !debugBuild,
+		NoGUI:        noGUI && !debugBuild,
 		Compress:     compress,
 		Profile:      profile,
+		Debug:        debugBuild,
 		InsecureTLS:  insecureTLS,
 		CertPin:      certPin,
 		Transport:    transport,
