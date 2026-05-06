@@ -68,6 +68,15 @@ func Load() *Config {
 		DNSEnabled:    getEnvOrDefault("DNS_ENABLED", "false") == "true",
 		DNSPort:       getEnvOrDefault("DNS_PORT", "5353"),
 		DNSDomain:     getEnvOrDefault("DNS_DOMAIN", ""),
+		// C2_PROFILE selects the malleable HTTP profile (alias routes for agent beaconing).
+		// Accepts: default | office365 | cdn | jquery | slack | ocsp
+		// Also checked under legacy name PROFILE for backwards compatibility.
+		Profile: func() string {
+			if v := os.Getenv("C2_PROFILE"); v != "" {
+				return v
+			}
+			return os.Getenv("PROFILE")
+		}(),
 	}
 
 	// Parse log level from environment
