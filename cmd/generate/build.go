@@ -78,6 +78,23 @@ func runStager(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("--key is required for format %q (it is optional only for ps1, ps1-mem, vba, cs)", format)
 	}
 
+	// Warn when http:// is used with a port that strongly implies TLS is enabled
+	// on the server side (e.g. 443, 8443, 4443). The agent would get:
+	//   "client sent an HTTP request to an HTTPS server"
+	if strings.HasPrefix(strings.ToLower(c2), "http://") {
+		for _, tlsPort := range []string{":443", ":8443", ":4443"} {
+			if strings.Contains(c2, tlsPort) {
+				fmt.Fprintf(os.Stderr,
+					"[!] WARNING: --server uses http:// but port %s is typically HTTPS.\n"+
+						"    If your C2 server has TLS enabled, change the scheme to https://\n"+
+						"    otherwise the staged agent will fail with:\n"+
+						"      tls: client sent an HTTP request to an HTTPS server\n",
+					strings.TrimPrefix(tlsPort, ":"))
+				break
+			}
+		}
+	}
+
 	// Token travels in X-Stage-Token header — endpoint URL has no token in path.
 	stageEndpoint := strings.TrimRight(c2, "/") + "/stage/payload"
 

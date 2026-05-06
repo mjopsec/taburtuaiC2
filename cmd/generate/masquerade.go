@@ -32,7 +32,7 @@ func applyMasquerade(sourceDir string, cfg MasqueradeConfig, arch string) (clean
 	vi.FixedFileInfo.FileVersion.Patch = int(ls >> 16)
 	vi.FixedFileInfo.FileVersion.Build = int(ls & 0xFFFF)
 	vi.FixedFileInfo.ProductVersion = vi.FixedFileInfo.FileVersion
-	vi.FixedFileInfo.FileType = "VFT_APP"
+	vi.FixedFileInfo.FileType = "1" // VFT_APP = 0x1; goversioninfo.str2Uint32 parses this as hex uint32
 
 	copyright := cfg.Copyright
 	if copyright == "" {
